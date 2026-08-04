@@ -14,7 +14,10 @@ public struct FrenchGreeter: Greeter {
 
 func helper() -> String { "hi" }
 
-public let defaultGreeter: Greeter = EnglishGreeter()
+// A computed property rather than a global `let`: a global of non-Sendable type is a
+// concurrency error under Swift 6. The reference to EnglishGreeter is what the golden set
+// asserts on, and it survives.
+public var defaultGreeter: Greeter { EnglishGreeter() }
 
 /// Call sites: through the protocol (dynamic dispatch onto the requirement) and through the
 /// concrete types (static dispatch onto the implementations) — material for the bare-name spike.
