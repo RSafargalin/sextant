@@ -1,0 +1,12 @@
+[
+  {
+    "id": "system-state",
+    "message": "Global state (.current) — inject the dependency instead",
+    "patterns": ["Calendar.current", "TimeZone.current", "Locale.current"]
+  },
+  {
+    "id": "force-try",
+    "message": "Forced try! — handle the error explicitly",
+    "patterns": ["try! $X"]
+  }
+]

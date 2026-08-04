@@ -1,0 +1,29 @@
+sextant
+Copyright 2026 Ruslan Safargalin
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This software depends on the following third-party components. Their source
+and license terms are listed here for attribution; consult each project's own
+LICENSE for the authoritative and complete terms.
+
+--------------------------------------------------------------------------------
+swift-syntax
+    Source:  https://github.com/swiftlang/swift-syntax
+    License: Apache License 2.0 with Runtime Library Exception
+    Used for build-independent parsing of Swift sources (repo map, structural
+    search, public API, lint).
+
+--------------------------------------------------------------------------------
+indexstore-db
+    Source:  https://github.com/swiftlang/indexstore-db
+    License: Apache License 2.0 with Runtime Library Exception
+    Used for reading the compiler index store (definitions, references,
+    callers, type hierarchy).
+
+--------------------------------------------------------------------------------
+swift-lmdb  (transitive, via indexstore-db)
+    Source:  https://github.com/swiftlang/swift-lmdb
+    License: Apache License 2.0 with Runtime Library Exception
+    A Swift wrapper around the LMDB C library. LMDB itself is distributed
+    under the OpenLDAP Public License (https://www.openldap.org/software/release/license.html).

@@ -1,0 +1,92 @@
+name: Bug report
+description: Something is wrong, missing, or silently incorrect
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        If sextant returned a **wrong or empty answer** rather than an error, please say so
+        explicitly below. That is the most important class of bug in this project and the
+        easiest one to miss.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you ran, what you got, and what you expected instead.
+      placeholder: |
+        $ sextant defs MyType --project ~/some-project
+        ...output...
+
+        Expected: the definition in Sources/Core/MyType.swift:12
+    validations:
+      required: true
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind of failure
+      options:
+        - Wrong answer (result looked plausible but was incorrect)
+        - Empty answer (found nothing that exists)
+        - Error or crash
+        - Slower than expected
+        - Wrong or confusing output formatting
+        - Something else
+    validations:
+      required: true
+
+  - type: textarea
+    id: correct-answer
+    attributes:
+      label: If the answer was wrong or empty — what is correct, and how do you know?
+      description: For example, the grep or file that proves the symbol exists.
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `sextant doctor --project <path>`
+      description: >
+        This is the single most useful thing you can attach. A large share of reports come
+        down to which index store was selected and whether it was fresh.
+      render: shell
+    validations:
+      required: true
+
+  - type: dropdown
+    id: layout
+    attributes:
+      label: Project layout
+      options:
+        - Single SwiftPM package
+        - SwiftPM package with nested packages
+        - Xcode project or workspace
+        - Xcode workspace plus SwiftPM packages
+        - Other or not sure
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: sextant version
+      description: The first line of `sextant help` (it includes the build timestamp).
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: macOS and Swift version
+      placeholder: "macOS 26.5, Swift 6.2 (Xcode 26.1)"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: interface
+    attributes:
+      label: Where did you hit it?
+      options:
+        - label: CLI
+        - label: MCP server
+        - label: Daemon (`sextant serve`)

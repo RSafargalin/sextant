@@ -1,0 +1,192 @@
+name: Release
+
+# Builds a macOS universal binary from a vX.Y.Z tag and publishes a GitHub Release with the
+# archive and its sha256. There is no signing or notarisation (no developer certificate), so the
+# binary is de-quarantined by hand — see "Installation" in the README.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag for a manual run (for example v0.6.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-26
+    timeout-minutes: 60
+
+    steps:
+      # On a manual run, check out the tagged commit rather than the branch HEAD, or the release
+      # would be built from a different tree than the tag promises.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      # Package.swift declares tools-version 6.2, and a runner may carry several Xcode versions.
+      # Pick the newest and fail loudly if the toolchain is older, or the error surfaces mid-build
+      # as an opaque SwiftPM message.
+      - name: Select toolchain
+        run: |
+          set -euo pipefail
+          latest=$(/bin/ls -d /Applications/Xcode*.app | sort -V | tail -1)
+          echo "Xcode: $latest"
+          sudo xcode-select -s "$latest"
+          swift --version
+          swift_version=$(swift --version 2>&1 | sed -n 's/.*Swift version \([0-9]*\.[0-9]*\).*/\1/p')
+          swift_version=${swift_version%%$'\n'*}
+          required=6.2
+          if [ "$(printf '%s\n%s\n' "$required" "$swift_version" | sort -V | head -1)" != "$required" ]; then
+            echo "::error::Swift >= $required required, found $swift_version"
+            exit 1
+          fi
+
+      - name: Release version
+        id: meta
+        run: |
+          set -euo pipefail
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          version="${tag#v}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "archive=sextant-$version-macos-universal.tar.gz" >> "$GITHUB_OUTPUT"
+          case "$version" in
+            *-*) echo "prerelease=true" >> "$GITHUB_OUTPUT" ;;
+            *)   echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      # The tag and Sextant.version are two sources of truth; a mismatch ships a release that
+      # lies about its version in `sextant --version` and in the MCP handshake.
+      - name: Check the tag against Sextant.version
+        run: |
+          set -euo pipefail
+          source_version=$(sed -n 's/.*static let version = "\([^"]*\)".*/\1/p' Sources/SextantCore/Sextant.swift)
+          source_version=${source_version%%$'\n'*}
+          if [ "$source_version" != "${{ steps.meta.outputs.version }}" ]; then
+            echo "::error::tag ${{ steps.meta.outputs.tag }} does not match Sextant.version = $source_version"
+            exit 1
+          fi
+
+      # A tag can be placed on any commit, and a release must not ship unverified. PR CI does not
+      # cover this: a tag can bypass the pull request entirely.
+      - name: Tests
+        run: swift test
+
+      # The build cache is deliberately unused: the release binary is built from scratch so the
+      # artefact is reproducible from a clean tree.
+      - name: Build arm64
+        run: swift build -c release --arch arm64 --scratch-path .build-arm64
+
+      - name: Build x86_64
+        run: swift build -c release --arch x86_64 --scratch-path .build-x86_64
+
+      # Each architecture is built in its own pass and joined with lipo: SwiftPM does support
+      # `--arch arm64 --arch x86_64`, but separate passes give a readable failure log (you can see
+      # which architecture broke) and independent scratch directories.
+      - name: Lipo universal
+        run: |
+          set -euo pipefail
+          arm_bin="$(swift build -c release --arch arm64 --scratch-path .build-arm64 --show-bin-path)/sextant"
+          intel_bin="$(swift build -c release --arch x86_64 --scratch-path .build-x86_64 --show-bin-path)/sextant"
+          mkdir -p dist
+          lipo -create -output dist/sextant "$arm_bin" "$intel_bin"
+          chmod +x dist/sextant
+          # An assertion, not just a log line: a binary of the wrong architecture must not ship.
+          lipo -info dist/sextant | grep -q "arm64 x86_64" || { echo "::error::universal binary is missing one of the architectures"; exit 1; }
+          file dist/sextant
+          # Logged: the dynamic dependency list — anything non-system breaks portability.
+          otool -L dist/sextant
+
+      # Smoke test: the binary runs and knows its version. Semantics are not checked here — CI
+      # exercises them on every PR.
+      - name: Smoke-check the binary
+        run: |
+          set -euo pipefail
+          actual=$(./dist/sextant --version)
+          if [ "$actual" != "${{ steps.meta.outputs.version }}" ]; then
+            echo "::error::binary reports version '$actual', expected '${{ steps.meta.outputs.version }}'"
+            exit 1
+          fi
+          ./dist/sextant help >/dev/null
+
+      - name: Package and sha256
+        id: package
+        run: |
+          set -euo pipefail
+          archive="${{ steps.meta.outputs.archive }}"
+          tar -czf "dist/$archive" -C dist sextant
+          sha=$(shasum -a 256 "dist/$archive" | awk '{print $1}')
+          echo "sha256=$sha" >> "$GITHUB_OUTPUT"
+          echo "$sha  $archive" > "dist/$archive.sha256"
+
+      - name: Release notes
+        run: |
+          set -euo pipefail
+          cat > dist/notes.md <<EOF
+          ## sextant ${{ steps.meta.outputs.version }}
+
+          macOS universal (arm64 + x86_64), built from tag \`${{ steps.meta.outputs.tag }}\`.
+
+          \`\`\`
+          sha256  ${{ steps.package.outputs.sha256 }}
+          \`\`\`
+
+          ### Installation
+
+          \`\`\`bash
+          curl -fsSL -O https://github.com/${{ github.repository }}/releases/download/${{ steps.meta.outputs.tag }}/${{ steps.meta.outputs.archive }}
+          shasum -a 256 ${{ steps.meta.outputs.archive }}   # compare with the sha256 above
+          tar -xzf ${{ steps.meta.outputs.archive }}
+          xattr -d com.apple.quarantine sextant || true     # the binary is not signed or notarised
+          mkdir -p ~/.local/bin && install -m 0755 sextant ~/.local/bin/sextant
+          \`\`\`
+
+          The binary is **neither signed nor notarised** — Gatekeeper quarantines it when downloaded
+          through a browser. Clear it with \`xattr -d com.apple.quarantine sextant\`.
+
+          The syntactic commands (\`map\`, \`api\`, \`search\`, \`lint\`, \`changed\`) need nothing extra.
+          The semantic ones (\`refs\`, \`defs\`, \`callers\`, \`context\`, \`blast\`, \`body\`) need an Xcode
+          toolchain: \`libIndexStore.dylib\` is located via \`xcrun --find swiftc\`. Check the setup with
+          \`sextant doctor --project <path>\`.
+
+          ### Homebrew
+
+          Update the formula in the tap (\`Formula/sextant.rb\`):
+
+          \`\`\`ruby
+          version "${{ steps.meta.outputs.version }}"
+          url "https://github.com/${{ github.repository }}/releases/download/${{ steps.meta.outputs.tag }}/${{ steps.meta.outputs.archive }}"
+          sha256 "${{ steps.package.outputs.sha256 }}"
+          \`\`\`
+          EOF
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${{ steps.meta.outputs.tag }}"
+          archive="${{ steps.meta.outputs.archive }}"
+          prerelease=""
+          if [ "${{ steps.meta.outputs.prerelease }}" = "true" ]; then prerelease="--prerelease"; fi
+          # Idempotent: a repeat run on the same tag re-uploads the artefacts instead of failing.
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "dist/$archive" "dist/$archive.sha256" --clobber
+            gh release edit "$tag" --notes-file dist/notes.md
+          else
+            gh release create "$tag" \
+              --title "sextant ${{ steps.meta.outputs.version }}" \
+              --notes-file dist/notes.md \
+              $prerelease \
+              "dist/$archive" "dist/$archive.sha256"
+          fi

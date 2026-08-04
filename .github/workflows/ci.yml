@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    # macOS: the tool needs an Xcode toolchain and libIndexStore — the semantic layer cannot be tested on Linux.
+    # macos-26: Package.swift requires tools-version 6.2, and Xcode 26 may be absent on macos-15.
+    runs-on: macos-26
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # A runner may carry several Xcode versions: pick the newest and fail loudly if the
+      # toolchain is older than required, or the error surfaces mid-build as an opaque SwiftPM
+      # message. This mirrors the release workflow.
+      - name: Select toolchain
+        run: |
+          set -euo pipefail
+          latest=$(/bin/ls -d /Applications/Xcode*.app | sort -V | tail -1)
+          echo "Xcode: $latest"
+          sudo xcode-select -s "$latest"
+          swift --version
+          swift_version=$(swift --version 2>&1 | sed -n 's/.*Swift version \([0-9]*\.[0-9]*\).*/\1/p')
+          swift_version=${swift_version%%$'\n'*}
+          required=6.2
+          if [ "$(printf '%s\n%s\n' "$required" "$swift_version" | sort -V | head -1)" != "$required" ]; then
+            echo "::error::Swift >= $required required, found $swift_version"
+            exit 1
+          fi
+
+      - name: Build cache
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: spm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: spm-${{ runner.os }}-
+
+      - name: Build
+        run: swift build
+
+      # The semantic integration test and the MCP protocol e2e test need a built binary and a
+      # toolchain; the runner has both, so green here means the layer was genuinely exercised.
+      - name: Tests
+        run: swift test
+
+      - name: Hygiene self-check (dogfood)
+        run: $(swift build --show-bin-path)/sextant lint --project . --rules sextant-rules.json
+
+      - name: Golden — semantic regressions on the fixture
+        run: |
+          swift build --package-path Tests/Fixtures/IndexFixture --enable-index-store
+          $(swift build --show-bin-path)/sextant golden \
+            --project Tests/Fixtures/IndexFixture \
+            --spec Tests/Fixtures/IndexFixture/golden.json
+
+      # Bench does not gate (absolute numbers are machine-dependent) — it is logged for tracking.
+      - name: Bench (not gating)
+        continue-on-error: true
+        run: |
+          $(swift build --show-bin-path)/sextant index --project . >/dev/null 2>&1 || true
+          $(swift build --show-bin-path)/sextant bench --project . \
+            --symbols RepoMap,IndexStore,RuleEngine --iterations 10

@@ -1,0 +1,43 @@
+name: Feature request
+description: Propose a capability or a change in behaviour
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before writing: [docs/roadmap.md](../blob/main/docs/roadmap.md) lists what is planned
+        and what was deliberately cut, with reasons. Several obvious ideas (file watching,
+        vector search, non-Swift semantics) are non-goals for v1 rather than oversights.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you unable to do today?
+      description: >
+        Describe the situation, not the solution. What question about a codebase are you
+        trying to answer, and what does answering it cost you right now?
+    validations:
+      required: true
+
+  - type: textarea
+    id: current-workaround
+    attributes:
+      label: How do you work around it now?
+      description: Which commands or tools do you fall back to, and what does that cost?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What do you propose?
+      description: Optional. A rough shape is fine.
+
+  - type: textarea
+    id: measurement
+    attributes:
+      label: How would we know it worked?
+      description: >
+        This project gates features on measured benefit rather than plausibility. What would
+        you measure to show the change helped — tokens, latency, a correctness case that
+        currently fails?

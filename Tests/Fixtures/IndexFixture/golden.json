@@ -1,0 +1,21 @@
+{
+  "assertions": [
+    { "query": "defs", "symbol": "EnglishGreeter", "minCount": 1, "pathContains": "Code.swift" },
+    { "query": "refs", "symbol": "EnglishGreeter", "minCount": 1 },
+    { "query": "impls", "symbol": "Greeter", "containsName": "EnglishGreeter" },
+    { "query": "impls", "symbol": "Greeter", "containsName": "FrenchGreeter" },
+    { "query": "supertypes", "symbol": "EnglishGreeter", "containsName": "Greeter" },
+    { "query": "refs", "symbol": "Greeter", "noPathContains": "/.build/" },
+
+    { "query": "defs", "symbol": "greet", "minCount": 3 },
+    { "query": "refs", "symbol": "greet", "minCount": 3 },
+    { "query": "callers", "symbol": "greet", "minCount": 3 },
+
+    { "query": "defs", "symbol": "parse", "minCount": 2 },
+    { "query": "refs", "symbol": "parse", "minCount": 2 },
+    { "query": "impls", "symbol": "Parser", "containsName": "RuleParser" },
+
+    { "query": "defs", "symbol": "make", "minCount": 1 },
+    { "query": "refs", "symbol": "onTap", "minCount": 1 }
+  ]
+}
