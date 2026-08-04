@@ -13,8 +13,11 @@ Human-readable text output is not covered — parse `--json`, not prose.
 
 ## [Unreleased]
 
-First public release. Everything below ships together; see [RELEASING.md](RELEASING.md) for
-how this section becomes a version.
+Nothing yet.
+
+## [0.7.0] — 2026-08-05
+
+First public release.
 
 ### Added
 
