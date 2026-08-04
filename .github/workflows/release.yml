@@ -102,7 +102,19 @@ jobs:
           lipo -create -output dist/sextant "$arm_bin" "$intel_bin"
           chmod +x dist/sextant
           # An assertion, not just a log line: a binary of the wrong architecture must not ship.
-          lipo -info dist/sextant | grep -q "arm64 x86_64" || { echo "::error::universal binary is missing one of the architectures"; exit 1; }
+          # Each architecture is checked on its own. `lipo -info` prints them in its own
+          # canonical order (x86_64 first), so matching an adjacent "arm64 x86_64" pair fails
+          # on a perfectly good binary — that false negative blocked the 0.7.0 release once.
+          # The output is echoed before the check: an assertion that swallows what it saw
+          # cannot be diagnosed from the log.
+          info="$(lipo -info dist/sextant)"
+          echo "$info"
+          for arch in arm64 x86_64; do
+            case "$info" in
+              *"$arch"*) ;;
+              *) echo "::error::universal binary is missing $arch"; exit 1 ;;
+            esac
+          done
           file dist/sextant
           # Logged: the dynamic dependency list — anything non-system breaks portability.
           otool -L dist/sextant
