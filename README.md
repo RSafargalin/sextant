@@ -26,7 +26,7 @@ $ sextant context ProjectConfig
 ── ProjectConfig  [struct]
    def: Sources/SextantCore/ProjectConfig.swift:4  public struct ProjectConfig: Codable, Sendable {
    usages: 12
-     • Sources/SextantCore/ProjectConfig.swift:31  return .loaded(try JSONDecoder().decode(ProjectConfig.self, from: data))
+     • Sources/SextantCore/ProjectConfig.swift:21  case loaded(ProjectConfig)
      • Sources/sextant/IndexCommands.swift:47  switch ProjectConfig.read(projectRoot: root) {
      • Sources/sextant/MCPServer.swift:63  switch ProjectConfig.read(projectRoot: project) {
      • Sources/sextant/main.swift:41  func loadConfig(_ arguments: [String]) -> ProjectConfig? {
