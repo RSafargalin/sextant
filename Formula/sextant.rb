@@ -9,10 +9,10 @@ class Sextant < Formula
   desc "Code intelligence CLI for Swift projects: repository map, structural search, semantics"
   homepage "https://github.com/RSafargalin/sextant"
   license "Apache-2.0"
-  # PLACEHOLDERS: filled in from the GitHub Release notes after release.yml has run.
-  version "0.0.0"
-  url "https://github.com/RSafargalin/sextant/releases/download/v0.0.0/sextant-0.0.0-macos-universal.tar.gz"
-  sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+  # Updated per release from the block that release.yml prints into the GitHub Release notes.
+  version "0.7.0"
+  url "https://github.com/RSafargalin/sextant/releases/download/v0.7.0/sextant-0.7.0-macos-universal.tar.gz"
+  sha256 "f3279d37135a80ce6ffa146cc9053aea5cb12a04a2a430c2a86422c963213b2a"
 
   # The binary targets macOS 13+ (see platforms in Package.swift).
   depends_on macos: :ventura
