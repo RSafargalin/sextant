@@ -21,6 +21,12 @@
     { "query": "defs", "symbol": "OCGreeter", "minCount": 1, "pathContains": ".m" },
     { "query": "refs", "symbol": "OCGreeter", "minCount": 1 },
     { "query": "defs", "symbol": "ocGreetWithName", "minCount": 1 },
-    { "query": "callers", "symbol": "ocGreetWithName", "minCount": 1 }
+    { "query": "callers", "symbol": "ocGreetWithName", "minCount": 1 },
+
+    { "query": "defs", "symbol": "c_fixture_double", "minCount": 1, "pathContains": ".c" },
+    { "query": "callers", "symbol": "c_fixture_double", "minCount": 1 },
+    { "query": "defs", "symbol": "Counter", "minCount": 1, "pathContains": ".hpp" },
+    { "query": "defs", "symbol": "bump", "minCount": 1, "pathContains": ".cpp" },
+    { "query": "defs", "symbol": "Widget", "minCount": 1 }
   ]
 }

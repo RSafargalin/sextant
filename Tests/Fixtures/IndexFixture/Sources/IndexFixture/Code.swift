@@ -1,4 +1,5 @@
 import ObjCFixture
+import CFixture
 
 public protocol Greeter {
     func greet() -> String
@@ -72,4 +73,9 @@ public func useButton() {
 public func useObjC() -> String {
     let greeter = OCGreeter()
     return greeter.ocGreet(withName: "x") + "\(OCGreeter.ocDefaultCount())"
+}
+
+/// A cross-language call into C, so `callers` has something to find there too.
+public func useC() -> Int32 {
+    c_fixture_double(21)
 }
