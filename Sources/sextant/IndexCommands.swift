@@ -238,12 +238,16 @@ private final class IndexMemo: @unchecked Sendable {
 
 private let indexMemo = IndexMemo()
 
-func openIndex(_ arguments: [String], label: String, listen: Bool = false) -> IndexStoreSet? {
+/// `quiet` подавляет сообщение об отсутствии стора: вызывающий сам объяснит, что именно
+/// потеряно. Две строки об одном и том же читаются как две разные проблемы.
+func openIndex(_ arguments: [String], label: String, listen: Bool = false, quiet: Bool = false) -> IndexStoreSet? {
     ensureFreshIndex(arguments)
     let (storePaths, source) = resolveIndex(in: arguments)
     guard !storePaths.isEmpty,
           let libraryPath = optionValue("--index-lib", in: arguments) ?? discoverIndexStoreLibrary() else {
-        reportError("sextant \(label): no index store found (sextant index / an Xcode build / --index-store).")
+        if !quiet {
+            reportError("sextant \(label): no index store found (sextant index / an Xcode build / --index-store).")
+        }
         return nil
     }
     // Provenance on stderr — the single place that marks source and freshness, which is what
