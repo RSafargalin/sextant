@@ -44,6 +44,12 @@ First public release.
 
 ### Fixed
 
+- **`api` reports the public surface of Objective-C and C targets.** In SwiftPM a target's
+  public headers live in `include/`, which is the module map's own answer to what the target
+  exposes — so this is the layout's definition of public, not a guess. C++ headers are
+  deliberately refused: they declare private members alongside public ones and the index carries
+  no access level, so listing them would present private members as public API. `api` says how
+  many it left out rather than returning a surface that looks complete.
 - **`map` covers Objective-C, C and C++.** Non-Swift files are read from the compiler index
   rather than through a second parser, so the repository map shows the whole project instead of
   its Swift half. A declaration repeated in a header and its implementation is listed once;

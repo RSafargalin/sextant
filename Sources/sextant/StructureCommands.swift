@@ -128,11 +128,21 @@ func runAPI(arguments: [String]) -> Int32 {
     guard withinScale(root, includeTests: false, arguments: arguments) else { return 1 }
     let package = optionValue("--package", in: arguments)
     let type = optionValue("--type", in: arguments)
+    let index = clangIndex(root: root, arguments: arguments, includeTests: false)
+    // Public headers that only C++ declares are left out on purpose: the index has no access
+    // level, so their private members would be presented as public API. Say how many, or the
+    // surface looks complete when it is not.
+    let skipped = IndexDeclarations.publicHeaderSummaries(
+        root: URL(fileURLWithPath: root, isDirectory: true), index: index, package: package
+    ).skippedCxxHeaders
+    if skipped > 0 {
+        reportError("⚠ \(skipped) C++ public header(s) omitted: the index carries no access level, so public and private members cannot be told apart.")
+    }
     if arguments.contains("--json") {
-        printJSON(PublicAPI.summaries(projectRoot: root, package: package, type: type))
+        printJSON(PublicAPI.summaries(projectRoot: root, package: package, type: type, index: index))
         return 0
     }
-    print(PublicAPI.generate(projectRoot: root, package: package, type: type))
+    print(PublicAPI.generate(projectRoot: root, package: package, type: type, index: index))
     return 0
 }
 
