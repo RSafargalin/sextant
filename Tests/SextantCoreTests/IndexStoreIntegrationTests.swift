@@ -71,6 +71,19 @@ struct IndexStoreIntegrationTests {
         #expect((objcCallers.first?.references.count ?? 0) >= 1,
                 "a Swift call spelled ocGreet(withName:) must be found as a caller of the selector")
 
+        // The three relation queries, on symbols where they have an answer. Asking them of a
+        // class returns nothing — correctly so, and that empty result was once mistaken for a gap.
+        let conformers = index.related(toName: "OCFeeding", query: .implementations)
+        #expect(conformers.contains { $0.name == "OCGreeter" } && conformers.contains { $0.name == "OCFeeder" },
+                "an Objective-C protocol must list its conformers, as a Swift protocol does")
+        #expect(index.related(toName: "OCGreeter", query: .implementations).isEmpty,
+                "a class is not a protocol: no implementations, and that is the right answer")
+
+        // Objective-C calling Objective-C: an edge that does not cross the language boundary.
+        let callees = index.related(toName: "ocFeedTwice", query: .callees)
+        #expect(callees.contains { $0.name.hasPrefix("ocFeed") },
+                "ocFeedTwice calls ocFeed, and the index records it")
+
         // Documenting actual behaviour: SDK symbols do not resolve by name in a project store
         // (only Reference roles exist), so the result is empty. A fallback anchor cannot be a call site.
         #expect(index.lookup(name: "String", query: .references).isEmpty)
