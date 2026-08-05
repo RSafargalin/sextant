@@ -8,9 +8,13 @@ let package = Package(
         // Objective-C target: the semantic layer must resolve across the language boundary,
         // and Objective-C names are stored as selectors rather than in Swift's spelling.
         .target(name: "ObjCFixture"),
+        // C and C++ targets: the index records all of the clang family, and the claim that
+        // sextant reads them needs regression cover, not just a scratch experiment.
+        .target(name: "CFixture"),
+        .target(name: "CxxFixture"),
         .target(
             name: "IndexFixture",
-            dependencies: ["ObjCFixture"],
+            dependencies: ["ObjCFixture", "CFixture"],
             // The language mode is pinned so the fixture compiles identically on every
             // toolchain. Left implicit, strictness follows whichever Swift the machine has,
             // and CI fails on a compiler stricter than the developer's.

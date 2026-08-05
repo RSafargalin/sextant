@@ -44,6 +44,13 @@ First public release.
 
 ### Fixed
 
+- **`body` works across the C family.** It parsed every file with SwiftParser, which silently
+  mis-handled anything that was not Swift: an Objective-C `@implementation` returned nothing at
+  all, so did a C function, and a C++ struct happened to parse as Swift and came back missing its
+  trailing `;`. Non-Swift declarations are now delimited instead of parsed — the index already
+  gives the exact definition line, so only the end has to be found. Objective-C containers run to
+  `@end`, prototypes stop at their semicolon, and braces inside strings, character literals and
+  comments are skipped rather than counted.
 - **`api` reports the public surface of Objective-C and C targets.** In SwiftPM a target's
   public headers live in `include/`, which is the module map's own answer to what the target
   exposes — so this is the layout's definition of public, not a guess. C++ headers are
