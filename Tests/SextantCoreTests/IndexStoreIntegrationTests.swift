@@ -46,6 +46,31 @@ struct IndexStoreIntegrationTests {
         // (the index stores it with labels as `greet()`, so a bare name never matches exactly).
         #expect(index.lookup(name: "greet", query: .definitions).contains { $0.name.hasPrefix("greet") })
 
+        // Cross-language resolution. The index is written by the whole clang family, not just
+        // swiftc, so Objective-C declarations are in the same store — and a Swift call site
+        // resolves to the Objective-C symbol it actually calls.
+        //
+        // The naming convention differs per language, which is the part that used to break:
+        // Objective-C methods are stored as selectors (`ocGreetWithName:`), so neither an exact
+        // match nor Swift's `name(` shape finds them by their bare name.
+        let objcClass = index.lookup(name: "OCGreeter", query: .definitions)
+        #expect(objcClass.contains { $0.definition?.path.hasSuffix(".m") == true },
+                "an Objective-C class must resolve to its .m implementation")
+        #expect((index.lookup(name: "OCGreeter", query: .references).first?.references.count ?? 0) >= 1,
+                "the Swift call site references the Objective-C class")
+
+        // No arguments — the selector equals the bare name, so this worked before the fix too.
+        #expect(index.lookup(name: "ocDefaultCount", query: .definitions).contains { $0.name == "ocDefaultCount" })
+
+        // Regression guard for the selector clause: with arguments the stored name carries a
+        // colon, and the bare name resolved to nothing at all before it was added.
+        let selector = index.lookup(name: "ocGreetWithName", query: .definitions)
+        #expect(selector.contains { $0.name.hasPrefix("ocGreetWithName") },
+                "a bare Objective-C method name must resolve to its selector")
+        let objcCallers = index.lookup(name: "ocGreetWithName", query: .callers)
+        #expect((objcCallers.first?.references.count ?? 0) >= 1,
+                "a Swift call spelled ocGreet(withName:) must be found as a caller of the selector")
+
         // Documenting actual behaviour: SDK symbols do not resolve by name in a project store
         // (only Reference roles exist), so the result is empty. A fallback anchor cannot be a call site.
         #expect(index.lookup(name: "String", query: .references).isEmpty)
