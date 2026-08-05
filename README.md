@@ -241,8 +241,8 @@ Before registering, check the setup with `sextant doctor --project <path>` — a
 
 **Non-goals for v1:** real-time file watching, vector search, a non-Swift structural layer. These are
 deliberate cuts rather than oversights; several are scheduled for later iterations in
-`docs/roadmap.md` (which, along with the architecture decision records, is in Russian — it is
-a historical record of how the tool got here).
+[docs/roadmap.md](docs/roadmap.md). The architecture decision records under `docs/adr/` are in
+Russian — they are a historical record of how the tool got here.
 
 ## Contributing
 

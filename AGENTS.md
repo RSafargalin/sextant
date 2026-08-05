@@ -58,8 +58,8 @@ wrong answer rather than a crash.
   comment; `// we use a struct here because…` is not — that belongs in an ADR.
 - No references to ADRs, issues, or discussions in code comments.
 - Comments, CLI help, MCP tool descriptions and error messages are English. Docs written for
-  people are bilingual (`*.ru.md` alongside the canonical English); `docs/adr/` and the roadmap
-  stay Russian as a historical record. See CONTRIBUTING for the full rule.
+  people are bilingual (`*.ru.md` alongside the canonical English); `docs/adr/` stays Russian as
+  a historical record. See CONTRIBUTING for the full rule.
 
 ## Evidence discipline
 

@@ -1,322 +1,361 @@
 # Roadmap — sextant
 
-Путь строится итерациями по возрастанию ценности: сначала снять главный технический
-риск дёшево, затем наращивать. Каждая итерация самостоятельно полезна и закрывается
-**гейтом** — без подтверждённой пользы дальше не идём.
+**English** | [Русский](roadmap.ru.md)
 
-- **Обновлено:** 2026-07-22
-- **Решение:** вариант B (переиспользуемый инструмент, отдельный продукт).
-- **Стратегия зрелости:** `docs/adr/0001-evolution-to-production-maturity.md` — направления
-  развития до продакшн-уровня (надёжность, оптимизация, кардинально новые слои, зона памяти).
-- **MCP-поверхность:** `docs/adr/0002-mcp-surface.md` — какие примитивы MCP поддержаны Claude Code
-  и переживут stateless-переход (на что опираемся, что игнорируем).
-- **Путь к v1.0:** `docs/adr/0003-path-to-production-v1.md` — порядок и гейты закрытия разрыва
-  до продакшн-зрелости (по ревью 2026-07-22); спринты П1–П5 идут ПЕРЕД Iter 8–10.
+The path is built in iterations of increasing value: take the main technical risk off the table
+cheaply first, then grow. Every iteration is useful on its own and closes with a **gate** —
+without confirmed value we do not move on.
 
-## Северная звезда
+- **Updated:** 2026-07-22
+- **Decision:** option B (a reusable tool, a separate product).
+- **Maturity strategy:** `docs/adr/0001-evolution-to-production-maturity.md` — the directions of
+  growth towards production level (reliability, optimisation, radically new layers, memory zone).
+- **MCP surface:** `docs/adr/0002-mcp-surface.md` — which MCP primitives Claude Code supports and
+  which will survive the stateless transition (what we lean on, what we ignore).
+- **Path to v1.0:** `docs/adr/0003-path-to-production-v1.md` — the order and the gates for closing
+  the gap to production maturity (from the 2026-07-22 review); sprints P1–P5 come BEFORE Iter 8–10.
+
+The architecture decision records are in Russian, and they number the sprints П1–П5; this
+document writes them P1–P5.
+
+## North star
 
 ```
 sextant (Swift package: CLI + MCP server)
-  L1 repo-map   — символьная карта под token-budget    (SwiftSyntax/tree-sitter)
-  L2 structural — замена grep, структурный поиск        (ast-grep)
+  L1 repo-map   — symbol map under a token budget       (SwiftSyntax/tree-sitter)
+  L2 structural — a grep replacement, structural search (ast-grep)
   L3 semantic   — defs/refs/callers/callees/public-API  (IndexStoreDB + sourcekit-lsp)
-  L4 MCP        — tools + resources для Claude Code      (stdio, .mcp.json)
-  L5 (позже)    — свежесть-автоматизация, мультиязычность
+  L4 MCP        — tools + resources for Claude Code     (stdio, .mcp.json)
+  L5 (later)    — freshness automation, multi-language
 ```
 
-## Итерации
+## Iterations
 
-### Iter 0 — Спайк (выбрасываемый). Снять главный риск. ✅ ПРОЙДЕНО (2026-06-28)
-Доказать на проекте A: headless-чтение index store через IndexStoreDB даёт точный
-find-references; решить детерминированный `-index-store-path` (убрать зависимость от
-хэшей `DerivedData/<Project>-*`).
-- **Гейт:** `refs <symbol>` точен и воспроизводим. **Результат — выполнено:**
+### Iter 0 — Spike (throwaway). Take the main risk off the table. ✅ PASSED (2026-06-28)
+Prove on project A: headless reading of an index store through IndexStoreDB gives accurate
+find-references; settle a deterministic `-index-store-path` (drop the dependency on
+`DerivedData/<Project>-*` hashes).
+- **Gate:** `refs <symbol>` is accurate and reproducible. **Result — done:**
   `sextant spike --symbol Record` → struct `s:7AppCore6RecordV`, def `Record.swift:6:15`,
-  **211** использований; `AggregatedRecordRepository` → 2 использования, кросс-модульно.
-  Сверено с исходниками (L3): определения, kind и колонки совпадают; ложных срабатываний нет.
-  Авто-обнаружение `libIndexStore.dylib` (через `xcrun`) и свежего DataStore — без конфига.
-- **Реализовано:** `IndexStore`, `DerivedDataLocator`, `SourceLocation`/`SymbolHit` (остаются как
-  seed слоя L3); CLI-команда `spike` (будет заменена на `refs`/`defs` в Iter 2).
-- **Перенесено в Iter 1/2:** *детерминированный собственный* index store через
-  `swift build --enable-index-store -index-store-path` (сейчас спайк читает DerivedData-store
-  от последней сборки Xcode — доказывает запрос, но не пайплайн свежести).
+  **211** usages; `AggregatedRecordRepository` → 2 usages, cross-module.
+  Checked against the sources (L3): definitions, kind and columns all match; no false positives.
+  Auto-discovery of `libIndexStore.dylib` (via `xcrun`) and of a fresh DataStore — no config.
+- **Shipped:** `IndexStore`, `DerivedDataLocator`, `SourceLocation`/`SymbolHit` (they stay as the
+  seed of layer L3); the `spike` CLI command (to be replaced by `refs`/`defs` in Iter 2).
+- **Deferred to Iter 1/2:** a *deterministic index store of our own* via
+  `swift build --enable-index-store -index-store-path` (the spike reads the DerivedData store from
+  the last Xcode build — that proves the query, not the freshness pipeline).
 
-### Iter 1 — CLI MVP: карта + структурный поиск. Кросс-проектный, shippable. ✅ ПРОЙДЕНО (2026-06-28)
-`sextant map --project <path>` (token-budget карта) и `sextant search <pattern>` (ast-grep).
-Дёшево, низкий риск, польза сразу.
-- **Гейт:** запустить на проекте A **и** на втором проекте; «где начать» отвечается без grep.
-  **Результат — выполнено:**
-  - `map` на проекте A (несколько пакетов + app-таргет, пара сотен файлов) → полная карта; голова карты сразу
-    показывает точки входа (`LiveAppDependencies`, `AppMain`, `ContentView`) — без grep.
-  - `map` на самом `sextant` (второй корень) → полный режим, кросс-проектность подтверждена.
-  - Token-budget деградирует: полный → компактный → усечение с подсчётом опущенного.
-  - `search` реализован как ast-grep wrapper с graceful-деградацией (подсказка, если не установлен).
-- **Реализовано:** `SwiftDeclarationExtractor` (SwiftSyntax, build-independent), `RepoMap`
-  (обход + группировка по пакетам + рендер с бюджетом), `Declaration`/`FileSummary`; команды
-  `map`, `search`. Тесты на экстрактор (9 тестов суммарно зелёные).
-- **Полировка на потом (не блокирует гейт):** ignore-globs (сейчас `docs/templates/*.swift`
-  попадают в карту как группа `docs`); ранжирование PageRank по ссылкам (сейчас навигация
-  по пакету/файлу, бюджет режёт по доступу); исключение `Package.swift` из карты.
-- **ast-grep:** для живого `search` нужен `brew install ast-grep` (пока не установлен).
+### Iter 1 — CLI MVP: map + structural search. Cross-project, shippable. ✅ PASSED (2026-06-28)
+`sextant map --project <path>` (a token-budget map) and `sextant search <pattern>` (ast-grep).
+Cheap, low risk, useful immediately.
+- **Gate:** run it on project A **and** on a second project; "where do I start" is answered without
+  grep. **Result — done:**
+  - `map` on project A (several packages + an app target, a couple of hundred files) → a full map;
+    the head of the map shows the entry points straight away (`LiveAppDependencies`, `AppMain`,
+    `ContentView`) — without grep.
+  - `map` on `sextant` itself (a second root) → full mode, cross-project use confirmed.
+  - The token budget degrades: full → compact → truncation with a count of what was omitted.
+  - `search` implemented as an ast-grep wrapper with graceful degradation (a hint if it is absent).
+- **Shipped:** `SwiftDeclarationExtractor` (SwiftSyntax, build-independent), `RepoMap`
+  (walk + grouping by package + rendering under a budget), `Declaration`/`FileSummary`; the
+  `map` and `search` commands. Tests on the extractor (9 tests green in total).
+- **Polish for later (does not block the gate):** ignore globs (today `docs/templates/*.swift`
+  land in the map as a `docs` group); PageRank ranking by references (today navigation is by
+  package/file and the budget cuts by traversal order); excluding `Package.swift` from the map.
+- **ast-grep:** a live `search` needs `brew install ast-grep` (not installed yet).
 
-### Iter 1.5 — Свой структурный движок (вариант B). ✅ ПРОЙДЕНО (2026-06-28)
-Замена внешнего ast-grep на нативный движок на SwiftSyntax. Метапеременные через
-подстановку-сентинел (`$X` → валидный идентификатор, при матчинге = wildcard со связыванием).
-- **Реализовано:** `PatternSearch` (компиляция паттерна + структурный матчинг по AST с
-  игнорированием тривиа), `StructuralMatch`, общий обход `SwiftSources`. Команда `search`
-  переведена на движок; зависимость ast-grep убрана.
-- **Гейт:** `sextant search '$X.current'` на проекте A → 13 совпадений, **точь-в-точь как grep
-  (13=13)**, но структурно (форма `expr.current`, не текст). 13 тестов зелёные.
-- **Поддержано:** одиночные `$X` (выражение-позиция), консистентность повторных имён.
+### Iter 1.5 — Our own structural engine (option B). ✅ PASSED (2026-06-28)
+Replacing the external ast-grep with a native engine on SwiftSyntax. Metavariables through
+sentinel substitution (`$X` → a valid identifier, which at match time is a binding wildcard).
+- **Shipped:** `PatternSearch` (pattern compilation + structural matching over the AST, ignoring
+  trivia), `StructuralMatch`, a shared `SwiftSources` walk. The `search` command moved onto the
+  engine; the ast-grep dependency removed.
+- **Gate:** `sextant search '$X.current'` on project A → 13 matches, **exactly as grep (13=13)**,
+  but structurally (the shape `expr.current`, not text). 13 tests green.
+- **Supported:** single `$X` (expression position), consistency of repeated names.
 
-### Iter 1.6 — Вариадик + движок правил гигиены. ✅ ПРОЙДЕНО (2026-06-28)
-Достройка движка до вариадика и точной AST-замены regex-гигиены.
-- **Реализовано:** вариадик `$$$` / `$$$Name` (поглощает любое число элементов списка, prefix+suffix),
-  `Rule`/`RuleViolation`, `RuleEngine` (встроенные правила + загрузка из JSON через `--rules`),
-  команда `lint`.
-- **Гейт (L3, сверено с grep):** `lint` на проекте A → десятки нарушений: `system-state` 13
-  (`.current`), `force-try` 39 (= grep `try!` 39), `print-call` 0. Точь-в-точь, без ложных
-  срабатываний. 17 тестов зелёные.
-- **Ценность:** `sextant lint` = переиспользуемый AST-чекер гигиены, точнее regex-скрипта;
-  правила конфигурируются JSON-файлом на проект.
-- **Отложено:** паттерны-statement (`guard … else`), именованные вариадики со связыванием,
+### Iter 1.6 — Variadics + a hygiene rule engine. ✅ PASSED (2026-06-28)
+Growing the engine to variadics and to an exact AST replacement for regex hygiene checks.
+- **Shipped:** variadic `$$$` / `$$$Name` (absorbs any number of list elements, prefix+suffix),
+  `Rule`/`RuleViolation`, `RuleEngine` (built-in rules + loading from JSON via `--rules`), the
+  `lint` command.
+- **Gate (L3, checked against grep):** `lint` on project A → dozens of violations: `system-state`
+  13 (`.current`), `force-try` 39 (= grep `try!` 39), `print-call` 0. Exact, with no false
+  positives. 17 tests green.
+- **Value:** `sextant lint` = a reusable AST hygiene checker, more precise than a regex script;
+  rules are configured per project by a JSON file.
+- **Deferred:** statement patterns (`guard … else`), named variadics with binding,
   rewrite/codemod.
 
-### Iter 2.1 — Семантические команды. Дифференциатор. ✅ ПРОЙДЕНО (2026-06-28)
-`refs`/`defs`/`callers` (IndexStoreDB) + `api` (синтаксис, build-independent). Версия 0.2.0.
-- **Реализовано:** `SymbolQuery` (definitions/references/callers по ролям индекса), команды
-  `refs`/`defs`/`callers` (продуктизация спайка), `PublicAPI` + команда `api`. Фильтр
-  не-системных символов (иначе `Record` коллизирует со SwiftUI). Чистка сигнатур в `api`.
-- **Гейт (L3):** `defs Record` → AppCore/Models/Record.swift:6:15; `refs Record` → 211;
-  `api --package AppFeature` → публичная поверхность. 19 тестов зелёные.
-- **Известные нюансы:** `callers` по конкретному USR не ловит вызовы через протокол/динамическую
-  диспетчеризацию (идут на требование протокола); перегрузки разбиваются по USR. `callees` отложен.
-- **Перенесено в Iter 2.2:** детерминированный собственный store через `swift build
-  --enable-index-store` (сейчас читается DerivedData от последней сборки Xcode — есть лаг свежести).
+### Iter 2.1 — Semantic commands. The differentiator. ✅ PASSED (2026-06-28)
+`refs`/`defs`/`callers` (IndexStoreDB) + `api` (syntactic, build-independent). Version 0.2.0.
+- **Shipped:** `SymbolQuery` (definitions/references/callers by index roles), the
+  `refs`/`defs`/`callers` commands (the spike turned into a product), `PublicAPI` + the `api`
+  command. A filter for non-system symbols (otherwise `Record` collides with SwiftUI). Signature
+  cleanup in `api`.
+- **Gate (L3):** `defs Record` → AppCore/Models/Record.swift:6:15; `refs Record` → 211;
+  `api --package AppFeature` → the public surface. 19 tests green.
+- **Known caveats:** `callers` for a specific USR does not catch calls through a protocol or
+  dynamic dispatch (those land on the protocol requirement); overloads are split by USR.
+  `callees` deferred.
+- **Deferred to Iter 2.2:** a deterministic store of our own via `swift build
+  --enable-index-store` (today DerivedData from the last Xcode build is read — there is a
+  freshness lag).
 
-### Iter 2.2 — Детерминированный index store. ✅ ПРОЙДЕНО (2026-06-28)
-Собственный store через сборку, без зависимости от Xcode. Версия 0.2.1.
-- **Находка:** у `swift build` НЕТ `--index-store-path`; `--enable-index-store` кладёт store в
-  `.build/<triple>/debug/index/store` (детерминированно, по store на пакет).
-- **Реализовано:** команда `index` (`swift build --enable-index-store` по всем SPM-пакетам:
-  корень + `Packages/*`), `IndexStoreLocator` (поиск пакетов и сторов), `IndexStoreSet`
-  (объединение N сторов с дедупом по USR и позиции — для многопакетных проектов). Резолв
-  store: `--index-store` → SPM-сторы проекта → DerivedData (fallback).
-- **Гейт (L3):** на самом sextant — `index` собрал store в `.build/.../index/store`;
-  `refs RepoMap` → def `RepoMap.swift:5:13` + 2 использования, из SPM-стора (НЕ Xcode).
-  21 тест зелёный. (Union на проекте A отрабатывает при `index --project <корень A>` — несколько пакетов.)
+### Iter 2.2 — A deterministic index store. ✅ PASSED (2026-06-28)
+Our own store, produced by a build, with no dependency on Xcode. Version 0.2.1.
+- **Finding:** `swift build` has NO `--index-store-path`; `--enable-index-store` puts the store in
+  `.build/<triple>/debug/index/store` (deterministic, one store per package).
+- **Shipped:** the `index` command (`swift build --enable-index-store` across every SPM package:
+  the root + `Packages/*`), `IndexStoreLocator` (finding packages and stores), `IndexStoreSet`
+  (merging N stores with dedup by USR and position — for multi-package projects). Store
+  resolution: `--index-store` → the project's SPM stores → DerivedData (fallback).
+- **Gate (L3):** on sextant itself — `index` built a store in `.build/.../index/store`;
+  `refs RepoMap` → def `RepoMap.swift:5:13` + 2 usages, from the SPM store (NOT Xcode).
+  21 tests green. (The union works on project A with `index --project <root of A>` — several
+  packages.)
 
-### Iter 2.5 — Hardening (по анализу состояния). ✅ ПРОЙДЕНО (2026-06-28)
-Подготовка к MCP: латентность, кэш, тесты, де-риск масштаба. Версия 0.2.2.
-- **`SourceParseCache`** (Core) — кэш AST по mtime; проведён через map/api/search/lint.
-  В одном вызове — парс файла один раз; в долгоживущем процессе (MCP) греет AST между запросами.
-- **Фикс `lint`** — парс файла один раз на все паттерны: **38.7с → 18.4с** (остаток — матчинг
-  5 паттернов отдельными обходами; добивается одиночным обходом-мульти-паттерн — отложено).
-- **Стабильный путь БД индекса** — переиспользование между запусками: `refs Record`
-  **2.1с холодный → 0.22с тёплый** (10×; критично для MCP).
-- **Тесты** на `IndexStoreSet.merge` (union/дедуп), `RepoMap` (бюджет/деградация), кэш. 26 тестов.
-- **Де-риск проекта A (реальный прогон всех пакетов, 6 мин):** `index` собрал сторы; нашёл и
-  починил **двойной счёт union** разнокорневых сторов (DD из другого checkout, чем SPM) —
-  резолв вернул к «SPM если есть, иначе DerivedData» (единый корень → чистый дедуп);
-  `refs Record` 416→214.
-- **Union дублей НЕ даёт (L3, версия 0.2.3):** все 214 ссылок `Record` уникальны (`uniq -d` пусто),
-  единый корень. Прежняя оценка «~5% дубль» была ОШИБКОЙ сравнения (214 SPM-пакеты vs 202
-  DerivedData — разные scope, не дубли). «Определение дважды» — артефакт вывода `defs`
-  (печатал def-заголовок + то же вхождение), исправлено. Добавлены флаги `--full-paths`, `--limit`.
-- **Известные ограничения:** (1) SPM-индекс покрывает пакеты, НЕ app-таргет xcodeproj
-  (app — через DerivedData / отдельную индексацию app, план); (2) `lint` всего проекта ~18с
-  (агент линтует точечно).
+### Iter 2.5 — Hardening (from a state review). ✅ PASSED (2026-06-28)
+Preparing for MCP: latency, caching, tests, de-risking scale. Version 0.2.2.
+- **`SourceParseCache`** (Core) — an AST cache keyed by mtime; threaded through map/api/search/lint.
+  Within one invocation a file is parsed once; in a long-lived process (MCP) it keeps the AST warm
+  between requests.
+- **`lint` fix** — parse each file once for all patterns: **38.7s → 18.4s** (the remainder is
+  matching 5 patterns in separate walks; a single multi-pattern walk would finish the job —
+  deferred).
+- **A stable index database path** — reuse between runs: `refs Record` **2.1s cold → 0.22s warm**
+  (10×; critical for MCP).
+- **Tests** on `IndexStoreSet.merge` (union/dedup), `RepoMap` (budget/degradation), the cache.
+  26 tests.
+- **De-risking on project A (a real run over all packages, 6 min):** `index` built the stores;
+  found and fixed a **double count in the union** of stores with different roots (DerivedData from
+  a different checkout than SPM) — resolution went back to "SPM if present, otherwise DerivedData"
+  (a single root → clean dedup); `refs Record` 416→214.
+- **The union does NOT produce duplicates (L3, version 0.2.3):** all 214 `Record` references are
+  unique (`uniq -d` empty), one root. The earlier estimate of "~5% duplicates" was a MISTAKEN
+  comparison (214 SPM packages vs 202 DerivedData — different scopes, not duplicates). "The
+  definition twice" was an artefact of `defs` output (it printed the def header plus the same
+  occurrence), fixed. Added the `--full-paths` and `--limit` flags.
+- **Known limitations:** (1) the SPM index covers packages, NOT an xcodeproj app target (the app
+  goes through DerivedData / separate app indexing, planned); (2) `lint` over a whole project is
+  ~18s (an agent lints narrowly).
 
-### Iter 2.6 — Acquisition-робастность (generalization). В работе.
-Из аудита на проекте Б: резолв индекса был overfit под проект A.
-- **2.6a ✅ ПРОЙДЕНО (2026-06-29, v0.2.5):** резолв DerivedData по `info.plist` WorkspacePath ⊂
-  project (не по имени схемы), предпочтение app-workspace (`.xcodeproj`/`.xcworkspace`) над
-  `Package.swift` вложенного пакета. Удалён name-based `discoverDataStore` и хардкод имени проекта
-  (M3). Гейт (L3): `refs AuthManager --project <корень Б>` авто-резолвится (раньше «не найден»);
-  проект A без регресса. 38 тестов. Заодно чинит старый 416 (отсекает чужой worktree).
-- **2.6b ✅ ПРОЙДЕНО (v0.2.6):** зонтичный `index` — один проход вместо N, общие зависимости
-  компилируются раз. Платформы/продукты из манифестов (`swift package dump-package`), не хардкод.
-  single-пакет → прямая сборка; multi → зонт; стор в кэше (`~/Library/Caches/sextant`).
-  Гейт (L3): проект A 360с→113с, единый store, refs Record=202. iOS-only пакеты → понятная ошибка.
-- **2.6c ✅ ПРОЙДЕНО (v0.2.7):** scope-контроль. `--scope <подкаталог>` сужает область;
-  `--max-files <N>` (дефолт 4000) с ранним выходом. Гейт (L3): проект Б `map` без scope → гард за 1.74с
-  (не зависает на дереве в сотни тысяч файлов); `--scope AppTarget/SomeFolder` → работает; проект A не задет.
-- **G1 ✅ проверено:** стейла тёплой БД в CLI нет (переимпорт при каждом открытии). Для MCP —
-  нужен `listenToUnitEvents: true` / переоткрытие (требование Iter 3).
+### Iter 2.6 — Acquisition robustness (generalisation). In progress.
+From an audit on project B: index resolution was overfitted to project A.
+- **2.6a ✅ PASSED (2026-06-29, v0.2.5):** DerivedData resolution by the `info.plist` WorkspacePath
+  ⊂ project (not by scheme name), preferring an app workspace (`.xcodeproj`/`.xcworkspace`) over a
+  nested package's `Package.swift`. The name-based `discoverDataStore` and the hard-coded project
+  name removed (M3). Gate (L3): `refs AuthManager --project <root of B>` resolves automatically
+  (previously "not found"); project A with no regression. 38 tests. Fixes the old 416 on the way
+  (it cuts off a foreign worktree).
+- **2.6b ✅ PASSED (v0.2.6):** an umbrella `index` — one pass instead of N, shared dependencies
+  compiled once. Platforms and products from the manifests (`swift package dump-package`), not
+  hard-coded. Single package → a direct build; multi → the umbrella; the store lives in the cache
+  (`~/Library/Caches/sextant`). Gate (L3): project A 360s→113s, one store, refs Record=202.
+  iOS-only packages → a clear error.
+- **2.6c ✅ PASSED (v0.2.7):** scope control. `--scope <subdirectory>` narrows the area;
+  `--max-files <N>` (default 4000) with an early exit. Gate (L3): project B `map` with no scope →
+  guarded in 1.74s (it does not hang on a tree of hundreds of thousands of files);
+  `--scope AppTarget/SomeFolder` → works; project A untouched.
+- **G1 ✅ checked:** there is no staleness in a warm database in the CLI (it re-imports on every
+  open). For MCP, `listenToUnitEvents: true` / reopening is needed (a requirement of Iter 3).
 
-### Pre-MCP спринт — все не-MCP обещания закрыты (v0.5.6, done)
-Семь пунктов «качественно и надёжно, без компромиссов» перед MCP:
-1. **Транзитивный call-hierarchy** (`hierarchy --callees/--callers --depth N`) — рекурсия по
-   IndexStoreDB relations, cycle-detection, дерево + `--json`.
-2. **callers через протокол-диспетчеризацию** — учёт relation `.overrideOf`. Попутно крупный фикс:
-   **метод-резолв** (имена в индексе с argument-labels `parse(_:referenceDate:)`) — раньше
-   refs/defs/callers/callees молча не работали для функций (типы скрывали баг).
-3. **PageRank repo-map** (`map --pagerank`) — граф ссылок из индекса → центральность файлов.
-4. **`--reindex`** — пересборка индекса перед запросом (свежесть на сборку).
-5. **App-таргет** (`index --app`) — xcodebuild + `COMPILER_INDEX_STORE_ENABLE`, автодетект схемы;
-   покрывает символы app-таргета, которых нет в SPM-индексе (L3: `refs LiveAppDependencies`).
-6. **Дистрибуция** (`make install`) — release-бинарь в `~/.local/bin`.
-7. **Интеграционные тесты ядра** — фикстура-мини-пакет: build → index → defs/impls/refs на
-   реальном IndexStoreDB (закрыт аудит-P0). 50 тестов, `make ci` зелёный.
+### Pre-MCP sprint — every non-MCP promise closed (v0.5.6, done)
+Seven items of "properly and reliably, no compromises" before MCP:
+1. **Transitive call hierarchy** (`hierarchy --callees/--callers --depth N`) — recursion over
+   IndexStoreDB relations, cycle detection, a tree plus `--json`.
+2. **`callers` through protocol dispatch** — accounting for the `.overrideOf` relation. A major fix
+   came with it: **method resolution** (names in the index carry argument labels,
+   `parse(_:referenceDate:)`) — before that refs/defs/callers/callees silently did not work for
+   functions (types were hiding the bug).
+3. **PageRank repo map** (`map --pagerank`) — a reference graph from the index → file centrality.
+4. **`--reindex`** — rebuilding the index before a query (freshness at build granularity).
+5. **App target** (`index --app`) — xcodebuild + `COMPILER_INDEX_STORE_ENABLE`, scheme
+   auto-detection; covers app-target symbols that are absent from the SPM index
+   (L3: `refs LiveAppDependencies`).
+6. **Distribution** (`make install`) — a release binary into `~/.local/bin`.
+7. **Integration tests for the core** — a miniature package fixture: build → index →
+   defs/impls/refs against a real IndexStoreDB (closes audit finding P0). 50 tests, `make ci`
+   green.
 
-### Iter 3 — MCP-обёртка. Интеграция с Claude Code. (v0.5.11, ✅)
-Реализовано: `sextant mcp` — stdio MCP-сервер (JSON-RPC 2.0, spec 2025-06-18), последовательный
-цикл (один клиент → без concurrency-хазардов), прогретый `IndexStoreSet` при старте. **9 инструментов:**
-`context` (headline — сводка по символу одним вызовом вместо серии grep), `who_defines`,
-`find_references`, `find_callers`, `list_implementations`, `call_hierarchy`, `repo_map`,
-`structural_search` (паттерн по AST — замена grep), `lint`. Контракт — в Core (`MCPTools`), тест.
-**Live-свежесть:** `listenToUnitEvents`=true + `pollForUnitChangesAndWait` перед каждым вызовом →
-подхватывает реиндексацию без рестарта. L3: initialize/tools-list/tools-call/ping/notification/
-error-paths проверены. Регистрация: `claude mcp add` / `.mcp.json` (README).
-Параллельно закрыт **edge bare-name** (parse/validate): resolveOccurrences коротко-замыкался на
-`canonicalOccurrences(ofName:)` — один нерелевантный точный символ скрывал методы; фикс — всегда
-префиксный поиск с фильтром `== name || name(`.
-- **Гейт (осталось):** в живой сессии агент берёт MCP вместо grep; замерить падение grep.
-- **Дальше по аппетиту:** resource `repo_map` с подпиской; PageRank-веса/функции; мульти-проект (Iter 4).
+### Iter 3 — The MCP wrapper. Integration with Claude Code. (v0.5.11, ✅)
+Shipped: `sextant mcp` — a stdio MCP server (JSON-RPC 2.0, spec 2025-06-18), a sequential loop
+(one client → no concurrency hazards), a warmed `IndexStoreSet` at start-up. **9 tools:**
+`context` (the headline — a summary of a symbol in one call instead of a series of greps),
+`who_defines`, `find_references`, `find_callers`, `list_implementations`, `call_hierarchy`,
+`repo_map`, `structural_search` (an AST pattern — a grep replacement), `lint`. The contract lives
+in Core (`MCPTools`), with a test.
+**Live freshness:** `listenToUnitEvents`=true + `pollForUnitChangesAndWait` before every call →
+it picks up a reindex without a restart. L3: initialize/tools-list/tools-call/ping/notification/
+error paths all checked. Registration: `claude mcp add` / `.mcp.json` (README).
+A **bare-name edge case** (parse/validate) was closed alongside: resolveOccurrences short-circuited
+on `canonicalOccurrences(ofName:)` — one irrelevant exact symbol hid the methods; the fix is to
+always search by prefix with a `== name || name(` filter.
+- **Gate (outstanding):** in a live session the agent reaches for MCP instead of grep; measure the
+  drop in grep usage.
+- **Next, by appetite:** a `repo_map` resource with a subscription; PageRank weights/functions;
+  multi-project (Iter 4).
 
-### Полевой спринт (2026-07, v0.6.0) — доработки по полевому отчёту ✅
+### Field sprint (2026-07, v0.6.0) — work from a field report ✅
 
-Вход: полевой отчёт агентской сессии (~79% экономии токенов на Swift-навигации).
-Закрыто: **P0 MCP не подхватывал свежесобранный индекс** (ре-открытие по сигнатуре стора +
-poll); **P2 `repo_map` игнорировал budget**; **P2 `api --type`/`--scope`** (в CLI);
-`body` (тело объявления — закрыт фолбэк «defs не раскрывает тело»); `changed` (символьный
-git-дифф), `construct`, `doctor --fix`, подсказки при промахах, opt-in телеметрия.
-P1 (closures/static-методы) — спайком признан не-багом резолвера, смягчён текстовым фолбэком.
+Input: a field report from an agent session (~79% token saving on Swift navigation).
+Closed: **P0 MCP did not pick up a freshly built index** (store reopened by signature + poll);
+**P2 `repo_map` ignored the budget**; **P2 `api --type`/`--scope`** (in the CLI); `body` (the text
+of a declaration — closes the "defs does not reveal the body" fallback); `changed` (a symbol-level
+git diff), `construct`, `doctor --fix`, hints on a miss, opt-in telemetry.
+P1 (closures/static methods) — a spike found it was not a resolver bug; softened with a textual
+fallback.
 
-### Ревью 2026-07-22 — полное ревью инструмента, 4 major-фикса ✅
+### Review 2026-07-22 — a full review of the tool, 4 major fixes ✅
 
-Четыре независимые линзы (архитектура, корректность, UX/гибкость, тесты). Исправлены
-4 major-бага «тихой неправоты»: `changed` при `--project`-подкаталоге (пути от корня репо,
-`-z` для не-ASCII имён); `api` терял члены `public extension` и требования `public protocol`
-(наследование доступа + bump кэша declarations-v2); MCP отдавал устаревшие сниппеты
-(свежий `SourceLineReader` на сообщение); `defs`/`body` выдавали ссылку за определение
-(fallback больше не заполняет `definition`). 79 тестов зелёные. Выявленный долг и порядок
-его закрытия зафиксированы в **ADR-0003** (спринты П1–П5).
+Four independent lenses (architecture, correctness, UX/flexibility, tests). Four major bugs of
+"silent wrongness" fixed: `changed` under a `--project` subdirectory (paths from the repo root,
+`-z` for non-ASCII names); `api` lost `public extension` members and `public protocol`
+requirements (access inheritance + a declarations-v2 cache bump); MCP served stale snippets (a
+fresh `SourceLineReader` per message); `defs`/`body` passed a reference off as a definition (the
+fallback no longer fills in `definition`). 79 tests green. The debt this exposed, and the order in
+which to pay it down, are recorded in **ADR-0003** (sprints P1–P5).
 
-## Forward-план (Iter 4+) — к продакшн-зрелости
+## Forward plan (Iter 4+) — towards production maturity
 
-Источник: брейншторм 2026-06-29, `docs/adr/0001-evolution-to-production-maturity.md`
-(направления) и `docs/adr/0002-mcp-surface.md` (опора на MCP). Порядок по leverage/cost:
-**сначала измеримость и доверие, затем эффективность, поверхность, память, стратегический слой.**
-Зависимости явные: память (Iter 8) опирается на content-hash (Iter 5) и Resources (Iter 7).
-В скобках — номера из консолидированного бэклога (48 пунктов).
+Source: the 2026-06-29 brainstorm, `docs/adr/0001-evolution-to-production-maturity.md`
+(directions) and `docs/adr/0002-mcp-surface.md` (what to lean on in MCP). Ordered by
+leverage/cost: **measurability and trust first, then efficiency, surface, memory, and the
+strategic layer.** The dependencies are explicit: memory (Iter 8) rests on content hashing
+(Iter 5) and Resources (Iter 7). The numbers in brackets are items from the consolidated backlog
+(48 entries).
 
-**Статус 2026-07-22:** Iter 4–5 реализованы, Iter 6–7 — частично (см. пометки ниже);
-остатки Iter 6–7 и порядок дальнейшего движения — спринты П1–П5 в **ADR-0003**,
-Iter 8–10 идут после них.
+**Status 2026-07-22:** Iter 4–5 are shipped, Iter 6–7 partially (see the notes below); what is
+left of Iter 6–7, and the order of everything after it, are sprints P1–P5 in **ADR-0003**;
+Iter 8–10 come after those.
 
-### Iter 4 — Измеримость и доверие. Фундамент. ✅ РЕАЛИЗОВАНО (v0.6.0)
-Нельзя оптимизировать неизмеряемое и нельзя называть «лучшим» инструмент с тихой неправотой.
-- **`sextant bench`** — фиксированный набор запросов → p50/p95 латентности, peak RSS,
-  **счётчик токенов вывода**; в CI ловит перф-регрессии (#14).
-- **Golden-set** — `символ → ожидаемые refs/def` на двух реальных проектах в CI, ловит молчаливые
-  семантические регрессии (#4).
-- **Provenance в ответах** — пометка свежий/stale/синтаксический fallback (#1).
-- **Громкая stale-деградация** — не отдавать молча правдоподобно-неполное (#2).
-- **Cross-check** семантики со структурным слоем — расхождение = флаг (#3).
-- **Корректность семантики:** bare-name требования протокола (#47), мульти-стор дедуп (#48).
-- **Гейт:** golden зелёный на двух проектах; stale ни разу не отдаётся без пометки; bench в CI.
-- **Факт:** bench, golden (детерминированный тир на фикстуре в CI + CLI-режим `--spec`),
-  provenance, громкая деградация, cross-check — реализованы. Остаток гейта: bench-регрессии
-  в настоящем CI (GitHub Actions — операционная зрелость ADR-0003).
+### Iter 4 — Measurability and trust. The foundation. ✅ SHIPPED (v0.6.0)
+You cannot optimise what you do not measure, and you cannot call a tool "better" while it is
+silently wrong.
+- **`sextant bench`** — a fixed set of queries → p50/p95 latency, peak RSS, an **output token
+  counter**; catches performance regressions in CI (#14).
+- **A golden set** — `symbol → expected refs/def` on two real projects in CI, catching silent
+  semantic regressions (#4).
+- **Provenance in answers** — a marker for fresh / stale / syntactic fallback (#1).
+- **Loud stale degradation** — never silently serve something plausible but incomplete (#2).
+- **Cross-checking** semantics against the structural layer — a divergence is a flag (#3).
+- **Semantic correctness:** bare-name protocol requirements (#47), multi-store dedup (#48).
+- **Gate:** golden green on two projects; stale is never served unmarked; bench runs in CI.
+- **Fact:** bench, golden (a deterministic tier on a fixture in CI plus a `--spec` CLI mode),
+  provenance, loud degradation and cross-checking are all shipped. What is left of the gate:
+  bench regressions in real CI (GitHub Actions — the operational maturity of ADR-0003).
 
-### Iter 5 — Эффективность ядра (content-hash). Крупнейший машинный выигрыш. ✅ РЕАЛИЗОВАНО (v0.6.0)
-Один архитектурный ход (content-hash) закрывает скорость + инкрементальность + кросс-worktree.
-- **`git ls-files`-обход** вместо FileManager (C-скорость, полный gitignore); **попутно чинит
-  кросс-worktree дубли в refs** (#7, #46).
-- **Кэш парсинга по content-hash** (не mtime — хрупок к checkout/worktree/stash); `map`/`lint`/
-  `search`: O(все файлы) → O(изменённые), персистентно между запусками (#8).
-- **In-memory `name→[USR]`** индекс — повторные lookup O(1) (#6).
-- **Гейт:** повторный `lint`/`map` на неизменном дереве — субсекундный; кросс-worktree дубли на
-  проекте Б исчезли (сверено); bench показывает ускорение.
-- **Факт:** git ls-files-обход (#7), content-hash кэши map/api/lint/search (#8), кросс-worktree
-  (#46) — реализованы. **Не сделан #6** (in-memory `name→[USR]`) — перенесён в демон (Н4/П4
-  ADR-0003), где живёт естественно.
+### Iter 5 — Core efficiency (content hashing). The biggest machine win. ✅ SHIPPED (v0.6.0)
+One architectural move (content hashing) covers speed, incrementality and cross-worktree
+correctness at once.
+- **A `git ls-files` walk** instead of FileManager (C speed, full gitignore); **it also fixes
+  cross-worktree duplicates in refs** (#7, #46).
+- **A parse cache keyed by content hash** (not mtime — that is fragile under
+  checkout/worktree/stash); `map`/`lint`/`search`: O(all files) → O(changed files), persistent
+  between runs (#8).
+- **An in-memory `name→[USR]`** index — repeat lookups in O(1) (#6).
+- **Gate:** a repeat `lint`/`map` on an unchanged tree is sub-second; the cross-worktree duplicates
+  on project B are gone (verified); bench shows the speed-up.
+- **Fact:** the git ls-files walk (#7), content-hash caches for map/api/lint/search (#8) and
+  cross-worktree correctness (#46) are shipped. **#6 was not done** (the in-memory `name→[USR]`) —
+  it moved into the daemon (N4/P4 of ADR-0003), where it belongs naturally.
 
-### Iter 6 — Демон + токенная эффективность. Скорость + метрика, что платит. ⚠ ЧАСТИЧНО
-- **`sextant serve`** + unix-socket — тёплый индекс для всех CLI-вызовов (cold 2.1с→0.2с) (#5).
-- **Адаптивная многословность** — MCP компакт / TTY читаемо по isatty (#11).
-- **Гистограмма вместо списка** — «55 использований: 3 ext, 12 call-sites, 40 аннотаций» (#12).
-- **Дедуп строк + детерминированный порядок** (→ prompt-cache модели) (#13).
-- **Гейт:** bench фиксирует падение токенов вывода на типовых запросах; cold-CLI снят.
-- **Факт:** токенная часть сделана — isatty-многословность (#11), гистограмма (#12), дедуп (#13).
-  **Не сделан `sextant serve` (#5)** — cold-CLI ~2.1с платит каждый суб-агент; это П4 ADR-0003
-  (сначала предпосылка: actor-изоляция кэшей + уникальная БД IndexStoreDB на инстанс).
+### Iter 6 — Daemon + token efficiency. Speed, and a metric for what it costs. ⚠ PARTIAL
+- **`sextant serve`** + a unix socket — a warm index for every CLI call (cold 2.1s→0.2s) (#5).
+- **Adaptive verbosity** — compact for MCP, readable for a TTY, by isatty (#11).
+- **A histogram instead of a list** — "55 usages: 3 extensions, 12 call sites, 40 annotations"
+  (#12).
+- **Line dedup + a deterministic order** (→ the model's prompt cache) (#13).
+- **Gate:** bench records the drop in output tokens on typical queries; cold CLI start is gone.
+- **Fact:** the token half is done — isatty verbosity (#11), the histogram (#12), dedup (#13).
+  **`sextant serve` (#5) was not done** — a ~2.1s cold CLI start is paid by every sub-agent; this
+  is P4 of ADR-0003 (with a prerequisite first: actor isolation of the caches plus a unique
+  IndexStoreDB database per instance).
 
-### Iter 7 — MCP-поверхность + adoption. На перепроверенной базе ADR-0002. ⚠ ЧАСТИЧНО
-Только примитивы, поддержанные Claude Code и переживающие stateless-переход.
-- **`CLAUDE_PROJECT_DIR`** — чистый резолв проекта вместо cwd/`--project` (#32).
-- **Resources + templates + completion** — `repo_map`, контекст символа, карта фичи как ресурсы
-  по `@`-mention; `list_changed` для динамики (#29, #33).
-- **Prompts как слэш-команды** без required-аргументов: `/feature_map`, `/impact` (#30).
-- **Elicitation** через абстракцию (под будущий SEP-2322): «индекс устарел — пересобрать?»,
-  дизамбигуация (#31).
-- **Tool-аннотации `readOnlyHint`** + простой `outputSchema`; долгая сборка НЕ inline-tool (#34, #35).
-- **Adoption-механика:** тюнинг описаний инструментов (#39), перехват/подсказка grep (#40),
-  метрика adoption в bench (#41); **`sextant init`** одной командой (#37); prebuilt/Homebrew (#38).
-- **Гейт:** ресурсы доступны через `@`; метрика adoption (доля поисков через sextant) растёт;
-  stale обрабатывается интерактивно, не отказом.
-- **Факт:** сделаны `CLAUDE_PROJECT_DIR` (#32), Resources + templates + completion (#29, #33),
-  `readOnlyHint` (#34). **Остались:** prompts-слэш-команды (#30), elicitation (#31),
-  `sextant init` (#37), prebuilt/Homebrew (#38), тюнинг описаний (#39), перехват grep (#40),
-  метрика adoption (#41) — это П1/П3 ADR-0003. Паритет CLI↔MCP (инструмент `api`, единый
-  конфиг, телеметрия per-tool-call) — П1.
+### Iter 7 — MCP surface + adoption. On the re-checked basis of ADR-0002. ⚠ PARTIAL
+Only the primitives Claude Code supports and that survive the stateless transition.
+- **`CLAUDE_PROJECT_DIR`** — clean project resolution instead of cwd/`--project` (#32).
+- **Resources + templates + completion** — `repo_map`, a symbol's context and a feature map as
+  resources reachable by `@`-mention; `list_changed` for the moving parts (#29, #33).
+- **Prompts as slash commands** with no required arguments: `/feature_map`, `/impact` (#30).
+- **Elicitation** behind an abstraction (ready for a future SEP-2322): "the index is stale —
+  rebuild?", disambiguation (#31).
+- **Tool annotations `readOnlyHint`** plus a simple `outputSchema`; a long build is NOT an inline
+  tool (#34, #35).
+- **Adoption mechanics:** tuning the tool descriptions (#39), intercepting or hinting away from grep
+  (#40), an adoption metric in bench (#41); **`sextant init`** in one command (#37);
+  prebuilt/Homebrew (#38).
+- **Gate:** resources are reachable through `@`; the adoption metric (the share of searches that go
+  through sextant) grows; staleness is handled interactively rather than by refusal.
+- **Fact:** `CLAUDE_PROJECT_DIR` (#32), Resources + templates + completion (#29, #33) and
+  `readOnlyHint` (#34) are done. **Outstanding:** prompts as slash commands (#30), elicitation
+  (#31), `sextant init` (#37), prebuilt/Homebrew (#38), description tuning (#39), grep
+  interception (#40), the adoption metric (#41) — these are P1/P3 of ADR-0003. CLI↔MCP parity (an
+  `api` tool, one shared config, per-tool-call telemetry) is P1.
 
-### Iter 8 — Зона памяти (code-anchored). Слой разгрузки контекста.
-Опирается на content-hash (Iter 5) и Resources (Iter 7). Авто-инвалидация по анкору — то, что
-отличает её от опасной generic-памяти.
-- **Mmap «дайджест проекта»** (символьная таблица + граф) — query-optimized субстрат (#10).
-- **Память-по-указателю** — хэндлы `ctx://symbol@hash` вместо блобов, через resource-links (#23).
-- **Кэш производного знания** — call-граф, blast-radius, карта фичи, ключ content-hash (#24).
-- **Регидратация после компакции контекста** — точная замена лоссовому сжатию (#26).
-- **Архитектура** — anchoring, тиринг hot/warm/cold, eviction LRU+релевантность, provenance
-  `derived` vs `asserted`, worktree-изоляция (#28).
-- **Фаза 2 (риск asserted):** сессионный scratchpad (#25), cross-session база знаний (#27).
-- **Гейт:** на длинной сессии измерено падение токенов от хэндлов/дельт; ни одной stale-записи
-  без пометки.
+### Iter 8 — The memory zone (code-anchored). A context-offloading layer.
+Rests on content hashing (Iter 5) and Resources (Iter 7). Automatic invalidation by anchor is what
+separates it from dangerous generic memory.
+- **An mmapped "project digest"** (a symbol table + the graph) — a query-optimised substrate (#10).
+- **Memory by pointer** — `ctx://symbol@hash` handles instead of blobs, through resource links
+  (#23).
+- **A cache of derived knowledge** — the call graph, blast radius, a feature map, keyed by content
+  hash (#24).
+- **Rehydration after a context compaction** — an exact replacement for lossy compression (#26).
+- **Architecture** — anchoring, hot/warm/cold tiering, LRU+relevance eviction, `derived` vs
+  `asserted` provenance, worktree isolation (#28).
+- **Phase 2 (the risk of `asserted`):** a session scratchpad (#25), a cross-session knowledge base
+  (#27).
+- **Gate:** on a long session, a measured drop in tokens thanks to handles/deltas; not one stale
+  entry served unmarked.
 
-### Iter 9 — Дифференциальный контекст + автоматическая свежесть.
+### Iter 9 — Differential context + automatic freshness.
 
-> Build-hook свежесть (#17) поднята в приоритете — это П5 ADR-0003 (убивает класс
-> заплаток свежести в корне; до неё новые заплатки не добавляем). Команда `changed` —
-> первый шаг к дифференциальному контексту (#15), session-aware слоя пока нет.
-- **Дифференциальный контекст** (session-aware) — «не изменился с хода N» / дельты (#15).
-- **Спекулятивный prefetch** — прогрев соседей по графу (#21).
-- **Контекст-бюджет как протокол** — агент объявляет бюджет, sextant пакует под него (#45).
-- **Build-hook свежесть** — индекс обновляется как побочный эффект обычной сборки (НЕ file-watcher) (#17).
-- **SPM-only путь + частичная свежесть** по timestamps юнитов (#9).
-- **Гейт:** повторный запрос отдаёт дельту, не дамп; индекс свеж без ручного реиндекса.
+> Build-hook freshness (#17) has been raised in priority — it is P5 of ADR-0003 (it kills a whole
+> class of freshness patches at the root; until it lands we add no new ones). The `changed` command
+> is the first step towards differential context (#15); there is no session-aware layer yet.
+- **Differential context** (session-aware) — "unchanged since turn N" / deltas (#15).
+- **Speculative prefetch** — warming the neighbours in the graph (#21).
+- **The context budget as a protocol** — the agent declares a budget and sextant packs to fit (#45).
+- **Build-hook freshness** — the index is updated as a side effect of an ordinary build (NOT a file
+  watcher) (#17).
+- **An SPM-only path + partial freshness** by unit timestamps (#9).
+- **Gate:** a repeat query returns a delta, not a dump; the index is fresh with no manual reindex.
 
-### Iter 10 — Стратегический слой (по аппетиту). Смена лиги.
-- **context-compiler / retrieval-инверсия** — вход = задача, выход = минимальный context-pack (#16).
-- **Мультиязык** — семантика по Swift/ObjC/C/C++ уже работает через индекс; структурный слой
-  для C-семейства — через libclang, не tree-sitter (#36, см. `docs/adr/0004-structural-layer-for-c-family.md`).
-- **Graph-RAG intent-поиск** — эмбеддинги, заземлённые на граф (модель — свой Anthropic API,
-  НЕ sampling) (#18).
-- **Сервис верификации** утверждений (#19); **рефакторинг-as-a-service** (#20).
-- **Кросс-проектный интеллект** — единый индекс над всеми проектами (#22).
-- **Архитектурный линтер границ** (#42); **«негативное пространство»** для безопасного удаления +
-  мёртвый код (#43); **онлайн-обучение релевантности** (#44).
-- **Гейт:** каждая фича — отдельный замер пользы против baseline перед закреплением.
+### Iter 10 — The strategic layer (by appetite). A change of league.
+- **A context compiler / retrieval inversion** — input = a task, output = a minimal context pack
+  (#16).
+- **Multi-language** — semantics for Swift/ObjC/C/C++ already work through the index; the
+  structural layer for the C family goes through libclang, not tree-sitter (#36, see
+  `docs/adr/0004-structural-layer-for-c-family.md`).
+- **Graph-RAG intent search** — embeddings grounded on the graph (the model is our own Anthropic
+  API, NOT sampling) (#18).
+- **A verification service** for claims (#19); **refactoring as a service** (#20).
+- **Cross-project intelligence** — one index across every project (#22).
+- **An architectural boundary linter** (#42); **"negative space"** for safe deletion plus dead code
+  (#43); **online relevance learning** (#44).
+- **Gate:** every feature gets its own measurement of value against a baseline before it is kept.
 
-## Канонические запросы (приёмочный тест системы)
+## Canonical queries (the system's acceptance test)
 
-Каждый должен отвечаться без текстового grep:
-1. «кто вызывает `X`»
-2. «где определён тип `Y`»
-3. «public API пакета `Z`»
-4. «все реализации протокола `P`»
-5. «карта пакета `M`»
-6. «где используется константа `K`»
-7. «callers функции `validate(...)`»
+Each of these must be answerable without a text grep:
+1. "who calls `X`"
+2. "where is type `Y` defined"
+3. "the public API of package `Z`"
+4. "every implementation of protocol `P`"
+5. "a map of package `M`"
+6. "where constant `K` is used"
+7. "the callers of function `validate(...)`"
 
-## Не-цели v1 (перенесены в forward-план, не вырезаны навсегда)
+## Non-goals for v1 (moved into the forward plan, not cut forever)
 
-На старте вырезано осознанно (максимум риска при минимуме пользы), но запланировано позже:
-- **vector search** → graph-RAG в Iter 10 (заземлён на граф, не наивные чанки).
-- **не-Swift семантика** → **сделано**: работает через тот же index store, отдельного слоя не
-  потребовалось. Открытым остался структурный слой — на libclang, а не на tree-sitter (ADR-0004).
-- **автосвежесть** → build-hook в Iter 9 (это НЕ real-time file-watcher — обновление как
-  побочный эффект обычной сборки).
+Cut deliberately at the start (the most risk for the least value), but scheduled for later:
+- **vector search** → graph-RAG in Iter 10 (grounded on the graph, not naive chunks).
+- **non-Swift semantics** → **done**: it works through the same index store, and no separate
+  layer was needed. What stays open is the structural layer — on libclang, not tree-sitter
+  (ADR-0004).
+- **automatic freshness** → the build hook in Iter 9 (this is NOT a real-time file watcher —
+  the update is a side effect of an ordinary build).
 
-Остаётся не-целью: real-time file-watcher (постоянное слежение за ФС).
+Still a non-goal: a real-time file watcher (continuously watching the filesystem).
