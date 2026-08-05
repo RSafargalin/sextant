@@ -62,3 +62,82 @@ struct IndexDeclarationsTests {
         #expect(IndexDeclarations.summaries(root: root, index: nil, includeTests: false).isEmpty)
     }
 }
+
+/// The public surface of a non-Swift target is what its public headers declare. These cover the
+/// rule itself and the case it deliberately refuses to answer.
+@Suite("Public surface from headers")
+struct PublicHeaderTests {
+    /// An index that answers from a table instead of a compiler, so the rule can be tested
+    /// without building anything.
+    private struct StubIndex: FileSymbolIndex {
+        var byPath: [String: [SourceLanguage: [String]]] = [:]
+
+        func declarations(inFile path: String, languages: Set<SourceLanguage>?) -> [Declaration] {
+            let name = URL(fileURLWithPath: path).lastPathComponent
+            let perLanguage = byPath[name] ?? [:]
+            return perLanguage
+                .filter { languages?.contains($0.key) ?? true }
+                .flatMap { $0.value }
+                .sorted()
+                .map { Declaration(kind: .function, header: $0, access: .internal) }
+        }
+    }
+
+    private func makeTree(_ files: [String]) throws -> URL {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("sextant-headers-\(UUID().uuidString)")
+        for file in files {
+            let url = root.appendingPathComponent(file)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try "// header\n".write(to: url, atomically: true, encoding: .utf8)
+        }
+        return root
+    }
+
+    @Test("Headers under include/ are the public surface; other headers are not")
+    func onlyPublicHeaders() throws {
+        let root = try makeTree(["Sources/Core/include/Core.h", "Sources/Core/Private.h"])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let index = StubIndex(byPath: [
+            "Core.h": [.objc: ["func publicThing"]],
+            "Private.h": [.objc: ["func privateThing"]],
+        ])
+
+        let result = IndexDeclarations.publicHeaderSummaries(root: root, index: index, package: nil)
+        #expect(result.summaries.count == 1)
+        #expect(result.summaries.first?.relativePath.hasSuffix("include/Core.h") == true)
+        // Marked public: this is what `api` promises, and the layout is the one making the promise.
+        #expect(result.summaries.first?.declarations.allSatisfy { $0.access == .public } == true)
+    }
+
+    @Test("A C++-only header is refused and counted, never half-reported")
+    func cxxHeaderRefused() throws {
+        let root = try makeTree(["Sources/Cxx/include/Cxx.hpp"])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let index = StubIndex(byPath: ["Cxx.hpp": [.cxx: ["func maybePrivate"]]])
+
+        let result = IndexDeclarations.publicHeaderSummaries(root: root, index: index, package: nil)
+        // The index has no access level, so public and private members are indistinguishable.
+        #expect(result.summaries.isEmpty)
+        #expect(result.skippedCxxHeaders == 1)
+    }
+
+    @Test("A header mixing C and C++ still reports its C surface")
+    func mixedHeaderKeepsCSurface() throws {
+        let root = try makeTree(["Sources/Mixed/include/Mixed.h"])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let index = StubIndex(byPath: ["Mixed.h": [.c: ["func cThing"], .cxx: ["func cxxThing"]]])
+
+        let result = IndexDeclarations.publicHeaderSummaries(root: root, index: index, package: nil)
+        #expect(result.summaries.first?.declarations.map { $0.header } == ["func cThing"])
+        #expect(result.skippedCxxHeaders == 0)
+    }
+
+    @Test("Without an index there is no surface to add")
+    func noIndex() throws {
+        let root = try makeTree(["Sources/Core/include/Core.h"])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let result = IndexDeclarations.publicHeaderSummaries(root: root, index: nil, package: nil)
+        #expect(result.summaries.isEmpty && result.skippedCxxHeaders == 0)
+    }
+}

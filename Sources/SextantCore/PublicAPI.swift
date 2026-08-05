@@ -6,10 +6,18 @@ public enum PublicAPI {
     /// Structured summaries of the public surface — for `--json`.
     /// `type` filters top-level declarations by name (`api --type X`); it may return several
     /// declarations with that name across different files.
-    public static func summaries(projectRoot: String, package: String?, type: String? = nil, cache: SourceParseCache = SourceParseCache()) -> [FileSummary] {
+    /// Public surface. `index`, when given, adds the non-Swift targets: their public headers,
+    /// read from the compiler index. Without it the result is exactly what it was before.
+    public static func summaries(
+        projectRoot: String,
+        package: String?,
+        type: String? = nil,
+        cache: SourceParseCache = SourceParseCache(),
+        index: FileSymbolIndex? = nil
+    ) -> [FileSummary] {
         let root = URL(fileURLWithPath: projectRoot, isDirectory: true)
         let store = DeclarationCache.makeStore()
-        return SwiftSources.files(under: root, includeTests: false)
+        let swift = SwiftSources.files(under: root, includeTests: false)
             .filter { $0.lastPathComponent != "Package.swift" }
             .compactMap { url -> FileSummary? in
                 let relative = SwiftSources.relativePath(of: url, root: root)
@@ -22,10 +30,25 @@ public enum PublicAPI {
                 }
                 return FileSummary(relativePath: relative, package: packageName, declarations: declarations)
             }
+
+        var headers = IndexDeclarations.publicHeaderSummaries(root: root, index: index, package: package).summaries
+        if let type {
+            headers = headers.compactMap { summary in
+                let kept = summary.declarations.filter { $0.name == type }
+                return kept.isEmpty ? nil : FileSummary(relativePath: summary.relativePath, package: summary.package, declarations: kept)
+            }
+        }
+        return swift + headers
     }
 
-    public static func generate(projectRoot: String, package: String?, type: String? = nil, cache: SourceParseCache = SourceParseCache()) -> String {
-        render(summaries(projectRoot: projectRoot, package: package, type: type, cache: cache))
+    public static func generate(
+        projectRoot: String,
+        package: String?,
+        type: String? = nil,
+        cache: SourceParseCache = SourceParseCache(),
+        index: FileSymbolIndex? = nil
+    ) -> String {
+        render(summaries(projectRoot: projectRoot, package: package, type: type, cache: cache, index: index))
     }
 
     static func render(_ summaries: [FileSummary]) -> String {

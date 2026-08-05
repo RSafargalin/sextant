@@ -56,7 +56,19 @@ public enum IndexDeclarations {
 /// Reading a file's declarations out of the index. Separate from `SemanticIndex` because this
 /// asks about a file rather than a symbol, and only the map needs it.
 public protocol FileSymbolIndex {
-    func declarations(inFile path: String) -> [Declaration]
+    /// Declarations a file contributes. `languages`, when given, keeps only symbols the compiler
+    /// recorded as coming from those languages — the index knows which, so `api` need not guess
+    /// from a file extension.
+    func declarations(inFile path: String, languages: Set<SourceLanguage>?) -> [Declaration]
+}
+
+public extension FileSymbolIndex {
+    func declarations(inFile path: String) -> [Declaration] { declarations(inFile: path, languages: nil) }
+}
+
+/// The languages the compiler index distinguishes.
+public enum SourceLanguage: String, Sendable, Hashable {
+    case c, cxx, objc, swift
 }
 
 // MARK: - Reading declarations out of a store
@@ -64,10 +76,11 @@ public protocol FileSymbolIndex {
 extension IndexStore: FileSymbolIndex {
     /// Declarations a file contributes, as the compiler recorded them. Locals are dropped, and a
     /// symbol appearing both as a header declaration and as a definition is counted once.
-    public func declarations(inFile path: String) -> [Declaration] {
+    public func declarations(inFile path: String, languages: Set<SourceLanguage>? = nil) -> [Declaration] {
         var seen = Set<String>()
         var result: [Declaration] = []
         for symbol in database.symbols(inFilePath: path) where !symbol.properties.contains(.local) {
+            if let languages, let language = SourceLanguage(rawValue: "\(symbol.language)"), !languages.contains(language) { continue }
             guard let kind = IndexDeclarations.declarationKind(for: "\(symbol.kind)") else { continue }
             guard seen.insert("\(kind.rawValue):\(symbol.name)").inserted else { continue }
             result.append(Declaration(kind: kind, header: "\(kind.rawValue) \(symbol.name)", access: .internal))
@@ -78,10 +91,10 @@ extension IndexStore: FileSymbolIndex {
 
 extension IndexStoreSet: FileSymbolIndex {
     /// The union across stores: a file can be compiled by more than one of them.
-    public func declarations(inFile path: String) -> [Declaration] {
+    public func declarations(inFile path: String, languages: Set<SourceLanguage>? = nil) -> [Declaration] {
         var seen = Set<String>()
         var result: [Declaration] = []
-        for declaration in stores.flatMap({ $0.declarations(inFile: path) })
+        for declaration in stores.flatMap({ $0.declarations(inFile: path, languages: languages) })
         where seen.insert("\(declaration.kind.rawValue):\(declaration.header)").inserted {
             result.append(declaration)
         }
@@ -90,6 +103,43 @@ extension IndexStoreSet: FileSymbolIndex {
 }
 
 extension IndexDeclarations {
+    /// Public surface of the non-Swift targets: whatever their public headers declare.
+    ///
+    /// In SwiftPM a target's public headers live in `include/`, and that directory *is* the
+    /// module map's answer to "what does this target expose" — so this is the layout's own
+    /// definition of public, not a guess about where headers happen to sit.
+    ///
+    /// C++ is deliberately excluded. A C++ header declares private members alongside public
+    /// ones, and the index carries no access level, so listing them would present private
+    /// members as public API — a confident wrong answer, which is worse than an absent one.
+    /// `skippedCxxHeaders` reports how many were left out so the omission is never silent.
+    public static func publicHeaderSummaries(
+        root: URL,
+        index: FileSymbolIndex?,
+        package: String?
+    ) -> (summaries: [FileSummary], skippedCxxHeaders: Int) {
+        guard let index else { return ([], 0) }
+        var summaries: [FileSummary] = []
+        var skipped = 0
+        for url in SwiftSources.files(under: root, includeTests: false, extensions: Array(headerExtensions)) {
+            guard url.pathComponents.contains("include") else { continue }
+            let relative = SwiftSources.relativePath(of: url, root: root)
+            let packageName = SwiftSources.package(for: relative)
+            if let package, packageName != package { continue }
+
+            if !index.declarations(inFile: url.path, languages: [.cxx]).isEmpty,
+               index.declarations(inFile: url.path, languages: [.c, .objc]).isEmpty {
+                skipped += 1
+                continue
+            }
+            let declarations = index.declarations(inFile: url.path, languages: [.c, .objc])
+                .map { Declaration(kind: $0.kind, header: $0.header, access: .public) }
+            guard !declarations.isEmpty else { continue }
+            summaries.append(FileSummary(relativePath: relative, package: packageName, declarations: declarations))
+        }
+        return (summaries, skipped)
+    }
+
     /// Maps an index symbol kind onto the declaration model. Kinds with no counterpart — modules,
     /// namespaces, parameters — are dropped rather than forced into one.
     static func declarationKind(for indexKind: String) -> DeclarationKind? {
