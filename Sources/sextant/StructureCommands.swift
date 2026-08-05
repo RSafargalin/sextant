@@ -4,6 +4,23 @@ import Foundation
 
 // MARK: - map / api / search / lint
 
+/// The index, but only when the project actually has sources the Swift parser cannot read.
+/// A pure-Swift project pays nothing: `map` stays a no-build command, and on a machine without
+/// a toolchain it keeps working exactly as before.
+private func clangIndex(root: String, arguments: [String], includeTests: Bool) -> FileSymbolIndex? {
+    let rootURL = URL(fileURLWithPath: root, isDirectory: true)
+    let foreign = SwiftSources.files(under: rootURL, includeTests: includeTests,
+                                     extensions: IndexDeclarations.clangExtensions)
+    guard !foreign.isEmpty else { return nil }
+    guard let index = openIndex(arguments, label: "map") else {
+        // Never omit them in silence: a map that looks complete while skipping every
+        // Objective-C and C file is exactly the quiet wrongness this tool exists to avoid.
+        reportError("⚠ \(foreign.count) non-Swift file(s) are missing from the map: no index store. Build one with `sextant index`.")
+        return nil
+    }
+    return index
+}
+
 func runMap(arguments: [String]) -> Int32 {
     let includeTests = arguments.contains("--include-tests")
     guard let root = scopedRoot(in: arguments) else { return 2 }
@@ -11,11 +28,13 @@ func runMap(arguments: [String]) -> Int32 {
     if arguments.contains("--semantic") { return runSemanticMap(root: root, arguments: arguments) }
     if arguments.contains("--pagerank") { return runPageRankMap(root: root, arguments: arguments) }
     if arguments.contains("--json") {
-        printJSON(RepoMap.summaries(projectRoot: root, includeTests: includeTests))
+        printJSON(RepoMap.summaries(projectRoot: root, includeTests: includeTests,
+                                    index: clangIndex(root: root, arguments: arguments, includeTests: includeTests)))
         return 0
     }
     let budget = optionValue("--budget", in: arguments).flatMap(Int.init) ?? loadConfig(arguments)?.budget ?? 6000
-    print(RepoMap.generate(projectRoot: root, options: .init(tokenBudget: budget, includeTests: includeTests)))
+    print(RepoMap.generate(projectRoot: root, options: .init(tokenBudget: budget, includeTests: includeTests),
+                           index: clangIndex(root: root, arguments: arguments, includeTests: includeTests)))
     return 0
 }
 

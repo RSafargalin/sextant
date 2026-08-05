@@ -14,10 +14,18 @@ public enum RepoMap {
     }
 
     /// Per-file summaries of the project (structured data, not rendered) — for `--json`.
-    public static func summaries(projectRoot: String, includeTests: Bool, cache: SourceParseCache = SourceParseCache()) -> [FileSummary] {
+    /// Per-file summaries. `index`, when given, adds files the Swift parser does not read —
+    /// Objective-C, C, C++ — from the compiler index. Without it the result is exactly what it
+    /// was before: the syntactic commands must keep working with no toolchain at all.
+    public static func summaries(
+        projectRoot: String,
+        includeTests: Bool,
+        cache: SourceParseCache = SourceParseCache(),
+        index: FileSymbolIndex? = nil
+    ) -> [FileSummary] {
         let root = URL(fileURLWithPath: projectRoot, isDirectory: true)
         let store = DeclarationCache.makeStore()
-        return SwiftSources.files(under: root, includeTests: includeTests)
+        let swift = SwiftSources.files(under: root, includeTests: includeTests)
             .filter { $0.lastPathComponent != "Package.swift" }
             .compactMap { url -> FileSummary? in
                 guard let declarations = DeclarationCache.declarations(for: url, parseCache: cache, store: store),
@@ -25,12 +33,18 @@ public enum RepoMap {
                 let relative = SwiftSources.relativePath(of: url, root: root)
                 return FileSummary(relativePath: relative, package: SwiftSources.package(for: relative), declarations: declarations)
             }
+        return swift + IndexDeclarations.summaries(root: root, index: index, includeTests: includeTests)
     }
 
     /// Generates the textual map for a project root.
-    public static func generate(projectRoot: String, options: Options = Options(), cache: SourceParseCache = SourceParseCache()) -> String {
+    public static func generate(
+        projectRoot: String,
+        options: Options = Options(),
+        cache: SourceParseCache = SourceParseCache(),
+        index: FileSymbolIndex? = nil
+    ) -> String {
         let root = URL(fileURLWithPath: projectRoot, isDirectory: true)
-        let files = summaries(projectRoot: projectRoot, includeTests: options.includeTests, cache: cache)
+        let files = summaries(projectRoot: projectRoot, includeTests: options.includeTests, cache: cache, index: index)
         return render(files, projectName: root.lastPathComponent, budget: options.tokenBudget)
     }
 

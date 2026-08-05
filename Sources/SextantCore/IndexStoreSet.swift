@@ -3,7 +3,7 @@ import Foundation
 /// A union of several index stores: queries run across all of them, deduplicated by USR and position.
 /// Needed for multi-package projects, where each package produces its own store.
 public final class IndexStoreSet {
-    private let stores: [IndexStore]
+    let stores: [IndexStore]
     public let storeCount: Int
 
     /// `databaseRoot` is a stable directory for the IndexStoreDB database, reused between runs:

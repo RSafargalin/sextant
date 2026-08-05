@@ -31,7 +31,7 @@ public enum CallDirection: Sendable {
 
 /// Reads the compiler's semantic index (the index store) through IndexStoreDB.
 public final class IndexStore {
-    private let database: IndexStoreDB
+    let database: IndexStoreDB
     /// Resolved project root used to scope results (nil means no scoping). It excludes other
     /// worktrees: a shared DerivedData store accumulates units from neighbouring `.claude/worktrees/*`.
     private let projectScope: String?
