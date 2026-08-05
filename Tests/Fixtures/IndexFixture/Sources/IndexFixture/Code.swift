@@ -1,3 +1,5 @@
+import ObjCFixture
+
 public protocol Greeter {
     func greet() -> String
 }
@@ -61,4 +63,13 @@ public func useButton() {
     let b = Button(onTap: { _ = IDMaker.make() })
     b.onTap()
     render(handler: { })
+}
+
+/// Cross-language call sites. The index holds `ocGreetWithName:` under its Objective-C
+/// selector spelling; the Swift call below reads `ocGreet(withName:)` and resolves to the same
+/// symbol. Resolving it by the bare name `ocGreetWithName` is what the selector clause in
+/// `IndexStore.resolveOccurrences` exists for.
+public func useObjC() -> String {
+    let greeter = OCGreeter()
+    return greeter.ocGreet(withName: "x") + "\(OCGreeter.ocDefaultCount())"
 }

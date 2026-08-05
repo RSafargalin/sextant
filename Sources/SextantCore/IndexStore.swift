@@ -53,15 +53,27 @@ public final class IndexStore {
         database.pollForUnitChangesAndWait()
     }
 
-    /// Resolves a name to occurrences. A prefix search filtered by `== name` (types, exact names)
-    /// or `name(` (methods are stored in the index with argument labels: `parse(_:referenceDate:)`,
-    /// so a bare method name never matches exactly). A prefix search is a superset of an exact one,
-    /// so it covers both cases in a single query. Short-circuiting on `ofName` was a bug:
-    /// one irrelevant exact symbol hid the real methods, such as `parse` and `validate`.
+    /// Resolves a name to occurrences. A prefix search filtered by three shapes, because the
+    /// index stores a symbol under the spelling of the language that declared it:
+    ///
+    /// - `== name` — types, and methods that take no arguments (`defaultCount`);
+    /// - `name(` — Swift methods, stored with argument labels: `parse(_:referenceDate:)`,
+    ///   so a bare method name never matches exactly;
+    /// - `name:` — Objective-C methods, stored as selectors: `greetWithName:`. A Swift call
+    ///   spelled `greet(withName:)` resolves to that same symbol, so cross-language callers
+    ///   work once the name matches.
+    ///
+    /// A prefix search is a superset of an exact one, so one query covers all three.
+    /// Short-circuiting on `ofName` was a bug: one irrelevant exact symbol hid the real
+    /// methods, such as `parse` and `validate`.
     private func resolveOccurrences(forName name: String) -> [SymbolOccurrence] {
         database
             .canonicalOccurrences(containing: name, anchorStart: true, anchorEnd: false, subsequence: false, ignoreCase: false)
-            .filter { $0.symbol.name == name || $0.symbol.name.hasPrefix("\(name)(") }
+            .filter {
+                $0.symbol.name == name
+                    || $0.symbol.name.hasPrefix("\(name)(")
+                    || $0.symbol.name.hasPrefix("\(name):")
+            }
     }
 
     /// Symbols with the given name: the definition plus occurrences of the requested kind.
@@ -99,13 +111,24 @@ public final class IndexStore {
                     }
                 }
             }
-            // The fallback picks a USR from any in-scope occurrence, but `definition` is filled
-            // only from a real definition — otherwise a plain reference is passed off as one.
+            // The canonical occurrence is not always the definition: in Objective-C and C it is
+            // the declaration in the header, while the definition lives in the .m or .c. Ask the
+            // database for the definition by USR rather than leaving the field empty.
+            //
+            // What is deliberately NOT done is falling back to any occurrence at all: that would
+            // pass a plain use off as a definition, which is the failure this whole layer exists
+            // to avoid.
+            let definitionLocation: SourceLocation? = definitionOccurrence.roles.contains(.definition)
+                ? SourceLocation(definitionOccurrence)
+                : database.occurrences(ofUSR: usr, roles: .definition)
+                    .first { isInScope($0.location) }
+                    .map(SourceLocation.init)
+
             return SymbolHit(
                 name: definitionOccurrence.symbol.name,
                 usr: usr,
                 kind: "\(definitionOccurrence.symbol.kind)",
-                definition: definitionOccurrence.roles.contains(.definition) ? SourceLocation(definitionOccurrence) : nil,
+                definition: definitionLocation,
                 references: Array(locations.sorted(by: SourceLocation.isOrderedBefore).prefix(limit))
             )
         }

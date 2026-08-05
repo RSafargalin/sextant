@@ -44,6 +44,17 @@ First public release.
 
 ### Fixed
 
+- **Semantic commands now resolve Objective-C symbols.** The index store is written by the
+  whole clang family, not just swiftc, so Objective-C, C and C++ declarations were always in
+  it — but two defects kept them out of reach. Objective-C methods that take arguments are
+  stored as selectors (`greetWithName:`), which matched neither an exact name nor Swift's
+  `name(` shape, so a bare method name resolved to nothing. And a symbol whose canonical
+  occurrence is a header declaration — the norm in Objective-C and C — reported no definition
+  at all, because the definition in the `.m` or `.c` was only ever collected as a reference.
+  Both are fixed, so `refs`, `defs`, `callers`, `context` and the rest work across a language
+  boundary: a Swift call spelled `greet(withName:)` is found as a caller of the Objective-C
+  selector it actually calls. C and C++ needed no change; they already worked.
+
 - **Semantic queries went blind on projects that had ever been built in release
   configuration.** The index store was selected by the modification time of the store
   *directory*, but a build rewrites unit files *inside* the store without touching that
