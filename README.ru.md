@@ -1,5 +1,11 @@
 # sextant
 
+[![CI](https://github.com/RSafargalin/sextant/actions/workflows/ci.yml/badge.svg)](https://github.com/RSafargalin/sextant/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/RSafargalin/sextant?sort=semver)](https://github.com/RSafargalin/sextant/releases/latest)
+[![Licence](https://img.shields.io/badge/licence-Apache--2.0-blue)](LICENSE)
+[![Swift](https://img.shields.io/badge/swift-6.2%2B-orange)](https://swift.org)
+[![Platform](https://img.shields.io/badge/platform-macOS-lightgrey)](#установка)
+
 [English](README.md) | **Русский**
 
 Code intelligence для локальных Swift-проектов: карта репозитория, структурный поиск (замена
@@ -8,6 +14,36 @@ grep) и семантика — где определён символ, кто �
 меньше.
 
 Переиспользуемый по замыслу: работает по корню любого проекта, а не вшит в один.
+
+## Как это выглядит
+
+Один вопрос — один ответ, вместо цикла «grep и прочитать пять файлов». Оба запуска ниже —
+sextant по собственному репозиторию:
+
+```console
+$ sextant context ProjectConfig
+[index: spm · 1 store(s) · fresh]
+── ProjectConfig  [struct]
+   def: Sources/SextantCore/ProjectConfig.swift:4  public struct ProjectConfig: Codable, Sendable {
+   usages: 12
+     • Sources/SextantCore/ProjectConfig.swift:31  return .loaded(try JSONDecoder().decode(ProjectConfig.self, from: data))
+     • Sources/sextant/IndexCommands.swift:47  switch ProjectConfig.read(projectRoot: root) {
+     • Sources/sextant/MCPServer.swift:63  switch ProjectConfig.read(projectRoot: project) {
+     • Sources/sextant/main.swift:41  func loadConfig(_ arguments: [String]) -> ProjectConfig? {
+     …
+   bases and protocols: Sendable
+
+$ sextant blast SourceLocation
+── blast radius: SourceLocation [struct]
+   a change would touch: 9 files · 37 usages · 0 calls
+     Sources/SextantCore/BlastRadius.swift
+     Sources/SextantCore/IndexStore.swift
+     Sources/SextantCore/SymbolContext.swift
+     …
+```
+
+С `--json` тот же ответ приходит структурой — для агента. Эти же запросы выставлены в Claude
+Code как MCP-инструменты, см. [MCP](#mcp--подключение-к-claude-code).
 
 ## Сколько это экономит
 

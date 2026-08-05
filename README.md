@@ -1,5 +1,11 @@
 # sextant
 
+[![CI](https://github.com/RSafargalin/sextant/actions/workflows/ci.yml/badge.svg)](https://github.com/RSafargalin/sextant/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/RSafargalin/sextant?sort=semver)](https://github.com/RSafargalin/sextant/releases/latest)
+[![Licence](https://img.shields.io/badge/licence-Apache--2.0-blue)](LICENSE)
+[![Swift](https://img.shields.io/badge/swift-6.2%2B-orange)](https://swift.org)
+[![Platform](https://img.shields.io/badge/platform-macOS-lightgrey)](#installation)
+
 **English** | [Русский](README.ru.md)
 
 Code intelligence for local Swift projects: a repository map, structural search (a grep
@@ -8,6 +14,36 @@ The point is to give an LLM agent precise, on-demand access to code instead of g
 answers, fewer tokens.
 
 Reusable by design — it works against the root of any project rather than being wired into one.
+
+## What it looks like
+
+One question, one answer — instead of a grep-and-read-five-files loop. Both runs below are
+sextant against its own repository:
+
+```console
+$ sextant context ProjectConfig
+[index: spm · 1 store(s) · fresh]
+── ProjectConfig  [struct]
+   def: Sources/SextantCore/ProjectConfig.swift:4  public struct ProjectConfig: Codable, Sendable {
+   usages: 12
+     • Sources/SextantCore/ProjectConfig.swift:31  return .loaded(try JSONDecoder().decode(ProjectConfig.self, from: data))
+     • Sources/sextant/IndexCommands.swift:47  switch ProjectConfig.read(projectRoot: root) {
+     • Sources/sextant/MCPServer.swift:63  switch ProjectConfig.read(projectRoot: project) {
+     • Sources/sextant/main.swift:41  func loadConfig(_ arguments: [String]) -> ProjectConfig? {
+     …
+   bases and protocols: Sendable
+
+$ sextant blast SourceLocation
+── blast radius: SourceLocation [struct]
+   a change would touch: 9 files · 37 usages · 0 calls
+     Sources/SextantCore/BlastRadius.swift
+     Sources/SextantCore/IndexStore.swift
+     Sources/SextantCore/SymbolContext.swift
+     …
+```
+
+Add `--json` to any of it and an agent gets the same answer as structured data. The same
+queries are exposed to Claude Code as MCP tools — see [MCP](#mcp--connecting-to-claude-code).
 
 ## What it saves
 
