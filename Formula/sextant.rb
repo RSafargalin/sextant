@@ -8,12 +8,12 @@
 class Sextant < Formula
   desc "Code intelligence for Swift: repo map, structural search, semantics"
   homepage "https://github.com/RSafargalin/sextant"
-  license "Apache-2.0"
   # Updated per release from the block that release.yml prints into the GitHub Release notes.
   # No explicit `version`: Homebrew scans it from the URL, and a second copy would be one more
   # place to forget on release day.
   url "https://github.com/RSafargalin/sextant/releases/download/v0.7.0/sextant-0.7.0-macos-universal.tar.gz"
   sha256 "f3279d37135a80ce6ffa146cc9053aea5cb12a04a2a430c2a86422c963213b2a"
+  license "Apache-2.0"
 
   # The binary targets macOS 13+ (see platforms in Package.swift).
   depends_on macos: :ventura
