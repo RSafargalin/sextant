@@ -12,7 +12,7 @@ private func clangIndex(root: String, arguments: [String], includeTests: Bool) -
     let foreign = SwiftSources.files(under: rootURL, includeTests: includeTests,
                                      extensions: IndexDeclarations.clangExtensions)
     guard !foreign.isEmpty else { return nil }
-    guard let index = openIndex(arguments, label: "map") else {
+    guard let index = openIndex(arguments, label: "map", quiet: true) else {
         // Never omit them in silence: a map that looks complete while skipping every
         // Objective-C and C file is exactly the quiet wrongness this tool exists to avoid.
         reportError("⚠ \(foreign.count) non-Swift file(s) are missing from the map: no index store. Build one with `sextant index`.")
