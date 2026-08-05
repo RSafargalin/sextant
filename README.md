@@ -45,6 +45,18 @@ $ sextant blast SourceLocation
 Add `--json` to any of it and an agent gets the same answer as structured data. The same
 queries are exposed to Claude Code as MCP tools — see [MCP](#mcp--connecting-to-claude-code).
 
+## Languages
+
+The semantic commands (`refs`, `defs`, `callers`, `context`, `blast`, `hierarchy`, …) read the
+compiler's index store, which is written by the whole clang family. They therefore work across
+**Swift, Objective-C, C and C++**, including across a language boundary: a Swift call spelled
+`greet(withName:)` is found as a caller of the Objective-C selector `greetWithName:` it
+actually calls.
+
+The structural layer (`map`, `api`, `search`, `lint`, `changed`) parses with SwiftSyntax and is
+**Swift-only**. So on a mixed project you get full semantics everywhere and structure for the
+Swift half.
+
 ## What it saves
 
 Measured on five public Swift packages (Alamofire, swift-argument-parser, swift-numerics,
@@ -220,9 +232,9 @@ Before registering, check the setup with `sextant doctor --project <path>` — a
 | L3 semantic | defs / refs / callers / public API | IndexStoreDB | ✅ |
 | L3+ semantic | callees / type hierarchy / transitive call hierarchy / PageRank map | IndexStoreDB relations | ✅ |
 | L4 MCP | commands as tools for an agent (stdio JSON-RPC, warm index) | MCP (stdio) | ✅ |
-| L5 | other languages, dead code, real time | — | ⬜ non-goal for v1 |
+| L5 | other languages in the structural layer, dead code, real time | — | ⬜ non-goal for v1 |
 
-**Non-goals for v1:** real-time file watching, vector search, non-Swift semantics. These are
+**Non-goals for v1:** real-time file watching, vector search, a non-Swift structural layer. These are
 deliberate cuts rather than oversights; several are scheduled for later iterations in
 `docs/roadmap.md` (which, along with the architecture decision records, is in Russian — it is
 a historical record of how the tool got here).

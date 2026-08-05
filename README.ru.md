@@ -45,6 +45,18 @@ $ sextant blast SourceLocation
 С `--json` тот же ответ приходит структурой — для агента. Эти же запросы выставлены в Claude
 Code как MCP-инструменты, см. [MCP](#mcp--подключение-к-claude-code).
 
+## Языки
+
+Семантические команды (`refs`, `defs`, `callers`, `context`, `blast`, `hierarchy`, …) читают
+index store компилятора, а его пишет всё clang-семейство. Поэтому они работают по **Swift,
+Objective-C, C и C++**, в том числе через языковую границу: вызов из Swift, записанный как
+`greet(withName:)`, находится как caller селектора Objective-C `greetWithName:`, который он и
+вызывает.
+
+Структурный слой (`map`, `api`, `search`, `lint`, `changed`) разбирает код через SwiftSyntax и
+работает **только по Swift**. То есть на смешанном проекте вы получаете семантику целиком и
+структуру по свифтовой половине.
+
 ## Сколько это экономит
 
 Замерено на пяти публичных Swift-пакетах (Alamofire, swift-argument-parser, swift-numerics,
@@ -218,9 +230,9 @@ libIndexStore, index store и его свежесть) с подсказками
 | L3 semantic | defs / refs / callers / public API | IndexStoreDB | ✅ |
 | L3+ semantic | callees / иерархия типов / транзитивный call-hierarchy / PageRank-карта | IndexStoreDB relations | ✅ |
 | L4 MCP | команды как инструменты для агента (stdio JSON-RPC, тёплый индекс) | MCP (stdio) | ✅ |
-| L5 | другие языки, мёртвый код, real-time | — | ⬜ не-цель v1 |
+| L5 | другие языки в структурном слое, мёртвый код, real-time | — | ⬜ не-цель v1 |
 
-**Не-цели v1:** real-time file-watcher, vector search, не-Swift семантика. Это осознанные
+**Не-цели v1:** real-time file-watcher, vector search, структурный слой для не-Swift. Это осознанные
 вырезы, а не недосмотр; часть из них запланирована на поздние итерации в `docs/roadmap.md`
 (он, как и архитектурные решения в `docs/adr/`, на русском — это историческая запись того, как
 инструмент дошёл до текущего состояния).
