@@ -71,8 +71,8 @@ idempotent — a repeat run re-uploads the artefacts instead of failing.
 
 `Formula/sextant.rb` in this repository is the source of truth; the tap holds a copy.
 
-1. Copy the three values from the release notes into `Formula/sextant.rb`, replacing the
-   placeholders (`version "0.0.0"`, the `v0.0.0` URL, the all-zero `sha256`).
+1. Copy the two values from the release notes into `Formula/sextant.rb`: the `url` and the
+   `sha256`. There is no `version` field — Homebrew scans it from the URL.
 2. Commit that change here.
 3. Copy the file into the tap repository — **[RSafargalin/homebrew-tap](https://github.com/RSafargalin/homebrew-tap)**,
    one tap shared by all the tools — as `Formula/sextant.rb`, and push.

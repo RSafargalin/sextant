@@ -176,7 +176,6 @@ jobs:
           Update the formula in the tap (\`Formula/sextant.rb\`):
 
           \`\`\`ruby
-          version "${{ steps.meta.outputs.version }}"
           url "https://github.com/${{ github.repository }}/releases/download/${{ steps.meta.outputs.tag }}/${{ steps.meta.outputs.archive }}"
           sha256 "${{ steps.package.outputs.sha256 }}"
           \`\`\`

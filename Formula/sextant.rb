@@ -6,11 +6,12 @@
 # The version / url / sha256 fields are updated per release: .github/workflows/release.yml prints
 # a ready-made block with the values filled in into the release notes.
 class Sextant < Formula
-  desc "Code intelligence CLI for Swift projects: repository map, structural search, semantics"
+  desc "Code intelligence for Swift: repo map, structural search, semantics"
   homepage "https://github.com/RSafargalin/sextant"
   license "Apache-2.0"
   # Updated per release from the block that release.yml prints into the GitHub Release notes.
-  version "0.7.0"
+  # No explicit `version`: Homebrew scans it from the URL, and a second copy would be one more
+  # place to forget on release day.
   url "https://github.com/RSafargalin/sextant/releases/download/v0.7.0/sextant-0.7.0-macos-universal.tar.gz"
   sha256 "f3279d37135a80ce6ffa146cc9053aea5cb12a04a2a430c2a86422c963213b2a"
 

@@ -70,8 +70,8 @@ git tag v0.7.0 && git push origin v0.7.0
 
 `Formula/sextant.rb` в этом репозитории — источник истины; в tap'е лежит копия.
 
-1. Перенесите три значения из тела релиза в `Formula/sextant.rb`, заменив плейсхолдеры
-   (`version "0.0.0"`, URL с `v0.0.0`, нулевой `sha256`).
+1. Перенесите два значения из тела релиза в `Formula/sextant.rb`: `url` и `sha256`. Поля
+   `version` там нет — Homebrew вычитывает версию из URL.
 2. Закоммитьте это изменение здесь.
 3. Скопируйте файл в tap-репозиторий — **[RSafargalin/homebrew-tap](https://github.com/RSafargalin/homebrew-tap)**,
    один tap на все инструменты — как `Formula/sextant.rb` и запушьте.
