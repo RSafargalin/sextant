@@ -64,9 +64,14 @@ Three routes; only the third needs a Swift toolchain.
 
 ```bash
 brew tap RSafargalin/tap
+brew trust RSafargalin/tap
 brew install sextant
 sextant --version
 ```
+
+Homebrew refuses to load formulae from an untrusted third-party tap, so `brew trust` is
+required — it is a one-time acknowledgement that you are installing from someone's personal
+tap rather than homebrew-core.
 
 **2. Prebuilt binary from a release** — macOS universal (arm64 + x86_64), no Homebrew:
 

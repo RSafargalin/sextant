@@ -86,7 +86,7 @@ form work.
 On a machine that has never had this version:
 
 ```bash
-brew update && brew install RSafargalin/tap/sextant
+brew update && brew trust RSafargalin/tap && brew install RSafargalin/tap/sextant
 sextant --version   # must print exactly the released version
 sextant help        # the build timestamp confirms which binary is running
 ```

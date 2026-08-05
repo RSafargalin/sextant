@@ -85,7 +85,7 @@ git tag v0.7.0 && git push origin v0.7.0
 На машине, где этой версии никогда не было:
 
 ```bash
-brew update && brew install RSafargalin/tap/sextant
+brew update && brew trust RSafargalin/tap && brew install RSafargalin/tap/sextant
 sextant --version   # должен напечатать ровно выпущенную версию
 sextant help        # время сборки подтверждает, какой именно бинарь запущен
 ```

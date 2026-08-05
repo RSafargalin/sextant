@@ -63,9 +63,14 @@ swift-nio, swift-syntax) на закреплённых ревизиях. Пол�
 
 ```bash
 brew tap RSafargalin/tap
+brew trust RSafargalin/tap
 brew install sextant
 sextant --version
 ```
+
+Homebrew отказывается загружать формулы из недоверенного стороннего tap'а, поэтому `brew trust`
+обязателен — это разовое подтверждение того, что вы ставите из чьего-то личного tap'а, а не из
+homebrew-core.
 
 **2. Готовый бинарь из релиза** — macOS universal (arm64 + x86_64), без Homebrew:
 
