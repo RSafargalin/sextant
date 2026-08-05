@@ -7,27 +7,104 @@ public enum SwiftSources {
         "Pods", "Carthage", "node_modules", "checkouts", "build", "Build", "vendor"
     ]
 
-    /// Directories to skip: the usual vendored ones plus simple directory patterns from the root
-    /// `.gitignore`. A pragmatic subset: directory names without `/` or `*`; paths and globs are ignored.
+    private struct IgnoreRules {
+        var directoryNames: Set<String>
+        var patterns: [String]
+    }
+
+    /// Directories to skip: the usual vendored ones plus simple directory names from the root
+    /// `.gitignore`. Path and glob rules are kept separately for the non-git fallback.
     static func ignoredDirectoryNames(under root: URL) -> Set<String> {
+        ignoreRules(under: root).directoryNames
+    }
+
+    private static func ignoreRules(under root: URL) -> IgnoreRules {
         var names = skippedDirectories
+        var patterns: [String] = []
         guard let content = try? String(contentsOf: root.appendingPathComponent(".gitignore"), encoding: .utf8) else {
-            return names
+            return IgnoreRules(directoryNames: names, patterns: patterns)
         }
         for rawLine in content.split(separator: "\n") {
             var line = rawLine.trimmingCharacters(in: .whitespaces)
             guard !line.isEmpty, !line.hasPrefix("#"), !line.hasPrefix("!") else { continue }
             if line.hasPrefix("/") { line.removeFirst() }
             if line.hasSuffix("/") { line.removeLast() }
-            guard !line.isEmpty, !line.contains("/"), !line.contains("*") else { continue }
-            names.insert(line)
+            guard !line.isEmpty else { continue }
+            if line.contains("/") || line.contains("*") || line.contains("?") {
+                patterns.append(line)
+            } else {
+                names.insert(line)
+            }
         }
-        return names
+        return IgnoreRules(directoryNames: names, patterns: patterns)
     }
 
     /// Skip a directory and everything in it: hidden (a `.` prefix) or explicitly excluded.
     static func shouldSkip(directory name: String, ignored: Set<String>) -> Bool {
         name.hasPrefix(".") || ignored.contains(name)
+    }
+
+    /// Matches the simple path and glob subset used by the non-git fallback.
+    private static func matches(_ pattern: String, path: String) -> Bool {
+        let characters = Array(pattern)
+        var expression = "^"
+        var index = 0
+        while index < characters.count {
+            let character = characters[index]
+            if character == "*" {
+                if index + 1 < characters.count, characters[index + 1] == "*" {
+                    index += 2
+                    if index < characters.count, characters[index] == "/" {
+                        expression += "(?:.*/)?"
+                        index += 1
+                    } else {
+                        expression += ".*"
+                    }
+                } else {
+                    expression += "[^/]*"
+                    index += 1
+                }
+            } else if character == "?" {
+                expression += "[^/]"
+                index += 1
+            } else {
+                expression += NSRegularExpression.escapedPattern(for: String(character))
+                index += 1
+            }
+        }
+        expression += "$"
+        return (try? NSRegularExpression(pattern: expression))?.firstMatch(
+            in: path,
+            range: NSRange(path.startIndex..., in: path)
+        ) != nil
+    }
+
+    private static func matches(_ pattern: String, path: String, fileName: String) -> Bool {
+        if pattern.contains("/") {
+            return matches(pattern, path: path)
+        }
+        return matches(pattern, path: fileName)
+    }
+
+    private static func shouldSkip(directory url: URL, under root: URL, rules: IgnoreRules) -> Bool {
+        let path = relativePath(of: url, root: root)
+        if shouldSkip(directory: url.lastPathComponent, ignored: rules.directoryNames) {
+            return true
+        }
+        return rules.patterns.contains { pattern in
+            // A recursive suffix means every source below this directory is covered, so the
+            // enumerator can prune it before descending (for example `Generated/**/*.swift`).
+            if let recursive = pattern.range(of: "/**") {
+                let prefix = String(pattern[..<recursive.lowerBound])
+                if !prefix.isEmpty, matches(prefix, path: path) { return true }
+            }
+            return matches(pattern, path: path)
+        }
+    }
+
+    private static func shouldSkip(file url: URL, under root: URL, rules: IgnoreRules) -> Bool {
+        let path = relativePath(of: url, root: root)
+        return rules.patterns.contains { matches($0, path: path, fileName: url.lastPathComponent) }
     }
 
     /// The `.swift` list via git (tracked plus untracked-not-ignored — full gitignore, C speed).
@@ -134,15 +211,16 @@ public enum SwiftSources {
             options: []
         ) else { return [] }
 
-        let ignored = ignoredDirectoryNames(under: root)
+        let rules = ignoreRules(under: root)
         var result: [URL] = []
         for case let url as URL in enumerator {
             let isDirectory = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
             if isDirectory {
-                if shouldSkip(directory: url.lastPathComponent, ignored: ignored) { enumerator.skipDescendants() }
+                if shouldSkip(directory: url, under: root, rules: rules) { enumerator.skipDescendants() }
                 continue
             }
             guard url.pathExtension == "swift", !url.lastPathComponent.hasPrefix(".") else { continue }
+            guard !shouldSkip(file: url, under: root, rules: rules) else { continue }
             if !includeTests, url.lastPathComponent.hasSuffix("Tests.swift") { continue }
             result.append(url)
         }
@@ -165,15 +243,16 @@ public enum SwiftSources {
             options: []
         ) else { return false }
 
-        let ignored = ignoredDirectoryNames(under: root)
+        let rules = ignoreRules(under: root)
         var count = 0
         for case let url as URL in enumerator {
             let isDirectory = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
             if isDirectory {
-                if shouldSkip(directory: url.lastPathComponent, ignored: ignored) { enumerator.skipDescendants() }
+                if shouldSkip(directory: url, under: root, rules: rules) { enumerator.skipDescendants() }
                 continue
             }
             guard url.pathExtension == "swift", !url.lastPathComponent.hasPrefix(".") else { continue }
+            guard !shouldSkip(file: url, under: root, rules: rules) else { continue }
             if !includeTests, url.lastPathComponent.hasSuffix("Tests.swift") { continue }
             count += 1
             if count > limit { return true }
@@ -197,14 +276,15 @@ public enum SwiftSources {
             options: []
         ) else { return false }
 
-        let ignored = ignoredDirectoryNames(under: root)
+        let rules = ignoreRules(under: root)
         for case let url as URL in enumerator {
             let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .contentModificationDateKey])
             if values?.isDirectory == true {
-                if shouldSkip(directory: url.lastPathComponent, ignored: ignored) { enumerator.skipDescendants() }
+                if shouldSkip(directory: url, under: root, rules: rules) { enumerator.skipDescendants() }
                 continue
             }
             guard url.pathExtension == "swift", !url.lastPathComponent.hasPrefix(".") else { continue }
+            guard !shouldSkip(file: url, under: root, rules: rules) else { continue }
             if let modified = values?.contentModificationDate, modified > date { return true }
         }
         return false

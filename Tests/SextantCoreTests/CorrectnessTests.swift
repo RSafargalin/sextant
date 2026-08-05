@@ -273,6 +273,40 @@ struct GitignoreScopingTests {
         #expect(!ignored.contains("Sources/X"))       // a path containing / is skipped
         #expect(!ignored.contains("*.log"))           // a glob is skipped
     }
+
+    @Test("Non-git fallback applies path and recursive glob patterns")
+    func fallbackHonoursPathPatterns() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("sextant-glob-\(UUID().uuidString)")
+        let fm = FileManager.default
+        try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: directory) }
+        try "Generated/**/*.swift\nSources/*/Legacy\n*.generated.swift\n"
+            .write(to: directory.appendingPathComponent(".gitignore"), atomically: true, encoding: .utf8)
+
+        let files = [
+            "Generated/Generated.swift",
+            "Sources/One/Legacy/Old.swift",
+            "Sources/One/Keep.swift",
+            "Sources/Two/Legacy/Old.swift",
+            "Sources/Two/Other/Keep.swift",
+            "Root.generated.swift",
+            "Keep.swift"
+        ]
+        for file in files {
+            let url = directory.appendingPathComponent(file)
+            try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try "struct Keep {}".write(to: url, atomically: true, encoding: .utf8)
+        }
+
+        let found = Set(SwiftSources.files(under: directory, includeTests: true).map {
+            SwiftSources.relativePath(of: $0, root: directory)
+        })
+        #expect(found == [
+            "Sources/One/Keep.swift",
+            "Sources/Two/Other/Keep.swift",
+            "Keep.swift"
+        ])
+    }
 }
 
 @Suite("Walking under a hidden ancestor (worktree)")

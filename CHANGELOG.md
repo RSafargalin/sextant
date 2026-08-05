@@ -13,7 +13,10 @@ Human-readable text output is not covered — parse `--json`, not prose.
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- The non-git source walker now applies simple path and glob rules from the root `.gitignore`,
+  keeping generated Swift files out of maps and searches.
 
 ## [0.7.0] — 2026-08-05
 
