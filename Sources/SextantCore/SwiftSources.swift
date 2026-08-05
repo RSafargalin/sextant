@@ -33,13 +33,15 @@ public enum SwiftSources {
     /// The `.swift` list via git (tracked plus untracked-not-ignored — full gitignore, C speed).
     /// nil means the directory is not under git (falls back to FileManager). Works in a git worktree.
     /// Extra safety: `.build/` and `checkouts/` are dropped in case vendored code is not ignored.
-    static func gitSwiftFiles(under root: URL, includeTests: Bool) -> [URL]? {
+    static func gitSwiftFiles(under root: URL, includeTests: Bool, extensions: [String] = ["swift"]) -> [URL]? {
+        let suffixes = extensions.map { ".\($0)" }
+        let pathspecs = extensions.map { "*.\($0)" }
         guard let output = runGit(["-C", root.path, "ls-files", "-z",
-                                   "--cached", "--others", "--exclude-standard", "--", "*.swift"]) else { return nil }
+                                   "--cached", "--others", "--exclude-standard", "--"] + pathspecs) else { return nil }
         var result: [URL] = []
         for piece in output.split(separator: "\0") {
             let name = String(piece)
-            guard name.hasSuffix(".swift") else { continue }
+            guard suffixes.contains(where: name.hasSuffix) else { continue }
             let components = name.split(separator: "/").map(String.init)
             guard let last = components.last, !last.hasPrefix(".") else { continue }
             // The same filtering as in FileManager mode (shouldSkip): dot directories
@@ -118,16 +120,17 @@ public enum SwiftSources {
     public static func clearFileListMemo() { fileListMemo.clear() }
 
     /// Every `.swift` file under the root: the git list in a repository, otherwise a FileManager walk. Memoised.
-    public static func files(under root: URL, includeTests: Bool) -> [URL] {
-        let key = "\(root.path)|\(includeTests)"
+    public static func files(under root: URL, includeTests: Bool, extensions: [String] = ["swift"]) -> [URL] {
+        let key = "\(root.path)|\(includeTests)|\(extensions.joined(separator: ","))"
         if let cached = fileListMemo.value(key) { return cached }
-        let result = gitSwiftFiles(under: root, includeTests: includeTests) ?? enumeratedFiles(under: root, includeTests: includeTests)
+        let result = gitSwiftFiles(under: root, includeTests: includeTests, extensions: extensions)
+            ?? enumeratedFiles(under: root, includeTests: includeTests, extensions: extensions)
         fileListMemo.set(key, result)
         return result
     }
 
     /// FileManager fallback for non-git directories: a walk that skips hidden and service directories.
-    private static func enumeratedFiles(under root: URL, includeTests: Bool) -> [URL] {
+    private static func enumeratedFiles(under root: URL, includeTests: Bool, extensions: [String] = ["swift"]) -> [URL] {
         guard let enumerator = FileManager.default.enumerator(
             at: root,
             includingPropertiesForKeys: [.isDirectoryKey],
@@ -142,7 +145,7 @@ public enum SwiftSources {
                 if shouldSkip(directory: url.lastPathComponent, ignored: ignored) { enumerator.skipDescendants() }
                 continue
             }
-            guard url.pathExtension == "swift", !url.lastPathComponent.hasPrefix(".") else { continue }
+            guard extensions.contains(url.pathExtension), !url.lastPathComponent.hasPrefix(".") else { continue }
             if !includeTests, url.lastPathComponent.hasSuffix("Tests.swift") { continue }
             result.append(url)
         }

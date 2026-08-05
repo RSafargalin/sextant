@@ -44,6 +44,14 @@ First public release.
 
 ### Fixed
 
+- **`map` covers Objective-C, C and C++.** Non-Swift files are read from the compiler index
+  rather than through a second parser, so the repository map shows the whole project instead of
+  its Swift half. A declaration repeated in a header and its implementation is listed once;
+  one that exists only in a header is kept, since that is the only place it appears. When such
+  files exist but no index has been built, the map says how many it could not read instead of
+  quietly omitting them. Swift is still parsed with SwiftSyntax — the index carries no
+  visibility information, and the map filters on access level — so a pure-Swift project takes
+  exactly the path it did before, with no index required.
 - **Semantic commands now resolve Objective-C symbols.** The index store is written by the
   whole clang family, not just swiftc, so Objective-C, C and C++ declarations were always in
   it — but two defects kept them out of reach. Objective-C methods that take arguments are
