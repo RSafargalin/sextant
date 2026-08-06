@@ -98,7 +98,8 @@ public enum CommandCatalog {
             group: "Navigation (syntax, no build required)",
             flags: [project, FlagSpec("--from", takesValue: true, "baseline revision (default HEAD)"),
                     FlagSpec("--to", takesValue: true, "second revision; omit to use the working tree"), json],
-            details: ["Compares SYMBOLS, not lines: body edits and reformatting do not add noise."]
+            details: ["Compares SYMBOLS, not lines: body edits and reformatting do not add noise.",
+                      "Swift only. Changed C, C++ and Objective-C files are listed as not compared, never dropped."]
         ),
 
         CommandSpec(

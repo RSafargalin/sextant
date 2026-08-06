@@ -495,7 +495,7 @@ struct GitSwiftFilesTests {
     }
 }
 
-@Suite("Changed Swift files: root is a repository subdirectory")
+@Suite("Changed files: subdirectory roots and the languages the diff cannot read")
 struct ChangedSwiftFilesTests {
     @discardableResult
     private func git(_ arguments: [String], in directory: String) -> Int32 {
@@ -529,17 +529,47 @@ struct ChangedSwiftFilesTests {
         try "struct Modèle { let x: Int = 0 }\n".write(to: sources.appendingPathComponent("Modèle.swift"), atomically: true, encoding: .utf8)
 
         let subRoot = repo.appendingPathComponent("Sub").path
-        let result = try #require(SwiftSources.changedSwiftFiles(root: subRoot, from: "HEAD", to: nil))
+        let result = try #require(SwiftSources.changedFiles(root: subRoot, from: "HEAD", to: nil))
 
         // Paths are relative to the repository root, not to the subdirectory.
-        #expect(result.files.contains("Sub/Sources/Foo.swift"))
-        #expect(result.files.contains("Sub/Sources/Modèle.swift"))   // the non-ASCII name did not drop out
+        #expect(result.swift.contains("Sub/Sources/Foo.swift"))
+        #expect(result.swift.contains("Sub/Sources/Modèle.swift"))   // the non-ASCII name did not drop out
 
         // The working copy is read from topLevel + relative, not root + relative, which would double the path.
-        for relative in result.files {
+        for relative in result.swift {
             let content = (try? String(contentsOfFile: "\(result.topLevel)/\(relative)", encoding: .utf8)) ?? ""
             #expect(!content.isEmpty)
         }
+    }
+
+    @Test("A changed C-family file is reported as not compared, never dropped")
+    func clangFilesAreReportedNotDropped() throws {
+        let repo = FileManager.default.temporaryDirectory.appendingPathComponent("sextant-changed-clang-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: repo) }
+
+        try "struct Foo {}\n".write(to: repo.appendingPathComponent("Foo.swift"), atomically: true, encoding: .utf8)
+        try "@implementation Bar\n@end\n".write(to: repo.appendingPathComponent("Bar.m"), atomically: true, encoding: .utf8)
+        try "int c_thing(void) { return 0; }\n".write(to: repo.appendingPathComponent("thing.c"), atomically: true, encoding: .utf8)
+        git(["init", "-q"], in: repo.path)
+        git(["add", "."], in: repo.path)
+        git(["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "init"], in: repo.path)
+
+        // Only the non-Swift files change: the whole answer is what the diff cannot read.
+        try "@implementation Bar\n- (int)added { return 1; }\n@end\n"
+            .write(to: repo.appendingPathComponent("Bar.m"), atomically: true, encoding: .utf8)
+        try "int c_thing(void) { return 1; }\nint c_added(void) { return 2; }\n"
+            .write(to: repo.appendingPathComponent("thing.c"), atomically: true, encoding: .utf8)
+
+        let files = try #require(SwiftSources.changedFiles(root: repo.path, from: "HEAD", to: nil))
+        #expect(files.swift.isEmpty)
+        #expect(files.clang == ["Bar.m", "thing.c"])
+
+        // Before the fix this reported "no symbol-level changes" and nothing else — a confident
+        // wrong answer about a commit that added two declarations.
+        let changes = try #require(DeclarationDiff.changes(root: repo.path, from: "HEAD", to: nil))
+        #expect(changes.files.isEmpty)
+        #expect(changes.notDiffed == ["Bar.m", "thing.c"])
     }
 }
 

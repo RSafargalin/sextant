@@ -53,12 +53,18 @@ public enum SwiftSources {
         return result
     }
 
-    /// Changed `.swift` files between revisions (or against the working tree), plus the repository root.
-    /// nil means not a git repository, or an invalid ref. Paths in `files` are relative to the
-    /// repository root (that is what `git diff` prints), so the working copy must be read from
-    /// `topLevel`, not from `root` — with `root` a subdirectory, `root + relative` doubles the path.
+    /// Changed source files between revisions (or against the working tree), plus the repository root.
+    /// nil means not a git repository, or an invalid ref. Paths are relative to the repository root
+    /// (that is what `git diff` prints), so the working copy must be read from `topLevel`, not from
+    /// `root` — with `root` a subdirectory, `root + relative` doubles the path.
     /// `-z` plus splitting on NUL keeps non-ASCII names from being quoted and dropped by the filter.
-    public static func changedSwiftFiles(root: String, from: String, to: String?) -> (topLevel: String, files: [String])? {
+    ///
+    /// C-family files come back separately rather than being filtered away. Diffing them needs a
+    /// parser that works on the text of an arbitrary revision, which the compiler index cannot
+    /// supply — it only knows the built state. Dropping them silently made a commit touching only
+    /// `.m` files report "no symbol-level changes".
+    public static func changedFiles(root: String, from: String, to: String?)
+        -> (topLevel: String, swift: [String], clang: [String])? {
         guard let topLevelRaw = runGit(["-C", root, "rev-parse", "--show-toplevel"]) else { return nil }
         let topLevel = topLevelRaw.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -69,20 +75,25 @@ public enum SwiftSources {
             guard runGit(["-C", root, "rev-parse", "--verify", "--quiet", "\(revision)^{commit}"]) != nil else { return nil }
         }
 
+        let extensions = ["swift"] + IndexDeclarations.clangExtensions
+        let pathspecs = extensions.map { "*.\($0)" }
+        let suffixes = extensions.map { ".\($0)" }
+
         var arguments = ["-C", root, "diff", "--name-only", "-z", from]
         if let to { arguments.append(to) }
-        arguments += ["--", "*.swift"]
+        arguments += ["--"] + pathspecs
         guard let output = runGit(arguments) else { return nil }
-        var files = output.split(separator: "\0").map(String.init).filter { $0.hasSuffix(".swift") }
+        var files = output.split(separator: "\0").map(String.init).filter { name in suffixes.contains(where: name.hasSuffix) }
 
         // Comparing against the working tree: a new file is not in the git index yet, and without
         // it "what changed" would stay silent about a type just created. `--full-name` gives paths
         // from the repository root, like diff (ls-files defaults to the current directory).
         if to == nil,
-           let untracked = runGit(["-C", root, "ls-files", "--others", "--exclude-standard", "--full-name", "-z", "--", "*.swift"]) {
-            files += untracked.split(separator: "\0").map(String.init).filter { $0.hasSuffix(".swift") }
+           let untracked = runGit(["-C", root, "ls-files", "--others", "--exclude-standard", "--full-name", "-z", "--"] + pathspecs) {
+            files += untracked.split(separator: "\0").map(String.init).filter { name in suffixes.contains(where: name.hasSuffix) }
         }
-        return (topLevel, Array(Set(files)).sorted())
+        let unique = Array(Set(files)).sorted()
+        return (topLevel, unique.filter { $0.hasSuffix(".swift") }, unique.filter { !$0.hasSuffix(".swift") })
     }
 
     /// File contents at a git revision (`git show <revision>:<path>`); nil means the file does not

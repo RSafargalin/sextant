@@ -341,15 +341,22 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
         guard let changes = DeclarationDiff.changes(root: context.project, from: from, to: to) else {
             return ("git failed (not a git repository, or an invalid ref: \(from)\(to.map { " / \($0)" } ?? ""))", true)
         }
-        guard !changes.isEmpty else {
-            return ("no symbol-level changes (\(from) → \(to ?? "working tree"))", false)
-        }
         var lines: [String] = []
-        for change in changes {
+        if changes.files.isEmpty {
+            lines.append("no symbol-level changes (\(from) → \(to ?? "working tree"))")
+        }
+        for change in changes.files {
             lines.append(change.file)
             change.result.added.forEach { lines.append("  + \($0.decoratedHeader)") }
             change.result.removed.forEach { lines.append("  − \($0.decoratedHeader)") }
             change.result.changed.forEach { lines.append("  ~ \($0.old.decoratedHeader)  →  \($0.new.decoratedHeader)") }
+        }
+        // Named, not dropped: a model reading this must not conclude the Objective-C side is
+        // unchanged when it was never compared.
+        if !changes.notDiffed.isEmpty {
+            lines.append("not compared (\(changes.notDiffed.count)) — this diff covers Swift only; use `git diff` for these:")
+            changes.notDiffed.prefix(10).forEach { lines.append("  \($0)") }
+            if changes.notDiffed.count > 10 { lines.append("  … and \(changes.notDiffed.count - 10) more") }
         }
         return (capped(lines.joined(separator: "\n"), hint: "narrow the from/to revisions"), false)
 
