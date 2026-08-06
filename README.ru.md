@@ -18,7 +18,8 @@ grep) и семантика — где определён символ, кто �
 ## Как это выглядит
 
 Один вопрос — один ответ, вместо цикла «grep и прочитать пять файлов». Оба запуска ниже —
-sextant по собственному репозиторию:
+sextant по собственному репозиторию; списки сокращены там, где стоит `…`, остальное —
+дословно:
 
 ```console
 $ sextant context ProjectConfig
@@ -34,6 +35,7 @@ $ sextant context ProjectConfig
    bases and protocols: Sendable
 
 $ sextant blast SourceLocation
+[index: spm · 1 store(s) · fresh]
 ── blast radius: SourceLocation [struct]
    a change would touch: 9 files · 37 usages · 0 calls
      Sources/SextantCore/BlastRadius.swift
@@ -80,7 +82,7 @@ swift-nio, swift-syntax) на закреплённых ревизиях. Пол�
 
 ## Статус
 
-Рабочий CLI и MCP-сервер, версия 0.7.x. 21 команда:
+Рабочий CLI и MCP-сервер, версия 0.7.x. 23 команды:
 
 | Команда | Что делает | Слой |
 |---|---|---|
@@ -104,9 +106,11 @@ swift-nio, swift-syntax) на закреплённых ревизиях. Пол�
 | `doctor` | самопроверка setup'а (исходники, libIndexStore, index store, свежесть) | диагностика |
 | `index` | собрать index store: SPM (`swift build`) или app-таргет (`--app`, xcodebuild) | сборка |
 
-Общие флаги: `--json` (структурный вывод), `--scope <подкаталог>`, `--max-files <N>`,
-`--no-build`, `--reindex` (пересобрать индекс перед запросом). Дефолты берутся из
-`.sextant.json`. `.gitignore` уважается.
+Общие флаги, каждый — у тех команд, где он осмыслен: `--project <путь>` (у всех), `--json`
+(структурный вывод, у всех команд-запросов), `--reindex` (пересобрать индекс перед запросом),
+`--scope <подкаталог>` и `--max-files <N>` (`map`, `api`, `search`, `lint`). Точный набор —
+`sextant <команда> --help`. Дефолты берутся из `.sextant.json`. `.gitignore` уважается:
+полностью под git и только по именам каталогов вне его.
 
 ## Установка
 

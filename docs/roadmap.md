@@ -15,8 +15,8 @@ without confirmed value we do not move on.
 - **Path to v1.0:** `docs/adr/0003-path-to-production-v1.md` — the order and the gates for closing
   the gap to production maturity (from the 2026-07-22 review); sprints P1–P5 come BEFORE Iter 8–10.
 
-The architecture decision records are in Russian, and they number the sprints П1–П5; this
-document writes them P1–P5.
+The architecture decision records are in Russian, and they label the directions Н1–Н6 and the
+sprints П1–П5; this document writes them N1–N6 and P1–P5.
 
 ## North star
 
@@ -201,7 +201,7 @@ always search by prefix with a `== name || name(` filter.
 
 Input: a field report from an agent session (~79% token saving on Swift navigation).
 Closed: **P0 MCP did not pick up a freshly built index** (store reopened by signature + poll);
-**P2 `repo_map` ignored the budget**; **P2 `api --type`/`--scope`** (in the CLI); `body` (the text
+**P2 `repo_map` ignored the budget**; **P2 `api --type`/`--scope`** (in the CLI); `body` (the body
 of a declaration — closes the "defs does not reveal the body" fallback); `changed` (a symbol-level
 git diff), `construct`, `doctor --fix`, hints on a miss, opt-in telemetry.
 P1 (closures/static methods) — a spike found it was not a resolver bug; softened with a textual

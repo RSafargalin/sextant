@@ -18,7 +18,8 @@ Reusable by design — it works against the root of any project rather than bein
 ## What it looks like
 
 One question, one answer — instead of a grep-and-read-five-files loop. Both runs below are
-sextant against its own repository:
+sextant against its own repository; the lists are trimmed where marked `…`, everything else is
+verbatim:
 
 ```console
 $ sextant context ProjectConfig
@@ -34,6 +35,7 @@ $ sextant context ProjectConfig
    bases and protocols: Sendable
 
 $ sextant blast SourceLocation
+[index: spm · 1 store(s) · fresh]
 ── blast radius: SourceLocation [struct]
    a change would touch: 9 files · 37 usages · 0 calls
      Sources/SextantCore/BlastRadius.swift
@@ -81,7 +83,7 @@ bodies there is `body`.
 
 ## Status
 
-Working CLI and MCP server, version 0.7.x. 21 commands:
+Working CLI and MCP server, version 0.7.x. 23 commands:
 
 | Command | What it does | Layer |
 |---|---|---|
@@ -105,9 +107,11 @@ Working CLI and MCP server, version 0.7.x. 21 commands:
 | `doctor` | self-check of the setup (sources, libIndexStore, index store, freshness) | diagnostics |
 | `index` | build an index store: SPM (`swift build`) or an app target (`--app`, xcodebuild) | build |
 
-Common flags: `--json` (structured output), `--scope <subdirectory>`, `--max-files <N>`,
-`--no-build`, `--reindex` (rebuild the index before the query). Defaults come from
-`.sextant.json`. `.gitignore` is respected.
+Shared flags, each on the commands it makes sense for: `--project <path>` (every command),
+`--json` (structured output, on every command that answers a query), `--reindex` (rebuild the
+index before the query), `--scope <subdirectory>` and `--max-files <N>` (`map`, `api`, `search`,
+`lint`). Run `sextant <command> --help` for the exact set. Defaults come from `.sextant.json`.
+`.gitignore` is respected: in full under git, and by directory names alone outside it.
 
 ## Installation
 

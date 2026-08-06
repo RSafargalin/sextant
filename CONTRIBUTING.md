@@ -81,10 +81,10 @@ release workflow does on its own, and the formula update in the tap.
 
 ## Documentation languages
 
-Documents written for people — README, this file, SECURITY, CHANGELOG, CODE_OF_CONDUCT, the
-benchmarks and the roadmap — ship in both languages: the English version is canonical, the
-Russian one (`*.ru.md`) follows it. Where they disagree, English wins. If you change one, change
-the other in the same pull request.
+Documents written for people — README, this file, SECURITY, CHANGELOG, CODE_OF_CONDUCT,
+RELEASING, the benchmarks and the roadmap — ship in both languages: the English version is
+canonical, the Russian one (`*.ru.md`) follows it. Where they disagree, English wins. If you
+change one, change the other in the same pull request.
 
 English only, with no translation: CLI help, MCP tool descriptions, error messages, code
 comments and `AGENTS.md`. Tool descriptions are sent to the model on every session, and a
