@@ -28,6 +28,31 @@ func indexIsStale(paths: [String], root: String) -> Bool {
     IndexFreshness.isStale(storePaths: paths, projectRoot: root)
 }
 
+// MARK: - Compile database (flags for the C family)
+
+/// Captures the compile flags from the build graph the build just wrote, and stores them for the
+/// project. Nothing is captured for an Xcode build (it describes itself elsewhere), and an empty
+/// capture never replaces a database that already has entries — silently losing the flags would
+/// turn later structural queries into refusals with no explanation.
+func captureCompileDatabase(root: String, stores: [String]) {
+    let sources = CompilationDatabase.compilableSources(projectRoot: root, includeTests: true)
+    guard !sources.isEmpty else { return }
+
+    let captured = CompilationDatabase.capture(fromStores: stores)
+    guard !captured.isEmpty else {
+        reportError("⚠ compile database: no clang commands in the build graph — \(sources.count) Objective-C/C/C++ file(s) will not be readable structurally.")
+        return
+    }
+    do {
+        try CompilationDatabase.save(captured, forRoot: root)
+    } catch {
+        reportError("⚠ compile database: could not be written (\(error)) — the C family will not be readable structurally.")
+        return
+    }
+    let missing = CompilationDatabase.missingSources(captured, among: sources)
+    print("compile database: \(captured.count) file(s)" + (missing.isEmpty ? "" : ", \(missing.count) without flags"))
+}
+
 // MARK: - doctor (setup self-check)
 
 func runDoctor(arguments: [String]) -> Int32 {
@@ -95,6 +120,21 @@ func runDoctor(arguments: [String]) -> Int32 {
         }
     }
 
+    // The compile database matters only where there is C-family code; a pure Swift project is
+    // not told about a layer it does not use.
+    let clangSources = CompilationDatabase.compilableSources(projectRoot: root, includeTests: false)
+    if !clangSources.isEmpty {
+        let commands = CompilationDatabase.load(forRoot: root)
+        let missing = CompilationDatabase.missingSources(commands, among: clangSources)
+        if commands.isEmpty {
+            print("⚠ compile database: none — Objective-C, C and C++ stay outside the structural layer. Build one: `sextant index`")
+        } else if missing.isEmpty {
+            print("✅ compile database: \(commands.count) file(s), covering all \(clangSources.count) C-family source(s)")
+        } else {
+            print("⚠ compile database: \(missing.count) of \(clangSources.count) C-family source(s) have no flags (added since the last build?) — `sextant index`")
+        }
+    }
+
     print(ok ? "\n✅ ready — `sextant mcp` will work (semantics and structure)" : "\n❌ there are problems — see above")
     return ok ? 0 : 1
 }
@@ -127,6 +167,13 @@ func runXcodeIndex(root: URL, arguments: [String]) -> Int32 {
     let derivedData = "\(FileManager.default.homeDirectoryForCurrentUser.path)/Library/Developer/Xcode/DerivedData"
     if let store = DerivedDataLocator.dataStore(forProjectRoot: root.path, derivedData: derivedData) {
         print("\nindex ready (app, DerivedData): \(store)")
+        // Semantics come from the store either way; only the structural layer needs the flags, and
+        // an Xcode build does not write the graph SwiftPM does. Said out loud, because a later
+        // refusal on those files must not look like a defect.
+        let sources = CompilationDatabase.compilableSources(projectRoot: root.path, includeTests: true)
+        if !sources.isEmpty {
+            reportError("⚠ compile database: an Xcode build is not captured yet — \(sources.count) Objective-C/C/C++ file(s) stay outside the structural layer.")
+        }
         return 0
     }
     print("\nbuild succeeded, but no DerivedData index was found (check WorkspacePath).")
@@ -166,6 +213,7 @@ func runIndex(arguments: [String]) -> Int32 {
             return 1
         }
         print("\nindex ready: \(store)")
+        captureCompileDatabase(root: rootPath, stores: [store])
         return 0
     }
 
@@ -207,6 +255,7 @@ func runIndex(arguments: [String]) -> Int32 {
         return 1
     }
     print("\nindex ready (single store): \(store)")
+    captureCompileDatabase(root: rootPath, stores: [store])
     return 0
 }
 
