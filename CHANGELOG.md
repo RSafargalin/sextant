@@ -36,6 +36,14 @@ Human-readable text output is not covered — parse `--json`, not prose.
 
 ### Changed
 
+- **Breaking (`--json` schema):** `search --json` returns `{"matches": [...], "notScanned": [...]}`
+  and `lint --json` returns `{"violations": [...], "notScanned": [...]}`, each in place of a bare
+  array. `notScanned` lists the Objective-C, C and C++ files the structural engine never opened.
+- `search` and `lint` name the non-Swift files they skipped, in the text output, in `--json` and
+  in the MCP answer. Both commands walk `.swift` only, so on a project with Objective-C sources
+  they used to report "No matches." and "✅ No violations found" about files they had not read —
+  a clean bill of health covering unexamined code. The tool descriptions say so too, because an
+  agent never sees stderr. Actually reading those files is [ADR-0004](docs/adr/0004-structural-layer-for-c-family.md) work.
 - **Breaking (`--json` schema):** `changed --json` returns an object
   `{"files": [...], "notDiffed": [...]}` instead of a bare array; the former array is now the
   `files` field. `notDiffed` lists changed files the symbol-level diff could not read.

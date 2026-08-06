@@ -89,8 +89,8 @@ Working CLI and MCP server, version 0.7.x. 23 commands:
 |---|---|---|
 | `map` | repository map under a token budget; `--semantic` — types by usage; `--pagerank` — files by centrality | syntax / semantics |
 | `api` | public surface of a package (attributes, doc summaries) | syntax |
-| `search <pattern>` | structural search over the AST (`$X`, variadic `$$$`, statement patterns) | syntax |
-| `lint` | structural hygiene rules (`--rules <json>`) | syntax |
+| `search <pattern>` | structural search over the AST (`$X`, variadic `$$$`, statement patterns); Swift, and it names the non-Swift files it skipped | syntax |
+| `lint` | structural hygiene rules (`--rules <json>`); Swift, and it names the non-Swift files it skipped | syntax |
 | `refs` / `defs` / `callers` | usages / definition / call sites (callers account for protocol dispatch) | semantics |
 | `callees` | what a symbol calls (best effort: calls within the project) | semantics |
 | `impls` / `supertypes` | implementations and subtypes, bases and protocols of a type | semantics |

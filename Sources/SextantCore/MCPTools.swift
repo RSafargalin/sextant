@@ -22,12 +22,12 @@ public enum MCPTools {
                 "depth": ["type": "integer", "description": "Traversal depth (default: 3)."]
             ])],
             ["name": "repo_map", "description": "Repository map: public and internal types by file, symbol-level.", "inputSchema": ["type": "object", "properties": ["budget": ["type": "integer", "description": "Token budget for the map (default 4000, honoured)."]]]],
-            ["name": "structural_search", "description": "Structural search over the AST, replacing grep: metavariables $X, variadic $$$, statement patterns. For example 'try? $X.save()'.", "inputSchema": [
+            ["name": "structural_search", "description": "Structural search over the AST, replacing grep: metavariables $X, variadic $$$, statement patterns. For example 'try? $X.save()'. Swift only: the answer lists the Objective-C, C and C++ files it did not open, so 'no matches' never covers them.", "inputSchema": [
                 "type": "object",
                 "properties": ["pattern": ["type": "string", "description": "Structural pattern: a Swift expression or statement using $X and $$$."]],
                 "required": ["pattern"]
             ]],
-            ["name": "lint", "description": "Structural code-hygiene rules (the set from .sextant.json, otherwise the built-in one).", "inputSchema": ["type": "object", "properties": [String: Any]()]],
+            ["name": "lint", "description": "Structural code-hygiene rules (the set from .sextant.json, otherwise the built-in one). Swift only: the answer lists the Objective-C, C and C++ files the rules never ran on.", "inputSchema": ["type": "object", "properties": [String: Any]()]],
             ["name": "api", "description": "Public surface of a package or type — signatures plus doc summaries, without reading files. An order of magnitude cheaper than reading the sources. Narrow it with package, type, or scope.", "inputSchema": [
                 "type": "object",
                 "properties": [
