@@ -32,11 +32,18 @@ typedef SXChildVisitResult (*SXCursorVisitor)(SXCursor cursor, SXCursor parent, 
 
 // MARK: - Index and translation unit
 
+/// A file whose contents come from memory instead of disk (CXUnsavedFile).
+typedef struct {
+    const char *filename;
+    const char *contents;
+    unsigned long length;
+} SXUnsavedFile;
+
 typedef SXIndex (*sx_createIndex)(int excludeDeclarationsFromPCH, int displayDiagnostics);
 typedef void (*sx_disposeIndex)(SXIndex);
 typedef SXTranslationUnit (*sx_parseTranslationUnit)(SXIndex, const char *sourceFile,
                                                      const char *const *commandLineArgs, int numArgs,
-                                                     void *unsavedFiles, unsigned numUnsavedFiles,
+                                                     SXUnsavedFile *unsavedFiles, unsigned numUnsavedFiles,
                                                      unsigned options);
 typedef void (*sx_disposeTranslationUnit)(SXTranslationUnit);
 
@@ -46,6 +53,7 @@ typedef unsigned (*sx_getNumDiagnostics)(SXTranslationUnit);
 typedef SXDiagnostic (*sx_getDiagnostic)(SXTranslationUnit, unsigned index);
 typedef int (*sx_getDiagnosticSeverity)(SXDiagnostic);
 typedef SXString (*sx_formatDiagnostic)(SXDiagnostic, unsigned options);
+typedef SXSourceLocation (*sx_getDiagnosticLocation)(SXDiagnostic);
 typedef void (*sx_disposeDiagnostic)(SXDiagnostic);
 
 // MARK: - Cursors

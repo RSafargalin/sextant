@@ -296,10 +296,12 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
             }
             if lines.count >= 200 { lines.append("… (first 200 shown)"); break }
         }
+        // Objective-C, C and C++ go through clang, with the flags each file was built with.
+        let cFamily = CFamilySearch.run(pattern: pattern, searchRoot: context.project,
+                                        projectRoot: context.projectRoot, includeTests: false)
+        lines += cFamily.hits.prefix(200).map { "\($0.file):\($0.line):\($0.column): \($0.text)" }
         if lines.isEmpty { lines.append("no matches") }
-        lines += StructuralCoverage.report(
-            StructuralCoverage.unscannedFiles(projectRoot: context.project, includeTests: false)
-        )
+        lines += StructuralCoverage.report(cFamily.unscanned)
         return (lines.joined(separator: "\n"), false)
 
     case "lint":

@@ -31,11 +31,11 @@ public struct PatternSearch {
     public init(pattern: String) throws {
         guard !pattern.trimmingCharacters(in: .whitespaces).isEmpty else { throw Failure.emptyPattern }
 
-        var sentinelToName: [String: String] = [:]
-        var variadicSentinels: Set<String> = []
-        let rewritten = Self.substituteMetavariables(pattern, single: &sentinelToName, variadic: &variadicSentinels)
+        let substitution = Metavariable.substitute(pattern)
+        let sentinelToName = substitution.singleByName
+        let variadicSentinels = substitution.variadic
 
-        let tree = Parser.parse(source: rewritten)
+        let tree = Parser.parse(source: substitution.text)
         guard let item = tree.statements.first?.item else { throw Failure.notAnExpression }
         let root: Syntax
         if let expression = item.as(ExprSyntax.self) {
@@ -162,54 +162,5 @@ public struct PatternSearch {
     /// A node's text without surrounding commas or spaces — used to recognise sentinels.
     private static func coreText(of node: Syntax) -> String {
         node.trimmedDescription.trimmingCharacters(in: CharacterSet(charactersIn: ", \n\t"))
-    }
-
-    // MARK: - Metavariables → sentinels
-
-    private static func substituteMetavariables(
-        _ pattern: String,
-        single: inout [String: String],
-        variadic: inout Set<String>
-    ) -> String {
-        let characters = Array(pattern)
-        var result = ""
-        var index = 0
-        while index < characters.count {
-            guard characters[index] == "$" else {
-                result.append(characters[index]); index += 1; continue
-            }
-            if index + 2 < characters.count, characters[index + 1] == "$", characters[index + 2] == "$" {
-                var cursor = index + 3
-                var name = ""
-                while cursor < characters.count, isIdentifierPart(characters[cursor]) {
-                    name.append(characters[cursor]); cursor += 1
-                }
-                let sentinel = name.isEmpty ? "SEXTANTVARIADIC" : "SEXTANTVARIADIC_\(name)"
-                variadic.insert(sentinel)
-                result += sentinel
-                index = cursor
-            } else if index + 1 < characters.count, isIdentifierStart(characters[index + 1]) {
-                var cursor = index + 1
-                var name = ""
-                while cursor < characters.count, isIdentifierPart(characters[cursor]) {
-                    name.append(characters[cursor]); cursor += 1
-                }
-                let sentinel = "SEXTANTMETA_\(name)"
-                single[sentinel] = name
-                result += sentinel
-                index = cursor
-            } else {
-                result.append(characters[index]); index += 1
-            }
-        }
-        return result
-    }
-
-    private static func isIdentifierStart(_ character: Character) -> Bool {
-        character == "_" || character.isLetter
-    }
-
-    private static func isIdentifierPart(_ character: Character) -> Bool {
-        character == "_" || character.isLetter || character.isNumber
     }
 }

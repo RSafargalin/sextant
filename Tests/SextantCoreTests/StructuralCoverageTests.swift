@@ -13,12 +13,12 @@ struct StructuralCoverageTests {
 
     @Test("Every non-Swift source under the root is reported as unscanned")
     func namesNonSwiftSources() {
-        let unscanned = StructuralCoverage.unscannedFiles(projectRoot: fixture.path, includeTests: false)
-        #expect(unscanned.contains("Sources/ObjCFixture/ObjCFixture.m"))
-        #expect(unscanned.contains("Sources/CFixture/CFixture.c"))
-        #expect(unscanned.contains("Sources/CxxFixture/CxxFixture.cpp"))
-        #expect(unscanned.contains("Sources/ObjCFixture/include/ObjCFixture.h"))
-        #expect(!unscanned.contains { $0.hasSuffix(".swift") })
+        let files = StructuralCoverage.unscannedFiles(projectRoot: fixture.path, includeTests: false).map { $0.file }
+        #expect(files.contains("Sources/ObjCFixture/ObjCFixture.m"))
+        #expect(files.contains("Sources/CFixture/CFixture.c"))
+        #expect(files.contains("Sources/CxxFixture/CxxFixture.cpp"))
+        #expect(files.contains("Sources/ObjCFixture/include/ObjCFixture.h"))
+        #expect(!files.contains { $0.hasSuffix(".swift") })
     }
 
     @Test("A Swift-only project reports nothing")
@@ -36,10 +36,21 @@ struct StructuralCoverageTests {
 
     @Test("The report states the count and truncates the list")
     func reportCountsAndTruncates() {
-        let files = (1...15).map { "Sources/File\($0).m" }
+        let files = (1...15).map { UnscannedFile(file: "Sources/File\($0).m", reason: "no compile flags") }
         let lines = StructuralCoverage.report(files, limit: 10)
         #expect(lines.first?.contains("(15)") == true)
         #expect(lines.count == 12)                       // header + 10 names + "and 5 more"
         #expect(lines.last?.contains("5 more") == true)
+    }
+
+    @Test("Files are grouped by reason, each reason explained once")
+    func reportGroupsByReason() {
+        let lines = StructuralCoverage.report([
+            UnscannedFile(file: "A.m", reason: "no compile flags"),
+            UnscannedFile(file: "B.h", reason: "a header is not a compilation unit"),
+            UnscannedFile(file: "C.m", reason: "no compile flags")
+        ])
+        #expect(lines.filter { $0.hasPrefix("⚠") }.count == 2)
+        #expect(lines.first?.contains("(2)") == true)     // the two files sharing a reason are one group
     }
 }

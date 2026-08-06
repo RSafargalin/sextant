@@ -22,9 +22,9 @@ public enum MCPTools {
                 "depth": ["type": "integer", "description": "Traversal depth (default: 3)."]
             ])],
             ["name": "repo_map", "description": "Repository map: public and internal types by file, symbol-level.", "inputSchema": ["type": "object", "properties": ["budget": ["type": "integer", "description": "Token budget for the map (default 4000, honoured)."]]]],
-            ["name": "structural_search", "description": "Structural search over the AST, replacing grep: metavariables $X, variadic $$$, statement patterns. For example 'try? $X.save()'. Swift only: the answer lists the Objective-C, C and C++ files it did not open, so 'no matches' never covers them.", "inputSchema": [
+            ["name": "structural_search", "description": "Structural search over the AST, replacing grep: metavariables $X, variadic $$$, statement patterns. For example 'try? $X.save()' in Swift or '[$X reloadData]' in Objective-C. Swift is matched by its own parser; Objective-C, C and C++ by clang, which needs the flags from `sextant index`. Files that could not be read are listed with the reason, so 'no matches' never quietly covers them.", "inputSchema": [
                 "type": "object",
-                "properties": ["pattern": ["type": "string", "description": "Structural pattern: a Swift expression or statement using $X and $$$."]],
+                "properties": ["pattern": ["type": "string", "description": "Structural pattern: an expression or statement using $X ($$$ is Swift only). Written in the language of the files being searched."]],
                 "required": ["pattern"]
             ]],
             ["name": "lint", "description": "Structural code-hygiene rules (the set from .sextant.json, otherwise the built-in one). Swift only: the answer lists the Objective-C, C and C++ files the rules never ran on.", "inputSchema": ["type": "object", "properties": [String: Any]()]],
