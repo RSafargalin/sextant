@@ -21,3 +21,10 @@
 - (NSInteger)ocFeed;
 - (NSInteger)ocFeedTwice;
 @end
+
+/// A category: a method attached to a class declared elsewhere. Swift has no equivalent that
+/// crosses a file this way, so the question is whether resolution finds the method at all and
+/// whether it lands under the class it extends.
+@interface OCGreeter (Shouting)
+- (NSString *)ocShoutWithName:(NSString *)name;
+@end

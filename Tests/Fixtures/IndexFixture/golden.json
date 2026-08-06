@@ -30,6 +30,14 @@
     { "query": "defs", "symbol": "Widget", "minCount": 1 },
 
     { "query": "impls", "symbol": "OCFeeding", "containsName": "OCGreeter" },
-    { "query": "impls", "symbol": "OCFeeding", "containsName": "OCFeeder" }
+    { "query": "impls", "symbol": "OCFeeding", "containsName": "OCFeeder" },
+
+    { "query": "defs", "symbol": "scale", "minCount": 2 },
+    { "query": "defs", "symbol": "Box", "minCount": 1, "pathContains": ".hpp" },
+    { "query": "defs", "symbol": "nestedDouble", "minCount": 1, "pathContains": ".cpp" },
+    { "query": "callers", "symbol": "scale", "minCount": 1 },
+
+    { "query": "defs", "symbol": "ocShoutWithName", "minCount": 1, "pathContains": ".m" },
+    { "query": "callees", "symbol": "ocShoutWithName", "containsName": "ocGreetWithName:" }
   ]
 }

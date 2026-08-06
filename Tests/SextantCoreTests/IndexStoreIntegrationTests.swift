@@ -84,6 +84,38 @@ struct IndexStoreIntegrationTests {
         #expect(callees.contains { $0.name.hasPrefix("ocFeed") },
                 "ocFeedTwice calls ocFeed, and the index records it")
 
+        // `related` reports call sites — ocFeed is called twice on one line, so two of them —
+        // while a hierarchy edge is a symbol. Reporting sites there listed the same child twice
+        // and spent the breadth budget on the duplicate.
+        #expect(callees.filter { $0.name.hasPrefix("ocFeed") }.count == 2, "two call sites on one line")
+        let usr = try #require(index.resolveSymbols(forName: "ocFeedTwice").first?.usr)
+        let edges = index.calls(ofUSR: usr, direction: .callees)
+        #expect(edges.filter { $0.name.hasPrefix("ocFeed") }.count == 1, "one callee, however often it is called")
+
+        // A category: a method attached to a class declared elsewhere. It resolves like any other
+        // selector, and the method it calls on self is recorded as a callee.
+        let category = index.lookup(name: "ocShoutWithName", query: .definitions)
+        #expect(category.contains { $0.definition?.path.hasSuffix(".m") == true },
+                "a category method resolves to its implementation")
+        #expect(index.related(toName: "ocShoutWithName", query: .callees).contains { $0.name.hasPrefix("ocGreetWithName") },
+                "the category method calls the class's own method")
+
+        // C++ overloads share a name and differ by USR. Merging them would attribute one
+        // signature's callers to the other.
+        let overloads = index.lookup(name: "scale", query: .definitions)
+        #expect(overloads.count == 2, "both overloads resolve, neither shadows the other")
+        #expect(Set(overloads.map(\.usr)).count == 2)
+        let overloadCallers = index.lookup(name: "scale", query: .callers)
+        #expect(overloadCallers.filter { !$0.references.isEmpty }.count == 1,
+                "only the int overload is called; the double one has no callers")
+
+        // A template nothing instantiates, and a symbol inside a nested namespace: both reach the
+        // index and both resolve by the bare name a user would type.
+        #expect(index.lookup(name: "Box", query: .definitions).contains { $0.definition?.path.hasSuffix(".hpp") == true },
+                "an uninstantiated template is still declared, and the index has it")
+        #expect(index.lookup(name: "nestedDouble", query: .definitions).contains { $0.name == "nestedDouble" },
+                "a nested-namespace symbol resolves by its bare name")
+
         // Documenting actual behaviour: SDK symbols do not resolve by name in a project store
         // (only Reference roles exist), so the result is empty. A fallback anchor cannot be a call site.
         #expect(index.lookup(name: "String", query: .references).isEmpty)

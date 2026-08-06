@@ -318,11 +318,26 @@ func runRelated(_ query: RelationQuery, label: String, arguments: [String]) -> I
     if arguments.contains("--json") { printJSON(related); return 0 }
     guard !related.isEmpty else { print("Nothing found for '\(symbol)'."); return 0 }
 
-    let reader = SourceLineReader()
-    print("── \(symbol): \(related.count)")
+    // Grouped by symbol, because the count in the header answers "how many callees", not "how
+    // many call sites": a method called twice on one line was reported as two callees.
+    var order: [String] = []
+    var sites: [String: [RelatedSymbol]] = [:]
     for item in related {
-        let snippet = reader.line(item.location.line, inFile: item.location.path).map { "  \($0)" } ?? ""
-        print("   • \(item.name) [\(item.kind)]  \(shorten(item.location.path)):\(item.location.line)\(snippet)")
+        if sites[item.usr] == nil { order.append(item.usr) }
+        sites[item.usr, default: []].append(item)
+    }
+
+    let reader = SourceLineReader()
+    let siteCount = related.count
+    let header = siteCount == order.count ? "\(order.count)" : "\(order.count) (\(siteCount) sites)"
+    print("── \(symbol): \(header)")
+    for usr in order {
+        guard let group = sites[usr], let first = group.first else { continue }
+        let snippet = reader.line(first.location.line, inFile: first.location.path).map { "  \($0)" } ?? ""
+        print("   • \(first.name) [\(first.kind)]  \(shorten(first.location.path)):\(first.location.line)\(snippet)")
+        for extra in group.dropFirst() {
+            print("     also \(shorten(extra.location.path)):\(extra.location.line):\(extra.location.column)")
+        }
     }
     return 0
 }

@@ -213,13 +213,14 @@ public final class IndexStore {
     }
 
     /// Direct callees or callers of a symbol by USR (one level) — used by the recursive hierarchy.
+    ///
+    /// One entry per symbol, not per call site. A hierarchy edge is "calls this", so a method
+    /// called twice on one line used to appear as two identical children and to spend the
+    /// breadth budget twice over.
     public func calls(ofUSR usr: String, direction: CallDirection) -> [RelatedSymbol] {
-        var seen = Set<String>()
-        var results: [RelatedSymbol] = []
+        var sites: [RelatedSymbol] = []
         func add(_ symbol: Symbol, _ location: SourceLocation) {
-            let key = "\(symbol.usr)|\(location.path):\(location.line):\(location.column)"
-            guard seen.insert(key).inserted else { return }
-            results.append(RelatedSymbol(name: symbol.name, usr: symbol.usr, kind: "\(symbol.kind)", location: location))
+            sites.append(RelatedSymbol(name: symbol.name, usr: symbol.usr, kind: "\(symbol.kind)", location: location))
         }
         switch direction {
         case .callees:
@@ -233,7 +234,12 @@ public final class IndexStore {
                 }
             }
         }
-        return results
+        // Sorted before deduplication so the location kept for a symbol is its first call site
+        // rather than whichever one the store happened to return first.
+        var seen = Set<String>()
+        return sites
+            .sorted { SourceLocation.isOrderedBefore($0.location, $1.location) }
+            .filter { seen.insert($0.usr).inserted }
     }
 
     /// A project source within the current project's scope: not SDK or vendored code, and (when a

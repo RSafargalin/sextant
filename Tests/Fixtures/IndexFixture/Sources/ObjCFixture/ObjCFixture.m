@@ -16,6 +16,14 @@
 
 @end
 
+@implementation OCGreeter (Shouting)
+
+- (NSString *)ocShoutWithName:(NSString *)name {
+    return [[self ocGreetWithName:name] uppercaseString];
+}
+
+@end
+
 @implementation OCFeeder
 
 - (NSInteger)ocFeed {
