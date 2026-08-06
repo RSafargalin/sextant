@@ -8,8 +8,8 @@ public struct GoldenSpec: Codable, Sendable {
     public init(assertions: [GoldenAssertion]) { self.assertions = assertions }
 }
 
-/// One assertion. `query` ∈ defs|refs|callers|impls|supertypes. The checks are optional, and all
-/// of those given are applied together (AND).
+/// One assertion. `query` ∈ defs|refs|callers|callees|impls|supertypes. The checks are optional,
+/// and all of those given are applied together (AND).
 public struct GoldenAssertion: Codable, Sendable {
     public let query: String
     public let symbol: String
@@ -19,7 +19,7 @@ public struct GoldenAssertion: Codable, Sendable {
     public var minCount: Int?
     /// At least one result path contains this substring.
     public var pathContains: String?
-    /// A symbol with this name is among the results (for impls/supertypes).
+    /// A symbol with this name is among the results (for callees/impls/supertypes).
     public var containsName: String?
     /// No result path contains this substring (a guard against `/.build/` and foreign worktrees).
     public var noPathContains: String?
@@ -71,6 +71,13 @@ public enum Golden {
             names = related.map { $0.name }
             paths = related.map { $0.location.path }
             count = related.count
+        case "callees":
+            let related = index.related(toName: assertion.symbol, query: .callees)
+            names = related.map { $0.name }
+            paths = related.map { $0.location.path }
+            // Distinct symbols, matching what the command reports: the same callee invoked twice
+            // is one callee.
+            count = Set(related.map { $0.usr }).count
         default:
             return GoldenResult(query: assertion.query, symbol: assertion.symbol, passed: false,
                                 detail: "unknown query '\(assertion.query)'")

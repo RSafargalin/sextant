@@ -28,6 +28,11 @@ Human-readable text output is not covered — parse `--json`, not prose.
   conformers, and brace traps inside strings, character literals and comments.
 - [ADR-0004](docs/adr/0004-structural-layer-for-c-family.md): the structural layer for the
   C family will be built on libclang, not tree-sitter, with the measurements behind that.
+- `golden` accepts `callees` assertions. The command shipped without regression cover in the
+  spec that exists to provide it.
+- Fixture cover for C++ overloads, an uninstantiated template, a nested namespace and an
+  Objective-C category. All four already worked; overloads resolve to separate USRs, so callers
+  of one signature are not attributed to the other.
 
 ### Changed
 
@@ -46,6 +51,9 @@ Human-readable text output is not covered — parse `--json`, not prose.
   commands would answer from it — silently, and wrongly. All three selection sites now use the
   same freshness layer.
 - `map` printed two messages about one missing index.
+- `callees` counted call sites as callees: a method called twice on one line was reported as two.
+  Results are now grouped per symbol, with the extra sites listed under it. `hierarchy` showed the
+  same child twice for the same reason, and the duplicate also consumed its breadth budget.
 
 ## [0.7.0] — 2026-08-05
 
