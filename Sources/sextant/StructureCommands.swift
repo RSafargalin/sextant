@@ -187,20 +187,25 @@ func runSearch(arguments: [String]) -> Int32 {
             hits.append(SearchHit(file: relative, line: hit.line, column: hit.column, text: hit.text))
         }
     }
-    // Named, not dropped: "No matches." over a project whose Objective-C files were never opened
-    // is a confident wrong answer.
-    let unscanned = StructuralCoverage.unscannedFiles(projectRoot: rootPath, includeTests: includeTests)
+    // Objective-C, C and C++ are searched by clang, with the flags each file was built with.
+    // Whatever it could not read is named: "No matches." over files that were never opened is a
+    // confident wrong answer.
+    let cFamily = CFamilySearch.run(pattern: pattern, searchRoot: rootPath,
+                                    projectRoot: projectRoot(in: arguments), includeTests: includeTests)
+    hits += cFamily.hits.map { SearchHit(file: $0.file, line: $0.line, column: $0.column, text: $0.text) }
+    hits.sort { ($0.file, $0.line, $0.column) < ($1.file, $1.line, $1.column) }
+
     if arguments.contains("--json") {
         struct SearchOutput: Encodable {
             let matches: [SearchHit]
-            let notScanned: [String]
+            let notScanned: [UnscannedFile]
         }
-        printJSON(SearchOutput(matches: hits, notScanned: unscanned))
+        printJSON(SearchOutput(matches: hits, notScanned: cFamily.unscanned))
         return 0
     }
     for hit in hits { print("\(hit.file):\(hit.line):\(hit.column): \(hit.text)") }
     print(hits.isEmpty ? "No matches." : "\ntotal: \(hits.count)")
-    StructuralCoverage.report(unscanned).forEach(reportError)
+    StructuralCoverage.report(cFamily.unscanned).forEach(reportError)
     return 0
 }
 
@@ -223,7 +228,7 @@ func runLint(arguments: [String]) -> Int32 {
     if arguments.contains("--json") {
         struct LintOutput: Encodable {
             let violations: [RuleViolation]
-            let notScanned: [String]
+            let notScanned: [UnscannedFile]
         }
         printJSON(LintOutput(violations: violations, notScanned: unscanned))
         return violations.isEmpty ? 0 : 1

@@ -33,35 +33,68 @@ public struct ClangTranslationUnit {
         }
     }
 
+    /// An error, with where in the file it was raised. The position is what tells an error in the
+    /// file itself apart from one in text a caller appended through `overlay`.
+    public struct Diagnostic: Sendable {
+        public let text: String
+        public let offset: Int
+    }
+
     /// The file's own top-level declarations. Cursors from included headers are left out: they
     /// belong to the header, and every file including it would report them again.
     public let root: ClangNode
-    /// Formatted error and fatal diagnostics. An empty list means the tree is complete.
-    public let errors: [String]
+    /// Error and fatal diagnostics. An empty list means the tree is complete.
+    public let errors: [Diagnostic]
 
     public var isComplete: Bool { errors.isEmpty }
 
+    /// Errors raised inside a byte range — used to tell whether appended text compiled.
+    public func errors(in range: Range<Int>) -> [Diagnostic] {
+        errors.filter { range.contains($0.offset) }
+    }
+
     /// Parses a file with the flags it was compiled with.
-    public static func parse(file: String, arguments: [String], library: ClangLibrary) throws -> ClangTranslationUnit {
+    ///
+    /// `overlay` replaces the file's contents in memory, keeping its path — so its includes, its
+    /// flags and its module context all still apply. That is how a search pattern is compiled in
+    /// the context of the file being searched, which is the only place the file's own selectors
+    /// are known.
+    public static func parse(file: String, arguments: [String], library: ClangLibrary,
+                             overlay: String? = nil) throws -> ClangTranslationUnit {
         let index = library.createIndex(1, 0)   // no declarations from PCH, no diagnostics on stderr
         defer { library.disposeIndex(index) }
 
         var argumentStrings: [UnsafeMutablePointer<CChar>?] = arguments.map { strdup($0) }
         defer { argumentStrings.forEach { free($0) } }
 
+        let overlayContents = overlay.map { strdup($0) } ?? nil
+        let overlayName = overlay == nil ? nil : strdup(file)
+        defer { free(overlayContents); free(overlayName) }
+
+        let unsaved = UnsafeMutablePointer<SXUnsavedFile>.allocate(capacity: 1)
+        defer { unsaved.deallocate() }
+        if let overlayContents, let overlayName {
+            unsaved.pointee = SXUnsavedFile(filename: overlayName, contents: overlayContents,
+                                            length: UInt(strlen(overlayContents)))
+        }
+        let unsavedCount: UInt32 = overlay == nil ? 0 : 1
+
         let unit: SXTranslationUnit? = argumentStrings.withUnsafeMutableBufferPointer { buffer in
             buffer.withMemoryRebound(to: UnsafePointer<CChar>?.self) { rebound in
-                library.parseTranslationUnit(index, file, rebound.baseAddress, Int32(arguments.count), nil, 0, 0)
+                library.parseTranslationUnit(index, file, rebound.baseAddress, Int32(arguments.count),
+                                             unsavedCount == 0 ? nil : unsaved, unsavedCount, 0)
             }
         }
         guard let unit else { throw Failure.notParsed(file: file) }
         defer { library.disposeTranslationUnit(unit) }
 
-        var errors: [String] = []
+        var errors: [Diagnostic] = []
         for position in 0..<library.numberOfDiagnostics(unit) {
             let diagnostic = library.diagnostic(unit, position)
             if library.diagnosticSeverity(diagnostic) >= 3 {   // error and fatal
-                errors.append(library.text(library.formatDiagnostic(diagnostic, 0)))
+                var line: UInt32 = 0, column: UInt32 = 0, offset: UInt32 = 0
+                library.spellingLocation(library.diagnosticLocation(diagnostic), nil, &line, &column, &offset)
+                errors.append(Diagnostic(text: library.text(library.formatDiagnostic(diagnostic, 0)), offset: Int(offset)))
             }
             library.disposeDiagnostic(diagnostic)
         }

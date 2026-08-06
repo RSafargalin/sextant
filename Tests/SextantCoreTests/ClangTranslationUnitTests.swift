@@ -38,7 +38,7 @@ struct ClangTranslationUnitTests {
             )
             // A tree with errors is a tree built on the wrong flags; the whole design rests on
             // this not happening.
-            #expect(unit.errors.isEmpty, "\(command.file): \(unit.errors.joined(separator: "; "))")
+            #expect(unit.errors.isEmpty, "\(command.file): \(unit.errors.map { $0.text }.joined(separator: "; "))")
             #expect(!unit.root.children.isEmpty, "\(command.file): no declarations")
         }
     }

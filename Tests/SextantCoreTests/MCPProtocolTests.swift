@@ -100,9 +100,22 @@ struct MCPProtocolTests {
         ])
         let answer = text(of: try #require(responses.last))
         #expect(answer.contains("no matches"))
-        // Without this the agent reads "no matches" as an answer about the whole project.
+        // A Swift pattern does not compile in a C-family file. Without this line the agent reads
+        // "no matches" as an answer about the whole project.
         #expect(answer.contains("not scanned"))
         #expect(answer.contains("ObjCFixture.m"))
+    }
+
+    @Test("An Objective-C pattern is answered through MCP, not only in the CLI")
+    func structuralSearchCoversObjectiveC() throws {
+        let responses = try session([
+            ["jsonrpc": "2.0", "id": 1, "method": "initialize", "params": [String: Any]()],
+            ["jsonrpc": "2.0", "id": 2, "method": "tools/call",
+             "params": ["name": "structural_search", "arguments": ["pattern": "[$X ocFeed]"]]]
+        ])
+        let answer = text(of: try #require(responses.last))
+        #expect(answer.contains("ObjCFixture.m:34:12: [self ocFeed]"))
+        #expect(answer.contains("ObjCFixture.m:34:28: [self ocFeed]"))
     }
 
     @Test("api returns the public surface including protocol requirements")

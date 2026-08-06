@@ -101,8 +101,13 @@ public enum CompilationDatabase {
     // MARK: - Storage
 
     /// The database for a project, kept in the cache directory rather than in the project.
+    ///
+    /// The key is the canonical path, not the spelling: `sextant index --project ./pkg` and a
+    /// later query with an absolute path are the same project, and keying on the raw string made
+    /// the second one report every file as having no flags.
     public static func path(forRoot root: String) -> URL {
-        let sanitized = root.replacingOccurrences(of: "/", with: "_")
+        let canonical = URL(fileURLWithPath: root).resolvingSymlinksInPath().standardizedFileURL.path
+        let sanitized = canonical.replacingOccurrences(of: "/", with: "_")
         return FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Caches/sextant/compile-db/\(sanitized).json")
     }

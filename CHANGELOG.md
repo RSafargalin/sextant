@@ -15,6 +15,13 @@ Human-readable text output is not covered — parse `--json`, not prose.
 
 ### Added
 
+- `search` reads Objective-C, C and C++ through clang, so a structural pattern is no longer a
+  Swift-only question: `sextant search '[$X reloadData]'` finds message sends the way
+  `try? $X.save()` finds Swift calls. The pattern is compiled inside each file, appended to it in
+  memory, because that is the only place its selectors are known — compiled on its own, an
+  Objective-C pattern comes back from clang with an empty selector under ARC. Whatever cannot be
+  read is named with its reason (no flags, the pattern does not compile here, a header is not a
+  compilation unit), never counted as "no matches".
 - A compile database: `index` records the exact flags each Objective-C, C and C++ file was built
   with, and `doctor` reports whether every such source is covered. This is the groundwork for
   reading those files structurally ([ADR-0004](docs/adr/0004-structural-layer-for-c-family.md)):
@@ -47,7 +54,7 @@ Human-readable text output is not covered — parse `--json`, not prose.
 
 - **Breaking (`--json` schema):** `search --json` returns `{"matches": [...], "notScanned": [...]}`
   and `lint --json` returns `{"violations": [...], "notScanned": [...]}`, each in place of a bare
-  array. `notScanned` lists the Objective-C, C and C++ files the structural engine never opened.
+  array. Every `notScanned` entry is `{"file": ..., "reason": ...}` — a file left out, and why.
 - `search` and `lint` name the non-Swift files they skipped, in the text output, in `--json` and
   in the MCP answer. Both commands walk `.swift` only, so on a project with Objective-C sources
   they used to report "No matches." and "✅ No violations found" about files they had not read —

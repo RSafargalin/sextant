@@ -35,6 +35,7 @@ public final class ClangLibrary: @unchecked Sendable {
     let diagnostic: sx_getDiagnostic
     let diagnosticSeverity: sx_getDiagnosticSeverity
     let formatDiagnostic: sx_formatDiagnostic
+    let diagnosticLocation: sx_getDiagnosticLocation
     let disposeDiagnostic: sx_disposeDiagnostic
     let translationUnitCursor: sx_getTranslationUnitCursor
     let visitChildren: sx_visitChildren
@@ -63,6 +64,7 @@ public final class ClangLibrary: @unchecked Sendable {
         diagnostic = try symbol("clang_getDiagnostic", sx_getDiagnostic.self)
         diagnosticSeverity = try symbol("clang_getDiagnosticSeverity", sx_getDiagnosticSeverity.self)
         formatDiagnostic = try symbol("clang_formatDiagnostic", sx_formatDiagnostic.self)
+        diagnosticLocation = try symbol("clang_getDiagnosticLocation", sx_getDiagnosticLocation.self)
         disposeDiagnostic = try symbol("clang_disposeDiagnostic", sx_disposeDiagnostic.self)
         translationUnitCursor = try symbol("clang_getTranslationUnitCursor", sx_getTranslationUnitCursor.self)
         visitChildren = try symbol("clang_visitChildren", sx_visitChildren.self)

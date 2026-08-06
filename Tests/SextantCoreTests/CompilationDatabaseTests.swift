@@ -92,6 +92,15 @@ struct CompilationDatabaseTests {
         #expect(CompilationDatabase.load(forRoot: root) == commands)
     }
 
+    @Test("The same project spelled differently is the same database")
+    func keyIsTheCanonicalPath() {
+        let canonical = CompilationDatabase.path(forRoot: "/tmp/sextant-project")
+        #expect(CompilationDatabase.path(forRoot: "/tmp/./sextant-project") == canonical)
+        #expect(CompilationDatabase.path(forRoot: "/tmp/sextant-project/") == canonical)
+        // A relative path resolves against the working directory, as every other command does.
+        #expect(CompilationDatabase.path(forRoot: ".") == CompilationDatabase.path(forRoot: FileManager.default.currentDirectoryPath))
+    }
+
     @Test("An unknown project has an empty database, not a crash")
     func loadsNothingForUnknownProject() {
         #expect(CompilationDatabase.load(forRoot: "/nowhere-\(UUID().uuidString)").isEmpty)
