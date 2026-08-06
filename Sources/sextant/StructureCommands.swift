@@ -187,9 +187,20 @@ func runSearch(arguments: [String]) -> Int32 {
             hits.append(SearchHit(file: relative, line: hit.line, column: hit.column, text: hit.text))
         }
     }
-    if arguments.contains("--json") { printJSON(hits); return 0 }
+    // Named, not dropped: "No matches." over a project whose Objective-C files were never opened
+    // is a confident wrong answer.
+    let unscanned = StructuralCoverage.unscannedFiles(projectRoot: rootPath, includeTests: includeTests)
+    if arguments.contains("--json") {
+        struct SearchOutput: Encodable {
+            let matches: [SearchHit]
+            let notScanned: [String]
+        }
+        printJSON(SearchOutput(matches: hits, notScanned: unscanned))
+        return 0
+    }
     for hit in hits { print("\(hit.file):\(hit.line):\(hit.column): \(hit.text)") }
     print(hits.isEmpty ? "No matches." : "\ntotal: \(hits.count)")
+    StructuralCoverage.report(unscanned).forEach(reportError)
     return 0
 }
 
@@ -206,17 +217,26 @@ func runLint(arguments: [String]) -> Int32 {
         rules = RuleEngine.builtinRules
     }
     let violations = RuleEngine.run(rules: rules, projectRoot: root, includeTests: includeTests)
+    // A clean bill of health has to say which files it covers: the rules never ran on the
+    // project's Objective-C, C or C++ sources.
+    let unscanned = StructuralCoverage.unscannedFiles(projectRoot: root, includeTests: includeTests)
     if arguments.contains("--json") {
-        printJSON(violations)
+        struct LintOutput: Encodable {
+            let violations: [RuleViolation]
+            let notScanned: [String]
+        }
+        printJSON(LintOutput(violations: violations, notScanned: unscanned))
         return violations.isEmpty ? 0 : 1
     }
     guard !violations.isEmpty else {
         print("✅ No violations found (\(rules.count) rules)")
+        StructuralCoverage.report(unscanned).forEach(reportError)
         return 0
     }
     for violation in violations.sorted(by: { ($0.ruleID, $0.file, $0.line) < ($1.ruleID, $1.file, $1.line) }) {
         print("[\(violation.ruleID)] \(violation.file):\(violation.line):\(violation.column)  \(violation.text)")
     }
     print("\n❌ violations: \(violations.count)")
+    StructuralCoverage.report(unscanned).forEach(reportError)
     return 1
 }

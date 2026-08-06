@@ -91,6 +91,20 @@ struct MCPProtocolTests {
         }
     }
 
+    @Test("A structural miss names the files it never opened")
+    func structuralSearchNamesUnscannedFiles() throws {
+        let responses = try session([
+            ["jsonrpc": "2.0", "id": 1, "method": "initialize", "params": [String: Any]()],
+            ["jsonrpc": "2.0", "id": 2, "method": "tools/call",
+             "params": ["name": "structural_search", "arguments": ["pattern": "$X.nowhereToBeFound()"]]]
+        ])
+        let answer = text(of: try #require(responses.last))
+        #expect(answer.contains("no matches"))
+        // Without this the agent reads "no matches" as an answer about the whole project.
+        #expect(answer.contains("not scanned"))
+        #expect(answer.contains("ObjCFixture.m"))
+    }
+
     @Test("api returns the public surface including protocol requirements")
     func apiToolReturnsSurface() throws {
         let responses = try session([

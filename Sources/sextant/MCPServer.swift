@@ -296,7 +296,11 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
             }
             if lines.count >= 200 { lines.append("… (first 200 shown)"); break }
         }
-        return (lines.isEmpty ? "no matches" : lines.joined(separator: "\n"), false)
+        if lines.isEmpty { lines.append("no matches") }
+        lines += StructuralCoverage.report(
+            StructuralCoverage.unscannedFiles(projectRoot: context.project, includeTests: false)
+        )
+        return (lines.joined(separator: "\n"), false)
 
     case "lint":
         // Rules from .sextant.json, as in the CLI (MCP used to know only the built-in set).
@@ -308,12 +312,17 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
             rules = RuleEngine.builtinRules
         }
         let violations = RuleEngine.run(rules: rules, projectRoot: context.project, includeTests: false)
-        guard !violations.isEmpty else { return ("✅ no violations found (\(rules.count) rules)", false) }
+        let unscanned = StructuralCoverage.report(
+            StructuralCoverage.unscannedFiles(projectRoot: context.project, includeTests: false)
+        )
+        guard !violations.isEmpty else {
+            return ((["✅ no violations found (\(rules.count) rules)"] + unscanned).joined(separator: "\n"), false)
+        }
         let lines = violations
             .sorted { ($0.ruleID, $0.file, $0.line) < ($1.ruleID, $1.file, $1.line) }
             .prefix(200)
             .map { "[\($0.ruleID)] \($0.file):\($0.line):\($0.column)  \($0.text)" }
-        return (lines.joined(separator: "\n"), false)
+        return ((lines + unscanned).joined(separator: "\n"), false)
 
     case "api":
         var root = context.project
