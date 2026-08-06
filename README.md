@@ -53,9 +53,14 @@ compiler's index store, which is written by the whole clang family. They therefo
 `greet(withName:)` is found as a caller of the Objective-C selector `greetWithName:` it
 actually calls.
 
-The structural layer (`map`, `api`, `search`, `lint`, `changed`) parses with SwiftSyntax and is
-**Swift-only**. So on a mixed project you get full semantics everywhere and structure for the
-Swift half.
+`map` and `api` cover the same four languages: they read non-Swift declarations from the index
+rather than from a second parser, which is why they need a built index to do it.
+
+**Swift-only** is whatever parses source text: `search`, `lint`, `changed` and `construct`.
+Source text is not what an index holds, so these need a parser per language — that is
+[ADR-0004](docs/adr/0004-structural-layer-for-c-family.md), and it is not built yet. Until it
+is, they name what they left out rather than answer as if it were not there: `changed` lists
+the C, C++ and Objective-C files it did not compare.
 
 ## What it saves
 
@@ -92,7 +97,7 @@ Working CLI and MCP server, version 0.7.x. 21 commands:
 | `blast <symbol>` | impact analysis: what a change to this symbol touches | semantics |
 | `body <symbol>` | full text of a declaration (signature and body) | semantics + syntax |
 | `construct <type>` | construction and injection sites (heuristic: `Type(`) | heuristic |
-| `changed` | symbol-level git diff: what was added, removed, or changed signature | syntax |
+| `changed` | symbol-level git diff: what was added, removed, or changed signature (Swift; other languages listed as not compared) | syntax |
 | `golden` / `bench` | semantic regressions against a spec / latency and output volume | measurability |
 | `mcp` | MCP server (stdio) for Claude Code — the semantic layer as tools | integration |
 | `init` | set up a project: `.sextant.json`, registration in `.mcp.json`, and a check | integration |

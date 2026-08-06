@@ -16,12 +16,25 @@ public enum DeclarationDiff {
         SwiftDeclarationExtractor.declarations(tree: Parser.parse(source: source))
     }
 
+    /// What a run of `changed` produced: the per-file diffs, and the changed files it could not
+    /// diff at all. The second list is part of the answer, not a detail: a report of "nothing
+    /// changed" means something different when three `.m` files were left out of it.
+    public struct Changes {
+        public let files: [(file: String, result: Result)]
+        public let notDiffed: [String]
+    }
+
     /// Symbol-level changes across git revisions: file → added, removed, changed signature.
     /// `to == nil` compares against the working tree. nil means not a git repository, or a bad ref.
     /// Files with no symbol-level changes (body edits, reformatting) are omitted.
-    public static func changes(root: String, from: String, to: String?) -> [(file: String, result: Result)]? {
-        guard let (topLevel, files) = SwiftSources.changedSwiftFiles(root: root, from: from, to: to) else { return nil }
-        return files.compactMap { relative in
+    ///
+    /// Only Swift is diffed. A revision's source exists as text, not as a build, so the compiler
+    /// index — which is what makes the other commands multi-language — has nothing to say about
+    /// it; C-family files are reported as not diffed until the structural layer of ADR-0004 can
+    /// parse them.
+    public static func changes(root: String, from: String, to: String?) -> Changes? {
+        guard let (topLevel, swift, clang) = SwiftSources.changedFiles(root: root, from: from, to: to) else { return nil }
+        let files = swift.compactMap { relative -> (file: String, result: Result)? in
             // A file missing at a revision (added or removed) is an empty source, not an error.
             let oldSource = SwiftSources.fileContent(root: root, revision: from, relativePath: relative) ?? ""
             let newSource = to.map { SwiftSources.fileContent(root: root, revision: $0, relativePath: relative) ?? "" }
@@ -29,6 +42,7 @@ public enum DeclarationDiff {
             let result = compare(old: declarations(fromSource: oldSource), new: declarations(fromSource: newSource))
             return result.isEmpty ? nil : (relative, result)
         }
+        return Changes(files: files, notDiffed: clang)
     }
 
     /// Matching declarations. Grouped by (kind:name); for a name UNIQUE in both versions, changed

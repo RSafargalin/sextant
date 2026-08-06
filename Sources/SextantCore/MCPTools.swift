@@ -36,7 +36,7 @@ public enum MCPTools {
                     "scope": ["type": "string", "description": "Subdirectory of the project, to narrow the area."]
                 ]
             ]],
-            ["name": "changed", "description": "Symbol-level git diff: which declarations were added, removed, or changed signature between revisions. Not a line diff. Use for 'what changed' and 'what did I break'.", "inputSchema": [
+            ["name": "changed", "description": "Symbol-level git diff: which declarations were added, removed, or changed signature between revisions. Not a line diff. Use for 'what changed' and 'what did I break'. Swift only: changed C, C++ and Objective-C files come back listed as not compared, so an empty result never means they are unchanged.", "inputSchema": [
                 "type": "object",
                 "properties": [
                     "from": ["type": "string", "description": "Baseline revision (default HEAD)."],

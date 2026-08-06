@@ -13,7 +13,39 @@ Human-readable text output is not covered — parse `--json`, not prose.
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- Objective-C, C and C++ across the semantic commands. The index store is written by the whole
+  clang family, so this needed symbol resolution to be fixed rather than a parser to be added:
+  selectors (`greetWithName:`) are now matched, and a symbol declared in a header now resolves
+  to its definition in the implementation file.
+- `map` and `api` cover the same languages, reading non-Swift declarations from the index. `api`
+  refuses C++-only headers and reports how many it skipped: the index carries no access level,
+  so listing them would present private members as public API.
+- `body` extracts C, C++ and Objective-C declarations. It previously answered for Swift only,
+  and a C++ struct that happened to parse as Swift came back missing its trailing `;`.
+- A four-language fixture (Swift, Objective-C, C, C++) with an Objective-C protocol and its
+  conformers, and brace traps inside strings, character literals and comments.
+- [ADR-0004](docs/adr/0004-structural-layer-for-c-family.md): the structural layer for the
+  C family will be built on libclang, not tree-sitter, with the measurements behind that.
+
+### Changed
+
+- **Breaking (`--json` schema):** `changed --json` returns an object
+  `{"files": [...], "notDiffed": [...]}` instead of a bare array; the former array is now the
+  `files` field. `notDiffed` lists changed files the symbol-level diff could not read.
+- `changed` names the C, C++ and Objective-C files it did not compare. It used to drop them, so
+  a commit touching only `.m` files reported "no symbol-level changes" — a confident wrong
+  answer of exactly the kind this tool exists to prevent. Diffing them needs the source text of
+  an arbitrary revision, which an index cannot supply; that is ADR-0004 work.
+
+### Fixed
+
+- Index store selection used the store directory's own modification date, which does not change
+  when units are rewritten inside it. A stale store could win over a fresh one and the semantic
+  commands would answer from it — silently, and wrongly. All three selection sites now use the
+  same freshness layer.
+- `map` printed two messages about one missing index.
 
 ## [0.7.0] — 2026-08-05
 
