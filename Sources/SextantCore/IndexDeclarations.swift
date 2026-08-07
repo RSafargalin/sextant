@@ -142,6 +142,26 @@ extension IndexDeclarations {
         return (summaries, cxxHeaders)
     }
 
+    /// A note for public headers that use conditional compilation.
+    ///
+    /// Their declarations come from the index, which holds one configuration of the project — so
+    /// whatever sits in a branch that configuration does not contain is absent from the surface.
+    /// One line, not a list: on an Objective-C project nearly every header has a `#if`, and a
+    /// warning per header would be noise rather than information.
+    public static func conditionalHeaderNote(root: URL, package: String?) -> [String] {
+        var count = 0
+        for url in SwiftSources.files(under: root, includeTests: false, extensions: Array(headerExtensions)) {
+            guard url.pathComponents.contains("include") else { continue }
+            let relative = SwiftSources.relativePath(of: url, root: root)
+            if let package, SwiftSources.package(for: relative) != package { continue }
+            if let source = try? String(contentsOf: url, encoding: .utf8), ConditionalRegions.areUsed(inSource: source) {
+                count += 1
+            }
+        }
+        guard count > 0 else { return [] }
+        return ["ℹ \(count) public header(s) use #if — only the declarations of the configuration that was built are listed."]
+    }
+
     /// Public surface of C++ headers, read through clang with the flags of a translation unit
     /// that includes them. Headers no compiled source reaches come back in `unanswered`.
     public static func cxxHeaderSummaries(

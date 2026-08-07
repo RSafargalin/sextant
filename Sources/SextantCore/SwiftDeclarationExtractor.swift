@@ -11,9 +11,42 @@ public enum SwiftDeclarationExtractor {
 
     /// Top-level declarations for an already parsed tree.
     public static func declarations(tree: SourceFileSyntax) -> [Declaration] {
-        tree.statements.compactMap { item in
-            item.item.as(DeclSyntax.self).flatMap { declaration(from: $0, default: .internal) }
+        tree.statements.flatMap { item in
+            item.item.as(DeclSyntax.self).map { declarations(from: $0, default: .internal) } ?? []
         }
+    }
+
+    /// Declarations a single syntax item contributes. A `#if` contributes what its branches hold,
+    /// each marked with the condition guarding it — dropping them (which is what happens when a
+    /// walk only looks for declarations) makes an iOS-only public method invisible on a Mac,
+    /// with nothing said about it.
+    private static func declarations(from decl: DeclSyntax, default defaultAccess: Access) -> [Declaration] {
+        guard let ifConfig = decl.as(IfConfigDeclSyntax.self) else {
+            return declaration(from: decl, default: defaultAccess).map { [$0] } ?? []
+        }
+        return ifConfig.clauses.flatMap { clause -> [Declaration] in
+            let marker = clause.condition.map { "\(clause.poundKeyword.text) \($0.trimmedDescription)" }
+                ?? clause.poundKeyword.text
+            // The branch body is a statement list at file scope and a member list inside a type;
+            // walking the children covers both without spelling out the syntax enum.
+            var elements: [DeclSyntax] = []
+            for child in clause.children(viewMode: .sourceAccurate) {
+                if let statements = child.as(CodeBlockItemListSyntax.self) {
+                    elements += statements.compactMap { $0.item.as(DeclSyntax.self) }
+                } else if let members = child.as(MemberBlockItemListSyntax.self) {
+                    elements += members.map { $0.decl }
+                }
+            }
+            return elements.flatMap { declarations(from: $0, default: defaultAccess) }
+                .map { guarded($0, by: marker) }
+        }
+    }
+
+    /// Marks a declaration and everything inside it with the condition it is compiled under.
+    private static func guarded(_ declaration: Declaration, by condition: String) -> Declaration {
+        Declaration(kind: declaration.kind, header: declaration.header, access: declaration.access,
+                    attributes: declaration.attributes, docSummary: declaration.docSummary,
+                    members: declaration.members, condition: declaration.condition ?? condition)
     }
 
     /// Decorates a base declaration with attributes (`@MainActor`) and a doc summary.
@@ -145,7 +178,7 @@ public enum SwiftDeclarationExtractor {
     ) -> Declaration {
         let typeAccess = explicitAccess(modifiers) ?? defaultAccess
         let memberDefault: Access = (kind == .extensionKind || kind == .protocolKind) ? typeAccess : .internal
-        let members = memberBlock.members.compactMap { declaration(from: $0.decl, default: memberDefault) }.map { member in
+        let members = memberBlock.members.flatMap { declarations(from: $0.decl, default: memberDefault) }.map { member in
             member.kind == .caseKind
                 ? Declaration(kind: .caseKind, header: member.header, access: typeAccess, members: member.members)
                 : member

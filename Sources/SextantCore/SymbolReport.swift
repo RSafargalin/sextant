@@ -171,7 +171,10 @@ public enum SymbolReport {
     ) -> [String] {
         var lines = ["⚠ \(symbol): 0 semantic hits → textual occurrences (grep equivalent, NOT calls or references; \(matches.count)\(truncated ? "+" : "")):"]
         for match in matches {
-            lines.append("\(style.level2)\(path(match.path)):\(match.line)  \(match.text)")
+            // The marker is per line, not per answer: in a file with several branches only some
+            // of the occurrences are outside the built configuration, and which ones matters.
+            let marker = match.conditional ? "  [#if — outside the built configuration]" : ""
+            lines.append("\(style.level2)\(path(match.path)):\(match.line)  \(match.text)\(marker)")
         }
         return lines
     }
