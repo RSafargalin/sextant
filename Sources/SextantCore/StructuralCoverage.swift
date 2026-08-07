@@ -48,10 +48,11 @@ public enum StructuralCoverage {
 
     /// Occurrences found only textually, in code the build did not contain. Reported apart from
     /// the matches and labelled, so the two confidence levels are never added into one number.
-    public static func inactiveReport(_ hits: [StructuralHit], targets: Set<String>, limit: Int = 10) -> [String] {
+    public static func inactiveReport(_ hits: [StructuralHit], targets: Set<String>, limit: Int = 10,
+                                      noun: String = "more textual occurrence(s)") -> [String] {
         guard !hits.isEmpty else { return [] }
         let configuration = targets.isEmpty ? "this build" : targets.sorted().joined(separator: ", ")
-        var lines = ["⚠ \(hits.count) more textual occurrence(s) inside #if branches not built for \(configuration)"
+        var lines = ["⚠ \(hits.count) \(noun) inside #if branches not built for \(configuration)"
                      + " — found by text, NOT structurally verified:"]
         lines += hits.prefix(limit).map { "  \($0.file):\($0.line): \($0.text)" }
         if hits.count > limit { lines.append("  … and \(hits.count - limit) more") }

@@ -12,12 +12,18 @@ public enum CFamilyLint {
     public struct Outcome: Sendable {
         public let violations: [RuleViolation]
         public let unscanned: [UnscannedFile]
+        /// Lines in `#if` branches the build does not contain that mention what a rule looks for.
+        /// Not verified against a tree — that code was never compiled — but a rule report that
+        /// stayed silent about them would be clean about code it never checked.
+        public let inactive: [StructuralHit]
+        /// Target triples the checked files were built for.
+        public let targets: Set<String>
     }
 
     public static func run(rules: [Rule], lintRoot: String, projectRoot: String, includeTests: Bool) -> Outcome {
         let root = URL(fileURLWithPath: lintRoot, isDirectory: true)
         let sources = CompilationDatabase.compilableSources(projectRoot: lintRoot, includeTests: includeTests)
-        guard !sources.isEmpty else { return Outcome(violations: [], unscanned: []) }
+        guard !sources.isEmpty else { return Outcome(violations: [], unscanned: [], inactive: [], targets: []) }
 
         // Rule and pattern side by side, so a match knows which rule to report.
         var compiled: [(rule: Rule, search: ClangPatternSearch)] = []
@@ -30,7 +36,7 @@ public enum CFamilyLint {
         guard !engines.isEmpty else {
             return Outcome(violations: [], unscanned: sources.map {
                 UnscannedFile(file: relative($0, root), reason: "no rule pattern could be compiled for the C family")
-            })
+            }, inactive: [], targets: [])
         }
 
         let library: ClangLibrary
@@ -39,7 +45,7 @@ public enum CFamilyLint {
         } catch {
             return Outcome(violations: [], unscanned: sources.map {
                 UnscannedFile(file: relative($0, root), reason: "\(error)")
-            })
+            }, inactive: [], targets: [])
         }
 
         var commandByFile: [String: CompileCommand] = [:]
@@ -49,6 +55,8 @@ public enum CFamilyLint {
 
         var violations: [RuleViolation] = []
         var unscanned: [UnscannedFile] = []
+        var inactive: [StructuralHit] = []
+        var targets: Set<String> = []
         for source in sources {
             guard let command = commandByFile[source] else {
                 unscanned.append(UnscannedFile(
@@ -63,11 +71,24 @@ public enum CFamilyLint {
                     arguments: CompilationDatabase.parseArguments(of: command),
                     library: library
                 )
+                if let target = CompilationDatabase.target(of: command) { targets.insert(target) }
                 for (index, match) in outcome.matches {
                     let rule = compiled[index].rule
                     violations.append(RuleViolation(ruleID: rule.id, file: relative(source, root),
                                                     line: match.line, column: match.column,
                                                     text: match.text, message: rule.message))
+                }
+                // The same rules, looked for textually in the branches this build left out.
+                if let data = FileManager.default.contents(atPath: source), !outcome.skippedRanges.isEmpty {
+                    var seen = Set<String>()
+                    for (rule, engine) in compiled {
+                        for hit in InactiveRegionScan.occurrences(anchors: engine.anchors, source: data,
+                                                                  ranges: outcome.skippedRanges)
+                        where seen.insert("\(rule.id)|\(hit.line)").inserted {
+                            inactive.append(StructuralHit(file: relative(source, root), line: hit.line,
+                                                          column: hit.column, text: "[\(rule.id)] \(hit.text)"))
+                        }
+                    }
                 }
             } catch {
                 // Not one rule could be compiled here, so nothing was checked in this file.
@@ -77,7 +98,7 @@ public enum CFamilyLint {
 
         var seen = Set<String>()
         let unique = violations.filter { seen.insert("\($0.ruleID)|\($0.file)|\($0.line)|\($0.column)").inserted }
-        return Outcome(violations: unique, unscanned: unscanned)
+        return Outcome(violations: unique, unscanned: unscanned, inactive: inactive, targets: targets)
     }
 
     private static func relative(_ path: String, _ root: URL) -> String {

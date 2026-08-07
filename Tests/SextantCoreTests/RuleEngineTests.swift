@@ -90,6 +90,20 @@ struct RuleEngineTests {
         #expect(!unscanned.contains("Sources/ObjCFixture/ObjCFixture.m"))
     }
 
+    @Test("A rule violation in an #if branch the build lacks is reported, textually",
+          .enabled(if: isReady, "the fixture has not been built, or there is no toolchain"))
+    func namesViolationsInInactiveBranches() throws {
+        let rules = [Rule(id: "objc-feed", message: "Direct ocFeed call", patterns: ["[$X ocFeed]"])]
+        let outcome = RuleEngine.run(rules: rules, projectRoot: Self.fixture.path,
+                                     lintRoot: Self.fixture.path, includeTests: false)
+
+        #expect(outcome.violations.filter { $0.ruleID == "objc-feed" }.count == 2)
+        // The third call sits under `#if TARGET_OS_IPHONE`. A rule report that stayed silent
+        // about it would be clean about code it never checked — the same gap `search` closes.
+        #expect(outcome.inactive.count == 1)
+        #expect(outcome.inactive.first?.text.contains("objc-feed") == true)
+    }
+
     @Test("A rule that does compile keeps its file scanned, whatever the other rules do",
           .enabled(if: isReady, "the fixture has not been built, or there is no toolchain"))
     func oneCompilableRuleIsEnough() throws {

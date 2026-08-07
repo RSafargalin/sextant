@@ -241,12 +241,17 @@ func runLint(arguments: [String]) -> Int32 {
         struct LintOutput: Encodable {
             let violations: [RuleViolation]
             let notScanned: [UnscannedFile]
+            /// Textual only: possible violations in `#if` branches the build does not contain.
+            let inactiveOccurrences: [StructuralHit]
         }
-        printJSON(LintOutput(violations: violations, notScanned: unscanned))
+        printJSON(LintOutput(violations: violations, notScanned: unscanned, inactiveOccurrences: outcome.inactive))
         return violations.isEmpty ? 0 : 1
     }
+    let inactive = StructuralCoverage.inactiveReport(outcome.inactive, targets: outcome.targets,
+                                                     noun: "possible violation(s)")
     guard !violations.isEmpty else {
         print("✅ No violations found (\(rules.count) rules)")
+        inactive.forEach(reportError)
         StructuralCoverage.report(unscanned).forEach(reportError)
         return 0
     }
@@ -254,6 +259,7 @@ func runLint(arguments: [String]) -> Int32 {
         print("[\(violation.ruleID)] \(violation.file):\(violation.line):\(violation.column)  \(violation.text)")
     }
     print("\n❌ violations: \(violations.count)")
+    inactive.forEach(reportError)
     StructuralCoverage.report(unscanned).forEach(reportError)
     return 1
 }
