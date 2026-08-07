@@ -144,6 +144,17 @@ code navigation goes through the tool at all.
 
 ### Changed
 
+- The rule sets no longer drift. `--rules` **replaces** the built-in set, as it always did, and now
+  says so in the output; a file may instead be an object with `"extends": "builtin"` to add to
+  them, which is the answer to "the defaults plus two of mine" that previously meant copying the
+  defaults by hand and losing them at the next release. Every `lint` answer states which set it
+  used, because "no violations" from two rules is not the claim it is from five.
+- The built-in set is documented as **a starting point, not a safe default for every project** —
+  there is no universal set: `print-call` is wrong for a command-line tool and `force-unwrap` is
+  noise in interop-heavy code. sextant's own `sextant-rules.json` takes two of them and leaves the
+  rest deliberately, which is why its CI never applied `print-call` and nothing said so.
+  Closes [#5](https://github.com/RSafargalin/sextant/issues/5).
+
 - **Breaking (`--json` schema):** `search --json` returns `{"matches": [...], "notScanned": [...]}`
   and `lint --json` returns `{"violations": [...], "notScanned": [...]}`, each in place of a bare
   array. Every `notScanned` entry is `{"file": ..., "reason": ...}` — a file left out, and why.
