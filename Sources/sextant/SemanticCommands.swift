@@ -19,7 +19,21 @@ func degradeToTextual(symbol: String, arguments: [String]) -> Int32 {
         return 0
     }
     let stale = indexIsStale(paths: resolveStorePaths(in: arguments), root: rootPath)
-    let reason = stale ? "the index is stale — run `sextant index`" : "does not resolve semantically (a closure, a local, or another kind of symbol)"
+    // Naming the real reason matters most where it is knowable: a symbol that exists only inside
+    // a `#if` branch this build does not contain is absent from the index for that reason, and
+    // "does not resolve semantically" would send the reader looking for a bug instead.
+    let allConditional = !scan.matches.isEmpty && scan.matches.allSatisfy { $0.conditional }
+    let someConditional = scan.matches.contains { $0.conditional }
+    let reason: String
+    if stale {
+        reason = "the index is stale — run `sextant index`"
+    } else if allConditional {
+        reason = "every occurrence is inside a #if branch this build does not contain — the index only covers the configuration that was built"
+    } else if someConditional {
+        reason = "some occurrences are inside #if branches outside the built configuration; the rest do not resolve semantically (a closure, a local, or another kind of symbol)"
+    } else {
+        reason = "does not resolve semantically (a closure, a local, or another kind of symbol)"
+    }
     reportError("⚠ 0 semantic hits → textual occurrences (\(scan.matches.count)\(scan.truncated ? "+" : "")): \(reason)")
     let style = SymbolReport.Style.cli(compact: isCompact(arguments), referenceLimit: 40)
     SymbolReport.textual(symbol: symbol, matches: scan.matches, truncated: scan.truncated, style: style, path: shorten)

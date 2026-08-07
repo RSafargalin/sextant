@@ -137,15 +137,18 @@ func runAPI(arguments: [String]) -> Int32 {
     let cxxHeaders = IndexDeclarations.publicHeaderSummaries(root: rootURL, index: index, package: package).cxxHeaders
     let unanswered = IndexDeclarations.cxxHeaderSummaries(cxxHeaders, root: rootURL,
                                                           compileDatabaseRoot: databaseRoot).unanswered
+    let conditional = index == nil ? [] : IndexDeclarations.conditionalHeaderNote(root: rootURL, package: package)
 
     if arguments.contains("--json") {
         printJSON(PublicAPI.summaries(projectRoot: root, package: package, type: type, index: index,
                                       compileDatabaseRoot: databaseRoot))
+        conditional.forEach(reportError)
         StructuralCoverage.report(unanswered).forEach(reportError)
         return 0
     }
     print(PublicAPI.generate(projectRoot: root, package: package, type: type, index: index,
                              compileDatabaseRoot: databaseRoot))
+    conditional.forEach(reportError)
     StructuralCoverage.report(unanswered).forEach(reportError)
     return 0
 }

@@ -43,6 +43,11 @@ public struct Declaration: Sendable, Codable {
     public let attributes: [String]
     public let docSummary: String?
     public let members: [Declaration]
+    /// The conditional compilation the declaration is guarded by (`#if os(iOS)`, `#else`), when
+    /// it is. Kept out of `header` so that identity does not change, and shown in every rendering:
+    /// a declaration that exists only on another platform is part of the surface, and hiding that
+    /// it is conditional would be the same lie as hiding the declaration.
+    public let condition: String?
 
     public init(
         kind: DeclarationKind,
@@ -50,7 +55,8 @@ public struct Declaration: Sendable, Codable {
         access: Access,
         attributes: [String] = [],
         docSummary: String? = nil,
-        members: [Declaration] = []
+        members: [Declaration] = [],
+        condition: String? = nil
     ) {
         self.kind = kind
         self.header = header
@@ -58,11 +64,20 @@ public struct Declaration: Sendable, Codable {
         self.attributes = attributes
         self.docSummary = docSummary
         self.members = members
+        self.condition = condition
     }
 
     /// Header prefixed with its attributes, for rendering.
+    /// What a diff compares: the signature plus the condition guarding it. Moving a declaration
+    /// into `#if os(iOS)` does not touch its header but does remove it from every other platform,
+    /// and a diff that stayed quiet about that would be reporting less than happened.
+    public var signature: String {
+        condition.map { "\(header)  [\($0)]" } ?? header
+    }
+
     public var decoratedHeader: String {
-        attributes.isEmpty ? header : attributes.joined(separator: " ") + " " + header
+        let base = attributes.isEmpty ? header : attributes.joined(separator: " ") + " " + header
+        return condition.map { "\(base)  [\($0)]" } ?? base
     }
 
     /// Declaration name from its header ("public struct Box<T>: Foo" → "Box"; "extension A.B" → "B";

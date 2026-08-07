@@ -97,6 +97,22 @@ Human-readable text output is not covered — parse `--json`, not prose.
 
 ### Fixed
 
+- Conditional compilation no longer makes declarations vanish quietly. `api` and `map` dropped
+  everything inside a `#if` — an iOS-only public method was simply absent from the surface on a
+  Mac, with nothing said about it. Those declarations are now listed with the condition that
+  guards them (`func onlyOnPhone()  [#if os(iOS)]`), and `changed` treats moving a declaration
+  under a condition as the API change it is. The declaration cache version was bumped, since its
+  key is the file's content and the extraction itself changed.
+- A symbol that resolves to nothing now says why when the reason is knowable. "Does not resolve
+  semantically (a closure, a local, or another kind of symbol)" was misleading for a symbol that
+  exists only inside a `#if` branch this build does not contain — the answer now says exactly
+  that, and marks which occurrences are conditional.
+- The textual fallback searches Objective-C, C and C++ as well. It walked `.swift` files only, so
+  an unresolved Objective-C symbol degraded to a search that never opened a `.m` file and
+  reported nothing at all.
+- `api` states when public headers use `#if`: their declarations come from the index, which holds
+  one configuration, so a branch that configuration does not contain is not in the surface.
+
 - `construct` looked for the Swift shape `Type(` in every language, so on an Objective-C project
   it found nothing at all — which reads as "nothing constructs this type" rather than "this
   command cannot see it". Objective-C creates objects by sending `alloc` or `new` to the class,

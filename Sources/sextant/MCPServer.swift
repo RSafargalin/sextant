@@ -359,6 +359,7 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
         let unanswered = IndexDeclarations.cxxHeaderSummaries(cxxHeaders, root: rootURL,
                                                               compileDatabaseRoot: context.projectRoot).unanswered
         let answer = ([capped(surface, hint: "narrow it with package, type, or scope")]
+                      + (index == nil ? [] : IndexDeclarations.conditionalHeaderNote(root: rootURL, package: package))
                       + StructuralCoverage.report(unanswered)).joined(separator: "\n")
         return (answer, false)
 

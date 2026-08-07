@@ -1,9 +1,13 @@
 import Foundation
 
 /// A textual grep signal used to cross-check semantics: how often an identifier occurs on word
-/// boundaries across the project's Swift files. Zero semantic hits with non-zero textual ones
+/// boundaries across the project's sources. Zero semantic hits with non-zero textual ones
 /// means a stale index or an unresolvable symbol. It is deliberately crude — comments and string
 /// literals count too — which is enough for the signal "the symbol is there, semantics are silent".
+///
+/// Every language the tool answers for is scanned, not just Swift: an Objective-C symbol that
+/// does not resolve would otherwise fall back to a search that never opens a `.m` file, and
+/// report nothing at all.
 public enum IdentifierScan {
     /// Scan result. `truncated` means the walk stopped at `fileLimit` and the count is INCOMPLETE:
     /// the caller must not conclude "no such symbol" when truncated && count == 0.
@@ -14,7 +18,8 @@ public enum IdentifierScan {
 
     public static func occurrences(of name: String, underRoot root: URL, includeTests: Bool, fileLimit: Int = 4000) -> Result {
         guard isIdentifier(name) else { return Result(count: 0, truncated: false) }
-        let files = SwiftSources.files(under: root, includeTests: includeTests)
+        let files = SwiftSources.files(under: root, includeTests: includeTests,
+                                       extensions: ["swift"] + IndexDeclarations.clangExtensions)
         var total = 0
         for file in files.prefix(fileLimit) {
             guard let content = try? String(contentsOf: file, encoding: .utf8) else { continue }
@@ -28,18 +33,35 @@ public enum IdentifierScan {
         public let path: String
         public let line: Int
         public let text: String
+        /// Whether the line sits inside a `#if` block. An index holds one configuration, so a
+        /// symbol living only in another branch is missing from it for a knowable reason — and
+        /// saying which reason is the difference between "not found" and "not built here".
+        public let conditional: Bool
+
+        public init(path: String, line: Int, text: String, conditional: Bool = false) {
+            self.path = path
+            self.line = line
+            self.text = text
+            self.conditional = conditional
+        }
     }
 
     /// Lines carrying the identifier (one per source line), capped. For showing the grep
     /// equivalent inline when semantics do not resolve.
     public static func matches(of name: String, underRoot root: URL, includeTests: Bool, limit: Int, fileLimit: Int = 4000) -> (matches: [Match], truncated: Bool) {
         guard isIdentifier(name) else { return ([], false) }
-        let files = SwiftSources.files(under: root, includeTests: includeTests)
+        let files = SwiftSources.files(under: root, includeTests: includeTests,
+                                       extensions: ["swift"] + IndexDeclarations.clangExtensions)
         var result: [Match] = []
         for file in files.prefix(fileLimit) {
             guard let content = try? String(contentsOf: file, encoding: .utf8) else { continue }
+            let conditionalLines = ConditionalRegions.areUsed(inSource: content)
+                ? ConditionalRegions.lines(inSource: content)
+                : []
             for (index, lineText) in content.components(separatedBy: "\n").enumerated() where countWholeWord(name, in: lineText) > 0 {
-                result.append(Match(path: file.path, line: index + 1, text: lineText.trimmingCharacters(in: .whitespaces)))
+                result.append(Match(path: file.path, line: index + 1,
+                                    text: lineText.trimmingCharacters(in: .whitespaces),
+                                    conditional: conditionalLines.contains(index + 1)))
                 if result.count >= limit { return (result, true) }
             }
         }

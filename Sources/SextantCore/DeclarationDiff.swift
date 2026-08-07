@@ -58,7 +58,8 @@ public enum DeclarationDiff {
             guard !qualifier.isEmpty else { return declaration }
             return Declaration(kind: declaration.kind, header: "\(qualifier).\(declaration.header)",
                                access: declaration.access, attributes: declaration.attributes,
-                               docSummary: declaration.docSummary, members: declaration.members)
+                               docSummary: declaration.docSummary, members: declaration.members,
+                               condition: declaration.condition)
         }
         let oldByName = Dictionary(grouping: old, by: key)
         let newByName = Dictionary(grouping: new, by: key)
@@ -67,7 +68,7 @@ public enum DeclarationDiff {
         for name in Set(oldByName.keys).union(newByName.keys) {
             let olds = oldByName[name] ?? [], news = newByName[name] ?? []
             if olds.count == 1, news.count == 1 {
-                if olds[0].header != news[0].header {
+                if olds[0].signature != news[0].signature {
                     changed.append((qualified(olds[0]), qualified(news[0])))
                 } else if !olds[0].members.isEmpty || !news[0].members.isEmpty {
                     // The type header is unchanged — look inside.
@@ -78,9 +79,9 @@ public enum DeclarationDiff {
                     changed += inner.changed.map { ($0.old, $0.new) }
                 }
             } else {
-                let oldHeaders = Set(olds.map(\.header)), newHeaders = Set(news.map(\.header))
-                added.append(contentsOf: news.filter { !oldHeaders.contains($0.header) }.map(qualified))
-                removed.append(contentsOf: olds.filter { !newHeaders.contains($0.header) }.map(qualified))
+                let oldHeaders = Set(olds.map(\.signature)), newHeaders = Set(news.map(\.signature))
+                added.append(contentsOf: news.filter { !oldHeaders.contains($0.signature) }.map(qualified))
+                removed.append(contentsOf: olds.filter { !newHeaders.contains($0.signature) }.map(qualified))
             }
         }
         return Result(
