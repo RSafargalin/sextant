@@ -55,14 +55,18 @@ compiler's index store, which is written by the whole clang family. They therefo
 `greet(withName:)` is found as a caller of the Objective-C selector `greetWithName:` it
 actually calls.
 
-`map` and `api` cover the same four languages: they read non-Swift declarations from the index
-rather than from a second parser, which is why they need a built index to do it.
+`map` and `api` cover the same four languages. `map` and the Objective-C and C parts of `api`
+read declarations from the index rather than from a second parser, which is why they need a
+built index. C++ headers go through clang instead: the index carries no access level, and a
+surface that cannot tell a private member from a public one is not a public surface.
 
-**Swift-only** is whatever parses source text: `search`, `lint`, `changed` and `construct`.
-Source text is not what an index holds, so these need a parser per language — that is
-[ADR-0004](docs/adr/0004-structural-layer-for-c-family.md), and it is not built yet. Until it
-is, they name what they left out rather than answer as if it were not there: `changed` lists
-the C, C++ and Objective-C files it did not compare.
+The structural commands — `search` and `lint` — parse source text, which an index does not hold.
+Swift goes through its own parser; Objective-C, C and C++ go through clang, with the exact flags
+each file was built with ([ADR-0004](docs/adr/0004-structural-layer-for-c-family.md)). Those
+flags come from `sextant index`, so without a built index those files are not read — and are
+named, rather than passed over in silence. `changed` is still Swift-only and lists the C, C++
+and Objective-C files it did not compare; `construct` is a heuristic and knows the shape each
+language builds an object with.
 
 ## What it saves
 
@@ -89,8 +93,8 @@ Working CLI and MCP server, version 0.7.x. 23 commands:
 |---|---|---|
 | `map` | repository map under a token budget; `--semantic` — types by usage; `--pagerank` — files by centrality | syntax / semantics |
 | `api` | public surface of a package (attributes, doc summaries) | syntax |
-| `search <pattern>` | structural search over the AST (`$X`, variadic `$$$`, statement patterns); Swift, and it names the non-Swift files it skipped | syntax |
-| `lint` | structural hygiene rules (`--rules <json>`); Swift, and it names the non-Swift files it skipped | syntax |
+| `search <pattern>` | structural search over the AST (`$X`, variadic `$$$`, statement patterns); Swift through its own parser, Objective-C/C/C++ through clang | syntax |
+| `lint` | structural hygiene rules (`--rules <json>`), across the same languages as `search` | syntax |
 | `refs` / `defs` / `callers` | usages / definition / call sites (callers account for protocol dispatch) | semantics |
 | `callees` | what a symbol calls (best effort: calls within the project) | semantics |
 | `impls` / `supertypes` | implementations and subtypes, bases and protocols of a type | semantics |
@@ -98,7 +102,7 @@ Working CLI and MCP server, version 0.7.x. 23 commands:
 | `context <symbol>` | one-shot summary: definition, usages, callers, callees, hierarchy | semantics |
 | `blast <symbol>` | impact analysis: what a change to this symbol touches | semantics |
 | `body <symbol>` | full text of a declaration (signature and body) | semantics + syntax |
-| `construct <type>` | construction and injection sites (heuristic: `Type(`) | heuristic |
+| `construct <type>` | construction and injection sites (heuristic: `Type(`, or `[Type alloc]` in Objective-C) | heuristic |
 | `changed` | symbol-level git diff: what was added, removed, or changed signature (Swift; other languages listed as not compared) | syntax |
 | `golden` / `bench` | semantic regressions against a spec / latency and output volume | measurability |
 | `mcp` | MCP server (stdio) for Claude Code — the semantic layer as tools | integration |

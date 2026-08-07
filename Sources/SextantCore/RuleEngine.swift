@@ -30,6 +30,23 @@ public enum RuleEngine {
         let message: String
     }
 
+    /// What a lint run found, and what it could not look at. The second half is not a detail: a
+    /// clean report over files that were never opened is a clean bill of health for unexamined code.
+    public struct Outcome: Sendable {
+        public let violations: [RuleViolation]
+        public let unscanned: [UnscannedFile]
+    }
+
+    /// Runs the rules over a project: Swift through its own parser, then Objective-C, C and C++
+    /// through clang. `projectRoot` is where the compile flags are looked up, which is not always
+    /// the directory being linted (`--scope` narrows the second, not the first).
+    public static func run(rules: [Rule], projectRoot: String, lintRoot: String, includeTests: Bool,
+                           cache: SourceParseCache = SourceParseCache()) -> Outcome {
+        let violations = run(rules: rules, projectRoot: lintRoot, includeTests: includeTests, cache: cache)
+        let cFamily = CFamilyLint.run(rules: rules, lintRoot: lintRoot, projectRoot: projectRoot, includeTests: includeTests)
+        return Outcome(violations: violations + cFamily.violations, unscanned: cFamily.unscanned)
+    }
+
     /// Runs the rules over every Swift file in the project. A file is parsed once for all patterns.
     /// Result cache keyed by (file content hash + rules hash): on an unchanged file with the same
     /// rules, parsing and matching are skipped — linting a whole project on a warm cache is sub-second.

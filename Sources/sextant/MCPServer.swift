@@ -313,10 +313,10 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
         } else {
             rules = RuleEngine.builtinRules
         }
-        let violations = RuleEngine.run(rules: rules, projectRoot: context.project, includeTests: false)
-        let unscanned = StructuralCoverage.report(
-            StructuralCoverage.unscannedFiles(projectRoot: context.project, includeTests: false)
-        )
+        let outcome = RuleEngine.run(rules: rules, projectRoot: context.projectRoot, lintRoot: context.project,
+                                     includeTests: false)
+        let violations = outcome.violations
+        let unscanned = StructuralCoverage.report(outcome.unscanned)
         guard !violations.isEmpty else {
             return ((["✅ no violations found (\(rules.count) rules)"] + unscanned).joined(separator: "\n"), false)
         }
@@ -339,12 +339,24 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
             case .missingDirectory: return ("scope '\(scope)' — directory does not exist", true)
             }
         }
+        // The index and the compile database are passed here as they are in the CLI: without them
+        // the answer would silently cover Swift only, while the same command in a terminal covers
+        // Objective-C, C and C++ too.
+        let rootURL = URL(fileURLWithPath: root, isDirectory: true)
+        let package = (args["package"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         let surface = PublicAPI.generate(
             projectRoot: root,
-            package: (args["package"] as? String).flatMap { $0.isEmpty ? nil : $0 },
-            type: (args["type"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            package: package,
+            type: (args["type"] as? String).flatMap { $0.isEmpty ? nil : $0 },
+            index: index,
+            compileDatabaseRoot: context.projectRoot
         )
-        return (capped(surface, hint: "narrow it with package, type, or scope"), false)
+        let cxxHeaders = IndexDeclarations.publicHeaderSummaries(root: rootURL, index: index, package: package).cxxHeaders
+        let unanswered = IndexDeclarations.cxxHeaderSummaries(cxxHeaders, root: rootURL,
+                                                              compileDatabaseRoot: context.projectRoot).unanswered
+        let answer = ([capped(surface, hint: "narrow it with package, type, or scope")]
+                      + StructuralCoverage.report(unanswered)).joined(separator: "\n")
+        return (answer, false)
 
     case "changed":
         let from = (args["from"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "HEAD"

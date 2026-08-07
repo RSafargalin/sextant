@@ -109,27 +109,29 @@ extension IndexDeclarations {
     /// module map's answer to "what does this target expose" — so this is the layout's own
     /// definition of public, not a guess about where headers happen to sit.
     ///
-    /// C++ is deliberately excluded. A C++ header declares private members alongside public
-    /// ones, and the index carries no access level, so listing them would present private
-    /// members as public API — a confident wrong answer, which is worse than an absent one.
-    /// `skippedCxxHeaders` reports how many were left out so the omission is never silent.
+    /// C++ headers do not come from the index. A C++ header declares private members alongside
+    /// public ones and the index carries no access level, so listing them from it would present
+    /// private members as public API. They are returned separately in `cxxHeaders`, for the
+    /// caller to read through clang — or to report as unanswered, never as empty.
     public static func publicHeaderSummaries(
         root: URL,
         index: FileSymbolIndex?,
         package: String?
-    ) -> (summaries: [FileSummary], skippedCxxHeaders: Int) {
-        guard let index else { return ([], 0) }
+    ) -> (summaries: [FileSummary], cxxHeaders: [URL]) {
+        guard let index else { return ([], []) }
         var summaries: [FileSummary] = []
-        var skipped = 0
+        var cxxHeaders: [URL] = []
         for url in SwiftSources.files(under: root, includeTests: false, extensions: Array(headerExtensions)) {
             guard url.pathComponents.contains("include") else { continue }
             let relative = SwiftSources.relativePath(of: url, root: root)
             let packageName = SwiftSources.package(for: relative)
             if let package, packageName != package { continue }
 
-            if !index.declarations(inFile: url.path, languages: [.cxx]).isEmpty,
-               index.declarations(inFile: url.path, languages: [.c, .objc]).isEmpty {
-                skipped += 1
+            // Any C++ at all sends the whole header to clang. Reading the rest from the index
+            // would list its free functions while dropping every class — a surface that looks
+            // complete and is not, which is worse than one that says where it stops.
+            if !index.declarations(inFile: url.path, languages: [.cxx]).isEmpty {
+                cxxHeaders.append(url)
                 continue
             }
             let declarations = index.declarations(inFile: url.path, languages: [.c, .objc])
@@ -137,7 +139,45 @@ extension IndexDeclarations {
             guard !declarations.isEmpty else { continue }
             summaries.append(FileSummary(relativePath: relative, package: packageName, declarations: declarations))
         }
-        return (summaries, skipped)
+        return (summaries, cxxHeaders)
+    }
+
+    /// Public surface of C++ headers, read through clang with the flags of a translation unit
+    /// that includes them. Headers no compiled source reaches come back in `unanswered`.
+    public static func cxxHeaderSummaries(
+        _ headers: [URL],
+        root: URL,
+        compileDatabaseRoot: String
+    ) -> (summaries: [FileSummary], unanswered: [UnscannedFile]) {
+        guard !headers.isEmpty else { return ([], []) }
+        func unanswered(_ reason: String) -> [UnscannedFile] {
+            headers.map { UnscannedFile(file: SwiftSources.relativePath(of: $0, root: root), reason: reason) }
+        }
+
+        let commands = CompilationDatabase.load(forRoot: compileDatabaseRoot)
+        guard !commands.isEmpty else {
+            return ([], unanswered("no compile flags — build the index: `sextant index`"))
+        }
+        guard let library = try? ClangLibrary.shared() else {
+            return ([], unanswered("libclang is unavailable — install an Xcode toolchain"))
+        }
+
+        let paths = Set(headers.map { $0.resolvingSymlinksInPath().path })
+        let byHeader = CxxHeaderAPI.declarations(headers: paths, commands: commands, library: library)
+
+        var summaries: [FileSummary] = []
+        var missing: [UnscannedFile] = []
+        for header in headers {
+            let relative = SwiftSources.relativePath(of: header, root: root)
+            guard let declarations = byHeader[header.resolvingSymlinksInPath().path], !declarations.isEmpty else {
+                missing.append(UnscannedFile(file: relative, reason: "no compiled source includes this header"))
+                continue
+            }
+            summaries.append(FileSummary(relativePath: relative,
+                                         package: SwiftSources.package(for: relative),
+                                         declarations: declarations))
+        }
+        return (summaries, missing)
     }
 
     /// Maps an index symbol kind onto the declaration model. Kinds with no counterpart — modules,

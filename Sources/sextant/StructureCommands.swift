@@ -129,20 +129,24 @@ func runAPI(arguments: [String]) -> Int32 {
     let package = optionValue("--package", in: arguments)
     let type = optionValue("--type", in: arguments)
     let index = clangIndex(root: root, arguments: arguments, includeTests: false)
-    // Public headers that only C++ declares are left out on purpose: the index has no access
-    // level, so their private members would be presented as public API. Say how many, or the
-    // surface looks complete when it is not.
-    let skipped = IndexDeclarations.publicHeaderSummaries(
-        root: URL(fileURLWithPath: root, isDirectory: true), index: index, package: package
-    ).skippedCxxHeaders
-    if skipped > 0 {
-        reportError("⚠ \(skipped) C++ public header(s) omitted: the index carries no access level, so public and private members cannot be told apart.")
-    }
+    let databaseRoot = projectRoot(in: arguments)
+    // C++ public headers are read through clang, which knows their access levels — the index does
+    // not. Whichever cannot be reached that way is named: a surface that quietly omits a header
+    // looks complete when it is not.
+    let rootURL = URL(fileURLWithPath: root, isDirectory: true)
+    let cxxHeaders = IndexDeclarations.publicHeaderSummaries(root: rootURL, index: index, package: package).cxxHeaders
+    let unanswered = IndexDeclarations.cxxHeaderSummaries(cxxHeaders, root: rootURL,
+                                                          compileDatabaseRoot: databaseRoot).unanswered
+
     if arguments.contains("--json") {
-        printJSON(PublicAPI.summaries(projectRoot: root, package: package, type: type, index: index))
+        printJSON(PublicAPI.summaries(projectRoot: root, package: package, type: type, index: index,
+                                      compileDatabaseRoot: databaseRoot))
+        StructuralCoverage.report(unanswered).forEach(reportError)
         return 0
     }
-    print(PublicAPI.generate(projectRoot: root, package: package, type: type, index: index))
+    print(PublicAPI.generate(projectRoot: root, package: package, type: type, index: index,
+                             compileDatabaseRoot: databaseRoot))
+    StructuralCoverage.report(unanswered).forEach(reportError)
     return 0
 }
 
@@ -221,10 +225,12 @@ func runLint(arguments: [String]) -> Int32 {
     } else {
         rules = RuleEngine.builtinRules
     }
-    let violations = RuleEngine.run(rules: rules, projectRoot: root, includeTests: includeTests)
-    // A clean bill of health has to say which files it covers: the rules never ran on the
-    // project's Objective-C, C or C++ sources.
-    let unscanned = StructuralCoverage.unscannedFiles(projectRoot: root, includeTests: includeTests)
+    // Swift through its own parser, the C family through clang. A clean bill of health has to say
+    // which files it covers, so whatever could not be read comes back named.
+    let outcome = RuleEngine.run(rules: rules, projectRoot: projectRoot(in: arguments), lintRoot: root,
+                                 includeTests: includeTests)
+    let violations = outcome.violations
+    let unscanned = outcome.unscanned
     if arguments.contains("--json") {
         struct LintOutput: Encodable {
             let violations: [RuleViolation]

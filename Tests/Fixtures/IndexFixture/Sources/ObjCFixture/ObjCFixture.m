@@ -34,4 +34,8 @@
     return [self ocFeed] + [self ocFeed];
 }
 
+- (OCFeeder *)ocTwin {
+    return [[OCFeeder alloc] init];
+}
+
 @end

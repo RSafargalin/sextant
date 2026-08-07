@@ -44,15 +44,16 @@ public struct ClangPatternSearch {
     }
 
     private static let probes = [
-        Probe(name: "sextant_probe_objc", availability: "__OBJC__", preamble: "", type: "id"),
-        Probe(name: "sextant_probe_int", availability: nil, preamble: "", type: "int"),
-        Probe(name: "sextant_probe_pointer", availability: nil, preamble: "", type: "void *"),
-        Probe(name: "sextant_probe_cxx", availability: "__cplusplus",
+        Probe(name: "objc", availability: "__OBJC__", preamble: "", type: "id"),
+        Probe(name: "int", availability: nil, preamble: "", type: "int"),
+        Probe(name: "pointer", availability: nil, preamble: "", type: "void *"),
+        Probe(name: "cxx", availability: "__cplusplus",
               preamble: "struct SextantAnyValue { template<class T> operator T() const; };",
               type: "SextantAnyValue")
     ]
 
-    private let overlaySuffix: String
+    private let statement: String
+    private let sentinelNames: [String]
     private let sentinels: Set<String>
 
     public init(pattern: String) throws {
@@ -62,51 +63,91 @@ public struct ClangPatternSearch {
         let substitution = Metavariable.substitute(trimmed)
         guard substitution.variadic.isEmpty else { throw Failure.variadicNotSupported }
 
-        let names = substitution.singleByName.keys.sorted()
-        let statement = substitution.text.hasSuffix(";") ? substitution.text : substitution.text + ";"
+        sentinelNames = substitution.singleByName.keys.sorted()
+        sentinels = Set(sentinelNames)
+        statement = substitution.text.hasSuffix(";") ? substitution.text : substitution.text + ";"
+    }
 
-        // Appended, never inserted: the file's own offsets stay exactly as they are on disk, so a
-        // match reports the position a reader would find.
-        overlaySuffix = "\n" + Self.probes.map { probe in
-            let declarations = names.map { "\(probe.type) \($0);" }.joined(separator: " ")
-            let body = "static void \(probe.name)(void) { \(probe.preamble) \(declarations) \(statement) }"
+    /// The probe functions for this pattern, named after its position so that several patterns
+    /// can share one parse — which is what lets `lint` read a file once for all of its rules.
+    private func probeSource(position: Int) -> String {
+        Self.probes.map { probe in
+            let declarations = sentinelNames.map { "\(probe.type) \($0);" }.joined(separator: " ")
+            let body = "static void \(Self.wrapperName(position: position, probe: probe.name))(void) "
+                + "{ \(probe.preamble) \(declarations) \(statement) }"
             guard let availability = probe.availability else { return body }
             return "#if defined(\(availability))\n\(body)\n#endif"
-        }.joined(separator: "\n") + "\n"
+        }.joined(separator: "\n")
+    }
 
-        sentinels = Set(names)
+    private static func wrapperName(position: Int, probe: String) -> String {
+        "sextant_probe_\(position)_\(probe)"
     }
 
     /// Matches in one file, compiled with the flags it was built with.
     public func search(file: String, arguments: [String], library: ClangLibrary) throws -> [StructuralMatch] {
-        guard let sourceData = FileManager.default.contents(atPath: file) else { return [] }
+        try Self.searchAll([self], file: file, arguments: arguments, library: library).map { $0.match }
+    }
+
+    /// Matches for several patterns in a single parse. Every pattern is appended to the file as
+    /// its own set of probes, so reading a file costs one parse regardless of how many patterns
+    /// are being looked for.
+    ///
+    /// A pattern that does not compile in this file is not an error for the others: it is left
+    /// out of the results and reported through `notCompiled`.
+    public static func searchAll(_ searches: [ClangPatternSearch], file: String, arguments: [String],
+                                 library: ClangLibrary) throws -> [(index: Int, match: StructuralMatch)] {
+        try searchAll(searches, file: file, arguments: arguments, library: library, notCompiled: nil)
+    }
+
+    public static func searchAll(_ searches: [ClangPatternSearch], file: String, arguments: [String],
+                                 library: ClangLibrary,
+                                 notCompiled: ((Int, [String]) -> Void)?) throws -> [(index: Int, match: StructuralMatch)] {
+        guard !searches.isEmpty, let sourceData = FileManager.default.contents(atPath: file) else { return [] }
         let source = String(decoding: sourceData, as: UTF8.self)
-        let overlay = source + overlaySuffix
+        // Appended, never inserted: the file's own offsets stay exactly as they are on disk, so a
+        // match reports the position a reader would find.
+        let overlay = source + "\n" + searches.enumerated()
+            .map { $0.element.probeSource(position: $0.offset) }
+            .joined(separator: "\n") + "\n"
         let overlayData = Data(overlay.utf8)
 
         let unit = try ClangTranslationUnit.parse(file: file, arguments: arguments, library: library, overlay: overlay)
-        guard let patternRoot = Self.patternRoot(in: unit.root, errors: unit.errors) else {
-            // The diagnostics reported are the ones raised inside the appended text; errors the
-            // file already had are the build's business, not the search's.
-            let inProbe = unit.errors(in: sourceData.count..<overlayData.count).map { $0.text }
-            throw Failure.patternNotCompiled(file: file, diagnostics: inProbe.isEmpty ? unit.errors.map { $0.text } : inProbe)
+        let wrappers = Self.probeWrappers(in: unit.root)
+        // The diagnostics that matter are the ones raised inside the appended text; errors the
+        // file already had are the build's business, not the search's.
+        let probeErrors = unit.errors(in: sourceData.count..<overlayData.count).map { $0.text }
+
+        var roots: [(index: Int, node: ClangNode)] = []
+        for (position, search) in searches.enumerated() {
+            if let root = search.patternRoot(position: position, wrappers: wrappers, errors: unit.errors) {
+                roots.append((position, root))
+            } else {
+                notCompiled?(position, probeErrors.isEmpty ? unit.errors.map { $0.text } : probeErrors)
+            }
+        }
+        guard !roots.isEmpty else {
+            throw Failure.patternNotCompiled(file: file,
+                                             diagnostics: probeErrors.isEmpty ? unit.errors.map { $0.text } : probeErrors)
         }
 
         let sourceLength = sourceData.count
-        var results: [StructuralMatch] = []
+        var results: [(index: Int, match: StructuralMatch)] = []
         func visit(_ node: ClangNode) {
-            // Only the file's own nodes are candidates; the appended pattern is not a match for
-            // itself. A transparent wrapper is skipped as a candidate too: it unwraps to the node
-            // below it, and both would report the same source range twice.
-            if node.startOffset < sourceLength, !Self.isTransparent(node) {
-                var bindings: [String: String] = [:]
-                if matches(pattern: patternRoot, candidate: node, patternSource: overlayData,
-                           candidateSource: sourceData, bindings: &bindings) {
-                    results.append(StructuralMatch(
-                        line: node.line,
-                        column: node.column,
-                        text: Self.text(of: node, in: sourceData).split(separator: "\n").first.map(String.init) ?? ""
-                    ))
+            // Only the file's own nodes are candidates; the appended patterns are not matches for
+            // themselves. A transparent wrapper is skipped as a candidate too: it unwraps to the
+            // node below it, and both would report the same source range twice.
+            if node.startOffset < sourceLength, !isTransparent(node) {
+                for (index, root) in roots {
+                    var bindings: [String: String] = [:]
+                    if searches[index].matches(pattern: root, candidate: node, patternSource: overlayData,
+                                               candidateSource: sourceData, bindings: &bindings) {
+                        results.append((index, StructuralMatch(
+                            line: node.line,
+                            column: node.column,
+                            text: text(of: node, in: sourceData).split(separator: "\n").first.map(String.init) ?? ""
+                        )))
+                    }
                 }
             }
             node.children.forEach(visit)
@@ -124,7 +165,25 @@ public struct ClangPatternSearch {
     /// compiled — the exact confident wrong answer this layer exists to avoid. So a probe with an
     /// error anywhere inside it is passed over, as is one whose expression came back as clang's
     /// residue (`UnexposedExpr`, an unresolved overload).
-    private static func patternRoot(in root: ClangNode, errors: [ClangTranslationUnit.Diagnostic]) -> ClangNode? {
+    private func patternRoot(position: Int, wrappers: [String: ClangNode],
+                             errors: [ClangTranslationUnit.Diagnostic]) -> ClangNode? {
+        for probe in Self.probes {
+            guard let wrapper = wrappers[Self.wrapperName(position: position, probe: probe.name)],
+                  let body = wrapper.children.last(where: { $0.kindName == "CompoundStmt" }),
+                  // The declarations of the metavariables come first; the pattern is the statement.
+                  let statement = body.children.last(where: { $0.kindName != "DeclStmt" })
+            else { continue }
+            let probeRange = wrapper.startOffset..<max(wrapper.endOffset, wrapper.startOffset + 1)
+            guard !errors.contains(where: { probeRange.contains($0.offset) }) else { continue }
+            let candidate = Self.transparent(statement)
+            guard Self.isUsable(candidate) else { continue }
+            return candidate
+        }
+        return nil
+    }
+
+    /// Every probe function in the tree, by name.
+    private static func probeWrappers(in root: ClangNode) -> [String: ClangNode] {
         var wrappers: [String: ClangNode] = [:]
         func collect(_ node: ClangNode) {
             if node.kindName == "FunctionDecl", node.spelling.hasPrefix("sextant_probe_") {
@@ -133,20 +192,7 @@ public struct ClangPatternSearch {
             node.children.forEach(collect)
         }
         collect(root)
-
-        for probe in probes {
-            guard let wrapper = wrappers[probe.name],
-                  let body = wrapper.children.last(where: { $0.kindName == "CompoundStmt" }),
-                  // The declarations of the metavariables come first; the pattern is the statement.
-                  let statement = body.children.last(where: { $0.kindName != "DeclStmt" })
-            else { continue }
-            let probeRange = wrapper.startOffset..<max(wrapper.endOffset, wrapper.startOffset + 1)
-            guard !errors.contains(where: { probeRange.contains($0.offset) }) else { continue }
-            let candidate = transparent(statement)
-            guard isUsable(candidate) else { continue }
-            return candidate
-        }
-        return nil
+        return wrappers
     }
 
     /// Whether a probe produced a real expression rather than clang's residue of a failed one.

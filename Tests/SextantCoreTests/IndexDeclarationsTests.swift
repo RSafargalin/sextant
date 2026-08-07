@@ -110,8 +110,8 @@ struct PublicHeaderTests {
         #expect(result.summaries.first?.declarations.allSatisfy { $0.access == .public } == true)
     }
 
-    @Test("A C++-only header is refused and counted, never half-reported")
-    func cxxHeaderRefused() throws {
+    @Test("A C++ header is handed to clang, never half-reported from the index")
+    func cxxHeaderGoesToClang() throws {
         let root = try makeTree(["Sources/Cxx/include/Cxx.hpp"])
         defer { try? FileManager.default.removeItem(at: root) }
         let index = StubIndex(byPath: ["Cxx.hpp": [.cxx: ["func maybePrivate"]]])
@@ -119,18 +119,20 @@ struct PublicHeaderTests {
         let result = IndexDeclarations.publicHeaderSummaries(root: root, index: index, package: nil)
         // The index has no access level, so public and private members are indistinguishable.
         #expect(result.summaries.isEmpty)
-        #expect(result.skippedCxxHeaders == 1)
+        #expect(result.cxxHeaders.count == 1)
     }
 
-    @Test("A header mixing C and C++ still reports its C surface")
-    func mixedHeaderKeepsCSurface() throws {
+    @Test("A header mixing C and C++ goes to clang whole, not split between two sources")
+    func mixedHeaderGoesToClang() throws {
         let root = try makeTree(["Sources/Mixed/include/Mixed.h"])
         defer { try? FileManager.default.removeItem(at: root) }
         let index = StubIndex(byPath: ["Mixed.h": [.c: ["func cThing"], .cxx: ["func cxxThing"]]])
 
         let result = IndexDeclarations.publicHeaderSummaries(root: root, index: index, package: nil)
-        #expect(result.summaries.first?.declarations.map { $0.header } == ["func cThing"])
-        #expect(result.skippedCxxHeaders == 0)
+        // Reporting the C half from the index would show the free functions and drop every class,
+        // which reads as a complete surface. Either clang answers for the header, or it is named.
+        #expect(result.summaries.isEmpty)
+        #expect(result.cxxHeaders.count == 1)
     }
 
     @Test("Without an index there is no surface to add")
@@ -138,6 +140,6 @@ struct PublicHeaderTests {
         let root = try makeTree(["Sources/Core/include/Core.h"])
         defer { try? FileManager.default.removeItem(at: root) }
         let result = IndexDeclarations.publicHeaderSummaries(root: root, index: nil, package: nil)
-        #expect(result.summaries.isEmpty && result.skippedCxxHeaders == 0)
+        #expect(result.summaries.isEmpty && result.cxxHeaders.isEmpty)
     }
 }

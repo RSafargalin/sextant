@@ -176,7 +176,6 @@ func runConstruct(arguments: [String]) -> Int32 {
     let limit = max(1, optionValue("--limit", in: arguments).flatMap(Int.init) ?? 40)
     let references = set.lookup(name: symbol, query: .references).flatMap { $0.references }
     let reader = SourceLineReader()
-    let needle = "\(symbol)("   // construction heuristic: `Type(`, an initializer call
 
     struct Site: Encodable {
         let file: String
@@ -185,17 +184,24 @@ func runConstruct(arguments: [String]) -> Int32 {
         /// Confidence tier: a heuristic over the line text, not index semantics.
         let confidence = "heuristic"
     }
+    // The shape of construction depends on the language of the file the reference is in:
+    // Objective-C sends `alloc` or `new` to the class rather than calling the type.
     let sites = references.compactMap { location -> Site? in
-        guard let text = reader.line(location.line, inFile: location.path), text.contains(needle) else { return nil }
+        guard let text = reader.line(location.line, inFile: location.path),
+              ConstructionSite.isConstruction(line: text, of: symbol, inFile: location.path) else { return nil }
         return Site(file: location.path, line: location.line, text: text)
     }.prefix(limit)
 
+    let heuristic = Set(references.map { ConstructionSite.description(of: symbol, inFile: $0.path) })
+        .sorted().joined(separator: ", ")
+    let shown = heuristic.isEmpty ? ConstructionSite.description(of: symbol, inFile: "x.swift") : heuristic
+
     if arguments.contains("--json") { printJSON(Array(sites)); return 0 }
     guard !sites.isEmpty else {
-        print("No construction sites found for '\(symbol)' (heuristic `\(symbol)(`).")
+        print("No construction sites found for '\(symbol)' (heuristic \(shown)).")
         return 0
     }
-    print("── \(symbol): construction and injection (heuristic `\(symbol)(`), \(sites.count):")
+    print("── \(symbol): construction and injection (heuristic \(shown)), \(sites.count):")
     for site in sites { print("     \(shorten(site.file)):\(site.line)  \(site.text)") }
     return 0
 }
