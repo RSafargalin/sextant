@@ -166,6 +166,14 @@ public enum CompilationDatabase {
         return result
     }
 
+    /// The target triple a file was compiled for. It decides which `#if` branches are active, so
+    /// it is what an answer about that file is an answer *about*.
+    public static func target(of command: CompileCommand) -> String? {
+        guard let index = command.arguments.firstIndex(of: "-target"),
+              index + 1 < command.arguments.endIndex else { return nil }
+        return command.arguments[index + 1]
+    }
+
     // MARK: - Helpers
 
     /// A JSON array of strings; nil when the line is not one (an unexpected manifest shape).

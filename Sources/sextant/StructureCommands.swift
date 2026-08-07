@@ -209,6 +209,7 @@ func runSearch(arguments: [String]) -> Int32 {
     }
     for hit in hits { print("\(hit.file):\(hit.line):\(hit.column): \(hit.text)") }
     print(hits.isEmpty ? "No matches." : "\ntotal: \(hits.count)")
+    StructuralCoverage.configurationNote(targets: cFamily.targets).forEach(reportError)
     StructuralCoverage.report(cFamily.unscanned).forEach(reportError)
     return 0
 }
