@@ -13,6 +13,15 @@ Human-readable text output is not covered — parse `--json`, not prose.
 
 ## [Unreleased]
 
+### Added
+
+- `completion zsh` and `completion bash` print a completion script, generated from the command
+  catalog — the same data that builds the help and validates flags, so a command added later
+  cannot silently fall out of completion. Flags are offered per command rather than as one flat
+  list, a flag that takes a value expects one instead of suggesting the next flag, and `--project`,
+  `--scope` and `--index-store` complete directories while `--rules` and `--spec` complete files.
+  Closes [#2](https://github.com/RSafargalin/sextant/issues/2).
+
 ## [0.8.1] — 2026-08-07
 
 ### Added
