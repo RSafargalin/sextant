@@ -164,13 +164,63 @@ public enum SwiftSources {
         // The exclusions are part of the key: changing them must not be answered from the memo.
         let key = "\(root.path)|\(includeTests)|\(extensions.joined(separator: ","))|\(exclusionKey)"
         if let cached = fileListMemo.value(key) { return cached }
+        // A repository answers for itself; a directory that is not one still gets git's own
+        // gitignore rules, borrowed; only where git is unavailable does the plain walk run.
         let discovered = gitSwiftFiles(under: root, includeTests: includeTests, extensions: extensions)
+            ?? borrowedGitFiles(under: root, includeTests: includeTests, extensions: extensions)
             ?? enumeratedFiles(under: root, includeTests: includeTests, extensions: extensions)
         let result = patterns.isEmpty
             ? discovered
             : discovered.filter { !patterns.exclude(relativePath: relativePath(of: $0, root: root)) }
         fileListMemo.set(key, result)
         return result
+    }
+
+    /// Files under a directory that is **not** a repository, with `.gitignore` still honoured in
+    /// full — by borrowing git rather than reimplementing it.
+    ///
+    /// git is handed the project as a work tree while its git dir lives in the cache, so nothing
+    /// is written inside the project and the whole of gitignore applies: negation, bracket
+    /// classes, nested `.gitignore` files, "last matching pattern wins", the anchoring rules. The
+    /// alternative — a hand-rolled subset — was tried and is worse than nothing: a partial
+    /// implementation fails silently, and a user cannot predict where it stops.
+    ///
+    /// nil means git could not be borrowed (not installed, or the directory is unreadable), and
+    /// the caller falls back to a plain walk.
+    static func borrowedGitFiles(under root: URL, includeTests: Bool, extensions: [String]) -> [URL]? {
+        let gitDirectory = borrowedGitDirectory(for: root)
+        if !FileManager.default.fileExists(atPath: gitDirectory.path) {
+            try? FileManager.default.createDirectory(at: gitDirectory.deletingLastPathComponent(),
+                                                     withIntermediateDirectories: true)
+            guard runGit(["init", "-q", "--bare", gitDirectory.path]) != nil else { return nil }
+        }
+        let suffixes = extensions.map { ".\($0)" }
+        let pathspecs = extensions.map { "*.\($0)" }
+        // `--others --exclude-standard`: everything untracked that gitignore does not exclude —
+        // in a work tree with an empty index, that is every file the user would consider theirs.
+        guard let output = runGit(["--git-dir", gitDirectory.path, "--work-tree", root.path,
+                                   "-C", root.path, "ls-files", "-z", "--others", "--exclude-standard",
+                                   "--"] + pathspecs) else { return nil }
+
+        var result: [URL] = []
+        for piece in output.split(separator: "\0") {
+            let name = String(piece)
+            guard suffixes.contains(where: name.hasSuffix) else { continue }
+            let components = name.split(separator: "/").map(String.init)
+            guard let last = components.last, !last.hasPrefix(".") else { continue }
+            if components.dropLast().contains(where: { $0.hasPrefix(".") || skippedDirectories.contains($0) }) { continue }
+            if !includeTests, last.hasSuffix("Tests.swift") { continue }
+            result.append(root.appendingPathComponent(name))
+        }
+        return result
+    }
+
+    /// The borrowed git dir for a project: in the cache, never inside the project. Writing a
+    /// `.git` into someone's directory would turn a read-only question into a change to their tree.
+    static func borrowedGitDirectory(for root: URL) -> URL {
+        let canonical = root.resolvingSymlinksInPath().standardizedFileURL.path
+        return FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Caches/sextant/gitdir/\(ContentHash.of(canonical).prefix(16)).git")
     }
 
     /// FileManager fallback for non-git directories: a walk that skips hidden and service directories.
