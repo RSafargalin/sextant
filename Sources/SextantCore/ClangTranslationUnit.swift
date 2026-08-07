@@ -51,6 +51,10 @@ public struct ClangTranslationUnit {
     public let root: ClangNode
     /// Error and fatal diagnostics. An empty list means the tree is complete.
     public let errors: [Diagnostic]
+    /// Byte ranges of the main file the preprocessor skipped — the `#if` branches this build does
+    /// not contain. Nothing in them reaches the tree, so a caller answering about the file has to
+    /// account for them rather than report a narrower answer as the whole one.
+    public let skippedRanges: [Range<Int>]
 
     public var isComplete: Bool { errors.isEmpty }
 
@@ -93,8 +97,10 @@ public struct ClangTranslationUnit {
 
         let unit: SXTranslationUnit? = argumentStrings.withUnsafeMutableBufferPointer { buffer in
             buffer.withMemoryRebound(to: UnsafePointer<CChar>?.self) { rebound in
+                // DetailedPreprocessingRecord (0x01) is what makes the skipped `#if` branches
+                // knowable; measured cost on a real file: 0.107s → 0.108s.
                 library.parseTranslationUnit(index, file, rebound.baseAddress, Int32(arguments.count),
-                                             unsavedCount == 0 ? nil : unsaved, unsavedCount, 0)
+                                             unsavedCount == 0 ? nil : unsaved, unsavedCount, 0x01)
             }
         }
         guard let unit else { throw Failure.notParsed(file: file) }
@@ -114,7 +120,23 @@ public struct ClangTranslationUnit {
         let names = FileNames(library: library)
         let root = node(of: library.translationUnitCursor(unit), library: library,
                         keepingHeaders: keepingHeaders, names: names, insideKeptFile: false)
-        return ClangTranslationUnit(root: root, errors: errors)
+        return ClangTranslationUnit(root: root, errors: errors,
+                                    skippedRanges: skipped(in: unit, file: file, library: library))
+    }
+
+    /// Byte ranges of the main file that the preprocessor skipped.
+    private static func skipped(in unit: SXTranslationUnit, file: String, library: ClangLibrary) -> [Range<Int>] {
+        guard let handle = library.file(unit, file), let list = library.skippedRanges(unit, handle) else { return [] }
+        defer { library.disposeSourceRangeList(list) }
+        var result: [Range<Int>] = []
+        for position in 0..<Int(list.pointee.count) {
+            let range = list.pointee.ranges[position]
+            var line: UInt32 = 0, column: UInt32 = 0, start: UInt32 = 0, end: UInt32 = 0
+            library.spellingLocation(library.rangeStart(range), nil, &line, &column, &start)
+            library.spellingLocation(library.rangeEnd(range), nil, &line, &column, &end)
+            if start < end { result.append(Int(start)..<Int(end)) }
+        }
+        return result
     }
 
     // MARK: - Copying the tree out

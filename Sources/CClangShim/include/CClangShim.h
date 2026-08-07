@@ -21,6 +21,9 @@ typedef struct { int kind; int xdata; const void *data[3]; } SXCursor;
 typedef struct { const void *ptr_data[2]; unsigned int_data; } SXSourceLocation;
 typedef struct { const void *ptr_data[2]; unsigned begin_int_data; unsigned end_int_data; } SXSourceRange;
 
+/// A list of source ranges owned by libclang (CXSourceRangeList).
+typedef struct { unsigned count; SXSourceRange *ranges; } SXSourceRangeList;
+
 /// Return values of a cursor visitor (CXChildVisitResult).
 typedef enum {
     SXChildVisitBreak = 0,
@@ -76,5 +79,11 @@ typedef void (*sx_getSpellingLocation)(SXSourceLocation, SXFile *file, unsigned 
 
 typedef const char *(*sx_getCString)(SXString);
 typedef void (*sx_disposeString)(SXString);
+
+// MARK: - Regions the preprocessor skipped
+
+typedef SXFile (*sx_getFile)(SXTranslationUnit, const char *fileName);
+typedef SXSourceRangeList *(*sx_getSkippedRanges)(SXTranslationUnit, SXFile);
+typedef void (*sx_disposeSourceRangeList)(SXSourceRangeList *);
 
 #endif

@@ -39,3 +39,15 @@
 }
 
 @end
+
+#if TARGET_OS_IPHONE
+// Ветка, которой нет в сборке под macOS: структурно её не видно, и ответ обязан сказать,
+// что вхождение здесь найдено текстом, а не деревом.
+@implementation OCFeeder (Phone)
+
+- (NSInteger)ocFeedOnPhone {
+    return [self ocFeed];
+}
+
+@end
+#endif

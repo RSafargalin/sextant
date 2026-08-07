@@ -25,23 +25,7 @@ public enum ConstructionSite {
     /// A shape must start at a word boundary: `makeStore(` ends with `Store(` and is not a
     /// construction of `Store`.
     public static func isConstruction(line: String, of type: String, inFile path: String) -> Bool {
-        shapes(of: type, inFile: path).contains { shape in
-            var searchRange = line.startIndex..<line.endIndex
-            while let found = line.range(of: shape, range: searchRange) {
-                let precedingCharacter = found.lowerBound == line.startIndex
-                    ? nil
-                    : line[line.index(before: found.lowerBound)]
-                if !isIdentifierCharacter(precedingCharacter) { return true }
-                guard found.upperBound < line.endIndex else { return false }
-                searchRange = found.upperBound..<line.endIndex
-            }
-            return false
-        }
-    }
-
-    private static func isIdentifierCharacter(_ character: Character?) -> Bool {
-        guard let character else { return false }
-        return character.isLetter || character.isNumber || character == "_"
+        shapes(of: type, inFile: path).contains { WordBoundary.contains($0, in: line) }
     }
 
     /// The heuristic to show the user, so the answer states what it looked for.

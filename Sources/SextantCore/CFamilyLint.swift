@@ -58,12 +58,12 @@ public enum CFamilyLint {
                 continue
             }
             do {
-                let matches = try ClangPatternSearch.searchAll(
+                let outcome = try ClangPatternSearch.searchAll(
                     engines, file: source,
                     arguments: CompilationDatabase.parseArguments(of: command),
                     library: library
                 )
-                for (index, match) in matches {
+                for (index, match) in outcome.matches {
                     let rule = compiled[index].rule
                     violations.append(RuleViolation(ruleID: rule.id, file: relative(source, root),
                                                     line: match.line, column: match.column,
