@@ -5,7 +5,7 @@
 Every number here was measured on public open-source Swift packages at a pinned commit, with
 commands you can run yourself. Nothing depends on a private codebase.
 
-**Environment:** macOS 26.5.2, x86_64, sextant 0.7.0.
+**Environment:** macOS 26.5.2, x86_64, sextant 0.7.0 (the numbers are a record of that measurement and were not re-run for 0.8.0).
 
 **Repositories** (shallow clones, pinned):
 
