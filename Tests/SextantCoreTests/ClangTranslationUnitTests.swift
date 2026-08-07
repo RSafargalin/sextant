@@ -24,7 +24,7 @@ struct ClangTranslationUnitTests {
     }
 
     @Test("Every C-family source parses without an error, on the flags from the build",
-          .enabled(if: isReady, "the fixture has not been built, or there is no toolchain"))
+          .enabled(if: isReady, "the fixture is not built and indexed (`make fixture`), or there is no toolchain"))
     func parsesEveryLanguage() throws {
         let library = try ClangLibrary.shared()
         let commands = commands()
@@ -44,7 +44,7 @@ struct ClangTranslationUnitTests {
     }
 
     @Test("The Objective-C tree carries the shapes a pattern will match",
-          .enabled(if: isReady, "the fixture has not been built, or there is no toolchain"))
+          .enabled(if: isReady, "the fixture is not built and indexed (`make fixture`), or there is no toolchain"))
     func objectiveCTreeHasMessageExpressions() throws {
         let library = try ClangLibrary.shared()
         let command = try #require(commands().first { $0.file.hasSuffix("ObjCFixture.m") })
@@ -72,7 +72,7 @@ struct ClangTranslationUnitTests {
     }
 
     @Test("A node points at real text in the file",
-          .enabled(if: isReady, "the fixture has not been built, or there is no toolchain"))
+          .enabled(if: isReady, "the fixture is not built and indexed (`make fixture`), or there is no toolchain"))
     func nodeOffsetsSelectTheSource() throws {
         let library = try ClangLibrary.shared()
         let command = try #require(commands().first { $0.file.hasSuffix("ObjCFixture.m") })
@@ -97,7 +97,7 @@ struct ClangTranslationUnitTests {
     }
 
     @Test("A file with no flags is refused, never parsed with a guess",
-          .enabled(if: isReady, "the fixture has not been built, or there is no toolchain"))
+          .enabled(if: isReady, "the fixture is not built and indexed (`make fixture`), or there is no toolchain"))
     func refusesWithoutFlags() throws {
         let library = try ClangLibrary.shared()
         let command = try #require(commands().first { $0.file.hasSuffix("ObjCFixture.m") })

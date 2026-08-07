@@ -62,13 +62,17 @@ struct RuleEngineTests {
             .appendingPathComponent("Fixtures/IndexFixture")
     }
 
+    /// The C family needs the flags the build captured, not merely a build: a fixture compiled
+    /// but never indexed cannot be read structurally, and a test that fails there would be
+    /// reporting the missing step rather than the behaviour. `make fixture` prepares both.
     private static var isReady: Bool {
         FileManager.default.fileExists(atPath: fixture.appendingPathComponent(".build").path)
             && ClangLibrary.discoverPath() != nil
+            && !CompilationDatabase.load(forRoot: fixture.path).isEmpty
     }
 
     @Test("An Objective-C rule is checked, and files no rule could cover are named",
-          .enabled(if: isReady, "the fixture has not been built, or there is no toolchain"))
+          .enabled(if: isReady, "the fixture is not built and indexed (`make fixture`), or there is no toolchain"))
     func lintsObjectiveC() throws {
         let rules = [
             Rule(id: "objc-feed", message: "Direct ocFeed call", patterns: ["[$X ocFeed]"]),
@@ -91,7 +95,7 @@ struct RuleEngineTests {
     }
 
     @Test("A rule violation in an #if branch the build lacks is reported, textually",
-          .enabled(if: isReady, "the fixture has not been built, or there is no toolchain"))
+          .enabled(if: isReady, "the fixture is not built and indexed (`make fixture`), or there is no toolchain"))
     func namesViolationsInInactiveBranches() throws {
         let rules = [Rule(id: "objc-feed", message: "Direct ocFeed call", patterns: ["[$X ocFeed]"])]
         let outcome = RuleEngine.run(rules: rules, projectRoot: Self.fixture.path,
@@ -105,7 +109,7 @@ struct RuleEngineTests {
     }
 
     @Test("A rule that does compile keeps its file scanned, whatever the other rules do",
-          .enabled(if: isReady, "the fixture has not been built, or there is no toolchain"))
+          .enabled(if: isReady, "the fixture is not built and indexed (`make fixture`), or there is no toolchain"))
     func oneCompilableRuleIsEnough() throws {
         let rules = [
             Rule(id: "swift-only", message: "Forced try!", patterns: ["try! $X"]),

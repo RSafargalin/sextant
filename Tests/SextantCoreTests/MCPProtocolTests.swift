@@ -106,7 +106,18 @@ struct MCPProtocolTests {
         #expect(answer.contains("ObjCFixture.m"))
     }
 
-    @Test("An Objective-C pattern is answered through MCP, not only in the CLI")
+    /// Answering this needs the fixture's compile flags, which come from a build. Without them
+    /// the test would fail on a machine that never ran `sextant index` — a real gap, but not this
+    /// test's gap, and `make ci` prepares them.
+    private static var fixtureIsIndexed: Bool {
+        let fixture = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Fixtures/IndexFixture")
+        return !CompilationDatabase.load(forRoot: fixture.path).isEmpty && ClangLibrary.discoverPath() != nil
+    }
+
+    @Test("An Objective-C pattern is answered through MCP, not only in the CLI",
+          .enabled(if: fixtureIsIndexed, "the fixture has no compile flags — run `make fixture`"))
     func structuralSearchCoversObjectiveC() throws {
         let responses = try session([
             ["jsonrpc": "2.0", "id": 1, "method": "initialize", "params": [String: Any]()],

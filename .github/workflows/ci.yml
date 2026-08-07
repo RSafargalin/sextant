@@ -47,6 +47,14 @@ jobs:
       - name: Build
         run: swift build
 
+      # The C-family tests check whether the fixture is built and its compile flags captured, and
+      # skip themselves when it is not. Without this step the whole clang layer skipped on CI and
+      # the run was green about code nobody had exercised.
+      - name: Prepare the fixture (index store + compile flags)
+        run: |
+          swift build --package-path Tests/Fixtures/IndexFixture --enable-index-store
+          $(swift build --show-bin-path)/sextant index --project Tests/Fixtures/IndexFixture
+
       # The semantic integration test and the MCP protocol e2e test need a built binary and a
       # toolchain; the runner has both, so green here means the layer was genuinely exercised.
       - name: Tests
