@@ -67,6 +67,12 @@ func runInit(arguments: [String]) -> Int32 {
     let root = projectRoot(in: arguments)
     let force = arguments.contains("--force")
     let rootURL = URL(fileURLWithPath: root, isDirectory: true)
+    // The client is checked before anything is written: a typo must not leave half a setup behind.
+    guard let client = MCPClient.named(optionValue("--client", in: arguments) ?? MCPClient.claudeCode.name) else {
+        reportError("sextant init: unknown client '\(optionValue("--client", in: arguments) ?? "")'. Supported: "
+                    + MCPClient.supported.map { $0.name }.joined(separator: ", ") + ".")
+        return 2
+    }
     print("# sextant init — \(root)")
 
     // 1. Project config: the defaults that both the CLI and MCP honour from here on.
@@ -85,23 +91,31 @@ func runInit(arguments: [String]) -> Int32 {
 
     // 2. MCP server registration — other people's servers in the file are left alone.
     var mcpOK = true
-    let mcpURL = rootURL.appendingPathComponent(".mcp.json")
+    let mcpURL = client.configurationURL(projectRoot: root)
     let existing = (try? Data(contentsOf: mcpURL)).flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]
     if FileManager.default.fileExists(atPath: mcpURL.path), existing == nil {
-        print("❌ .mcp.json exists but does not parse — leaving it alone, fix it by hand")
+        print("❌ \(mcpURL.lastPathComponent) exists but does not parse — leaving it alone, fix it by hand")
         mcpOK = false
-    } else if let (json, status) = mcpRegistration(existing: existing, project: root, force: force) {
-        do {
-            try writeJSON(json, to: mcpURL)
-            print(status)
-        } catch {
-            reportError("sextant init: could not write .mcp.json: \(error)")
-            return 1
-        }
     } else {
-        // mcpServers is present but is not an object — overwriting silently is not acceptable.
-        print("❌ .mcp.json: the mcpServers key is not an object — leaving it alone, fix it by hand")
-        mcpOK = false
+        let (json, outcome) = MCPRegistration.merge(existing: existing, client: client,
+                                                    binary: executablePath(), projectRoot: root, force: force)
+        switch outcome {
+        case .refused(let reason):
+            print("❌ \(mcpURL.lastPathComponent): \(reason)")
+            mcpOK = false
+        case .alreadyRegistered(let note):
+            print(note)
+        case .written(let note):
+            do {
+                try FileManager.default.createDirectory(at: mcpURL.deletingLastPathComponent(),
+                                                        withIntermediateDirectories: true)
+                try writeJSON(json, to: mcpURL)
+                print("\(note) — \(shorten(mcpURL.path))")
+            } catch {
+                reportError("sextant init: could not write \(mcpURL.path): \(error)")
+                return 1
+            }
+        }
     }
 
     // 3. What already works, and what still needs a step from the user.
@@ -123,7 +137,7 @@ func runInit(arguments: [String]) -> Int32 {
                     : "✅ index in place — semantics are ready: try `sextant context <symbol>`.")
     }
     if mcpOK {
-        print("MCP: restart your client (Claude Code) so it picks up .mcp.json.")
+        print("MCP: restart \(client.name) so it picks up the registration.")
     }
     return mcpOK ? 0 : 1
 }

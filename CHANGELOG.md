@@ -15,6 +15,15 @@ Human-readable text output is not covered — parse `--json`, not prose.
 
 ### Added
 
+- `init --client <name>` registers the MCP server for a client other than Claude Code. The list is
+  `claude-code` (default, a file in the project) and `claude-desktop` (one list per machine, so the
+  project is named in the arguments). Everything the `.mcp.json` path was already careful about now
+  holds for every client: other servers in the file survive, a file that does not parse or whose
+  servers key is not an object is left alone rather than repaired, already-registered is reported
+  rather than treated as an error, and the entry carries the absolute path to the running binary.
+  The client name is validated before anything is written, so a typo does not leave half a setup
+  behind. Closes [#7](https://github.com/RSafargalin/sextant/issues/7).
+
 - `exclude` in `.sextant.json` and a repeatable `--exclude` flag: globs for files that are tracked
   on purpose and still have no business in an answer — generated code, vendored sources, snapshot
   fixtures. `--scope` could only narrow to one subtree; it cannot subtract. The filter sits after
