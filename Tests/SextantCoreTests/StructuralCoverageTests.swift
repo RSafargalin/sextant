@@ -43,6 +43,17 @@ struct StructuralCoverageTests {
         #expect(lines.last?.contains("5 more") == true)
     }
 
+    @Test("The answer states the configuration the C family was read in")
+    func configurationNote() {
+        #expect(StructuralCoverage.configurationNote(targets: []).isEmpty)
+        let note = StructuralCoverage.configurationNote(targets: ["x86_64-apple-macosx10.13"])
+        #expect(note.first?.contains("x86_64-apple-macosx10.13") == true)
+        // Measured on SDWebImage: grep finds 28 occurrences, the structural search 15, and the
+        // other 13 sit inside `#if SD_UIKIT` — inactive in a macOS build. Without this line the
+        // narrower answer looks like it covered the file whole.
+        #expect(note.first?.contains("#if") == true)
+    }
+
     @Test("Files are grouped by reason, each reason explained once")
     func reportGroupsByReason() {
         let lines = StructuralCoverage.report([

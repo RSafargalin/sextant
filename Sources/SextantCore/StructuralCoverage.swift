@@ -34,6 +34,18 @@ public enum StructuralCoverage {
         return lines
     }
 
+    /// What the C-family answer covers: the configuration those files were built in.
+    ///
+    /// clang runs the preprocessor, so a branch that is inactive for the built platform is not in
+    /// the tree and cannot be matched — on SDWebImage a search found 15 of the 28 occurrences grep
+    /// sees, the other 13 sitting inside `#if SD_UIKIT` on a macOS build. Without this line the
+    /// answer looks like it covered the file whole.
+    public static func configurationNote(targets: Set<String>) -> [String] {
+        guard !targets.isEmpty else { return [] }
+        return ["ℹ Objective-C, C and C++ were read as built for \(targets.sorted().joined(separator: ", "))"
+                + " — code in inactive #if branches is not part of that build and is not searched."]
+    }
+
     /// Reasons in order of first appearance, so the output is stable rather than hash-ordered.
     private static func orderedReasons(of files: [UnscannedFile]) -> [String] {
         var seen = Set<String>()

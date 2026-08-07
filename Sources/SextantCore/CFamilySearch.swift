@@ -39,6 +39,8 @@ public enum CFamilySearch {
         public let unscanned: [UnscannedFile]
         /// Files actually parsed and matched — what the answer does cover.
         public let scannedCount: Int
+        /// Target triples the scanned files were built for; they decide which `#if` branches exist.
+        public let targets: Set<String>
     }
 
     public static func run(pattern: String, searchRoot: String, projectRoot: String, includeTests: Bool) -> Outcome {
@@ -46,7 +48,7 @@ public enum CFamilySearch {
         let sources = CompilationDatabase.compilableSources(projectRoot: searchRoot, includeTests: includeTests)
         let headers = headerFiles(searchRoot: searchRoot, includeTests: includeTests)
             .map { UnscannedFile(file: relative($0, root), reason: "a header is not a compilation unit") }
-        guard !sources.isEmpty else { return Outcome(hits: [], unscanned: headers, scannedCount: 0) }
+        guard !sources.isEmpty else { return Outcome(hits: [], unscanned: headers, scannedCount: 0, targets: []) }
 
         let engine: ClangPatternSearch
         do {
@@ -54,7 +56,7 @@ public enum CFamilySearch {
         } catch {
             return Outcome(hits: [], unscanned: headers + sources.map {
                 UnscannedFile(file: relative($0, root), reason: "\(error)")
-            }, scannedCount: 0)
+            }, scannedCount: 0, targets: [])
         }
 
         let library: ClangLibrary
@@ -63,7 +65,7 @@ public enum CFamilySearch {
         } catch {
             return Outcome(hits: [], unscanned: headers + sources.map {
                 UnscannedFile(file: relative($0, root), reason: "\(error)")
-            }, scannedCount: 0)
+            }, scannedCount: 0, targets: [])
         }
 
         // The database is stored per project, while the search may be narrowed to a subdirectory.
@@ -75,6 +77,7 @@ public enum CFamilySearch {
         var hits: [StructuralHit] = []
         var unscanned = headers
         var scanned = 0
+        var targets: Set<String> = []
         for source in sources {
             guard let command = commandByFile[source] else {
                 unscanned.append(UnscannedFile(
@@ -90,6 +93,7 @@ public enum CFamilySearch {
                     library: library
                 )
                 scanned += 1
+                if let target = CompilationDatabase.target(of: command) { targets.insert(target) }
                 hits += matches.map {
                     StructuralHit(file: relative(source, root), line: $0.line, column: $0.column, text: $0.text)
                 }
@@ -97,7 +101,7 @@ public enum CFamilySearch {
                 unscanned.append(UnscannedFile(file: relative(source, root), reason: reason(of: error)))
             }
         }
-        return Outcome(hits: hits, unscanned: unscanned, scannedCount: scanned)
+        return Outcome(hits: hits, unscanned: unscanned, scannedCount: scanned, targets: targets)
     }
 
     /// Headers, listed separately: they carry no compile command of their own, so the search
