@@ -151,7 +151,11 @@ mkdir -p ~/.local/bin && install -m 0755 sextant ~/.local/bin/sextant
 `xattr -d com.apple.quarantine sextant`. Загрузки через `curl` и Homebrew карантином не
 помечаются, но команда безвредна в любом случае.
 
-**3. Сборка из исходников** — нужен Swift 6.2+:
+**3. Сборка из исходников** — нужен Swift 6.2+. Учтите: `make install` кладёт бинарь в
+`~/.local/bin`, а этот каталог обычно стоит в `PATH` раньше каталога Homebrew — дальше
+запускается именно эта копия, и `brew upgrade` её заменить не может. `sextant doctor` скажет об
+этом, если найдёт больше одного бинаря.
+
 
 ```bash
 swift build && swift test
