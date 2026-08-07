@@ -33,8 +33,14 @@ func runMap(arguments: [String]) -> Int32 {
         return 0
     }
     let budget = optionValue("--budget", in: arguments).flatMap(Int.init) ?? loadConfig(arguments)?.budget ?? 6000
-    print(RepoMap.generate(projectRoot: root, options: .init(tokenBudget: budget, includeTests: includeTests),
-                           index: clangIndex(root: root, arguments: arguments, includeTests: includeTests)))
+    let index = clangIndex(root: root, arguments: arguments, includeTests: includeTests)
+    print(RepoMap.generate(projectRoot: root, options: .init(tokenBudget: budget, includeTests: includeTests), index: index))
+    // Swift declarations under `#if` are on the map with their condition; the non-Swift ones come
+    // from the index, which holds one configuration, so those can only be accounted for.
+    if index != nil {
+        IndexDeclarations.conditionalSourceNote(root: URL(fileURLWithPath: root, isDirectory: true),
+                                                includeTests: includeTests).forEach(reportError)
+    }
     return 0
 }
 
