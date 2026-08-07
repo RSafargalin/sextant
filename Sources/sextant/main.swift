@@ -37,6 +37,15 @@ func projectRoot(in arguments: [String]) -> String {
     return FileManager.default.currentDirectoryPath
 }
 
+/// Exclusions for this run: the repeatable `--exclude` flags, or the config list when there are
+/// none. The flags REPLACE rather than extend, the way the other options do — a command line that
+/// meant to narrow the list must not silently inherit the project's.
+func applyExclusions(_ arguments: [String]) {
+    let fromFlags = ArgumentParsing.values(of: "--exclude", in: arguments)
+    let fromConfig = loadConfig(arguments)?.exclude ?? []
+    SwiftSources.setExclusions(fromFlags.isEmpty ? fromConfig : fromFlags)
+}
+
 /// Project config (.sextant.json) — the defaults sitting underneath the CLI flags.
 func loadConfig(_ arguments: [String]) -> ProjectConfig? {
     configMemo.value(forRoot: projectRoot(in: arguments))
@@ -182,6 +191,8 @@ func precheck(_ name: String, _ arguments: [String]) -> Int32? {
 func dispatch(_ arguments: [String]) -> Int32 {
     let rest = Array(arguments.dropFirst())
     if let name = arguments.first, let code = precheck(name, rest) { return code }
+    // Exclusions are set once per command, before anything walks the tree.
+    applyExclusions(rest)
     switch arguments.first {
     case "--version", "-v", "version": print(Sextant.version); return 0
     case "init": return runInit(arguments: rest)

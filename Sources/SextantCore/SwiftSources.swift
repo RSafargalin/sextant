@@ -130,12 +130,45 @@ public enum SwiftSources {
 
     public static func clearFileListMemo() { fileListMemo.clear() }
 
+    /// Patterns the user excluded, applied to every walk.
+    ///
+    /// Set once per command from `.sextant.json` and the `--exclude` flags, rather than threaded
+    /// through twenty call sites where one would eventually be forgotten — and applied here, after
+    /// both discovery paths, so a git project and a non-git one leave out exactly the same files.
+    private final class Exclusions: @unchecked Sendable {
+        private let lock = NSLock()
+        private var patterns: [ExclusionPattern] = []
+        private var source: [String] = []
+
+        func set(_ raw: [String]) {
+            lock.withLock {
+                source = raw
+                patterns = raw.map(ExclusionPattern.init)
+            }
+        }
+        var current: (patterns: [ExclusionPattern], key: String) {
+            lock.withLock { (patterns, source.joined(separator: "\u{1}")) }
+        }
+    }
+    private static let exclusions = Exclusions()
+
+    /// Replaces the exclusion list for this process. Called by the entry points; a long-lived
+    /// server sets it per request, because the config may have been edited since the last one.
+    public static func setExclusions(_ patterns: [String]) {
+        exclusions.set(patterns)
+    }
+
     /// Every `.swift` file under the root: the git list in a repository, otherwise a FileManager walk. Memoised.
     public static func files(under root: URL, includeTests: Bool, extensions: [String] = ["swift"]) -> [URL] {
-        let key = "\(root.path)|\(includeTests)|\(extensions.joined(separator: ","))"
+        let (patterns, exclusionKey) = exclusions.current
+        // The exclusions are part of the key: changing them must not be answered from the memo.
+        let key = "\(root.path)|\(includeTests)|\(extensions.joined(separator: ","))|\(exclusionKey)"
         if let cached = fileListMemo.value(key) { return cached }
-        let result = gitSwiftFiles(under: root, includeTests: includeTests, extensions: extensions)
+        let discovered = gitSwiftFiles(under: root, includeTests: includeTests, extensions: extensions)
             ?? enumeratedFiles(under: root, includeTests: includeTests, extensions: extensions)
+        let result = patterns.isEmpty
+            ? discovered
+            : discovered.filter { !patterns.exclude(relativePath: relativePath(of: $0, root: root)) }
         fileListMemo.set(key, result)
         return result
     }

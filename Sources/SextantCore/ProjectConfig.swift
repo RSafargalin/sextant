@@ -6,12 +6,16 @@ public struct ProjectConfig: Codable, Sendable {
     public var maxFiles: Int?
     public var scope: String?
     public var rules: String?
+    /// Files to leave out of every walk, as glob patterns relative to the project root.
+    public var exclude: [String]?
 
-    public init(budget: Int? = nil, maxFiles: Int? = nil, scope: String? = nil, rules: String? = nil) {
+    public init(budget: Int? = nil, maxFiles: Int? = nil, scope: String? = nil, rules: String? = nil,
+                exclude: [String]? = nil) {
         self.budget = budget
         self.maxFiles = maxFiles
         self.scope = scope
         self.rules = rules
+        self.exclude = exclude
     }
 
     /// Result of reading the config. It distinguishes "no file" (normal) from "a file that does

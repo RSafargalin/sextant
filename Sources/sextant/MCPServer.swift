@@ -86,6 +86,10 @@ private func makeToolContext(project: String, index: IndexStoreSet?, warnedInval
         scopeProblem = "scope '\(config?.scope ?? "")' from .sextant.json — directory does not exist"
     }
 
+    // Per call, not once at start-up: `.sextant.json` may have been edited since the last one,
+    // and an exclusion the user just added must take effect without restarting the server.
+    SwiftSources.setExclusions(config?.exclude ?? [])
+
     return ToolContext(project: scoped, projectRoot: project, scopeProblem: scopeProblem,
                        config: config, index: index, reader: SourceLineReader())
 }

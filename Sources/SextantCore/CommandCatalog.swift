@@ -47,6 +47,7 @@ public enum CommandCatalog {
     static let json = FlagSpec("--json", "structured output instead of text")
     static let scope = FlagSpec("--scope", takesValue: true, "narrow the area to a subdirectory")
     static let maxFiles = FlagSpec("--max-files", takesValue: true, "limit on Swift files (default 4000)")
+    static let exclude = FlagSpec("--exclude", takesValue: true, "glob to leave out; repeatable, replaces the config list")
     static let includeTests = FlagSpec("--include-tests", "include test files")
     static let limit = FlagSpec("--limit", takesValue: true, "how many entries to show")
     static let fullPaths = FlagSpec("--full-paths", "full paths instead of shortened ones")
@@ -70,7 +71,7 @@ public enum CommandCatalog {
             flags: [project, FlagSpec("--budget", takesValue: true, "token budget for the map (default 6000)"),
                     FlagSpec("--semantic", "types by usage count (needs an index)"),
                     FlagSpec("--pagerank", "files by centrality (needs an index)"),
-                    includeTests, scope, maxFiles, json],
+                    includeTests, scope, maxFiles, exclude, json],
             details: ["Defaults are taken from .sextant.json."]
         ),
         CommandSpec(
@@ -78,20 +79,20 @@ public enum CommandCatalog {
             group: "Navigation (syntax, no build required)",
             flags: [project, FlagSpec("--package", takesValue: true, "package name"),
                     FlagSpec("--type", takesValue: true, "type name — only that type"),
-                    scope, maxFiles, json],
+                    scope, maxFiles, exclude, json],
             details: ["A replacement for reading sources: signatures and doc summaries in one call."]
         ),
         CommandSpec(
             name: "search", argument: "<pattern>", summary: "structural search over the AST (a grep replacement)",
             group: "Navigation (syntax, no build required)",
-            flags: [project, scope, maxFiles, includeTests, limit, json],
+            flags: [project, scope, maxFiles, exclude, includeTests, limit, json],
             details: ["Metavariables: $X (an expression), variadic $$$. For example 'try? $X.save()'."]
         ),
         CommandSpec(
             name: "lint", summary: "structural code-hygiene rules",
             group: "Navigation (syntax, no build required)",
             flags: [project, FlagSpec("--rules", takesValue: true, "JSON rules file (otherwise the built-in set)"),
-                    scope, maxFiles, includeTests, json]
+                    scope, maxFiles, exclude, includeTests, json]
         ),
         CommandSpec(
             name: "changed", summary: "symbol-level git diff: added, removed, or changed signature",

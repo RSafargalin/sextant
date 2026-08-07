@@ -117,7 +117,14 @@ Shared flags, each on the commands it makes sense for: `--project <path>` (every
 `--json` (structured output, on every command that answers a query), `--reindex` (rebuild the
 index before the query), `--scope <subdirectory>` and `--max-files <N>` (`map`, `api`, `search`,
 `lint`). Run `sextant <command> --help` for the exact set. Defaults come from `.sextant.json`.
-`.gitignore` is respected: in full under git, and by directory names alone outside it.
+`.gitignore` is respected: in full under git, and by directory names alone outside it. To leave
+out files that *are* tracked on purpose — generated code, vendored sources, snapshot fixtures —
+list globs under `exclude` in `.sextant.json`, or pass `--exclude` (repeatable, and it replaces
+the config list rather than adding to it):
+
+```json
+{ "exclude": ["Generated/**", "Sources/*/Legacy", "*.pb.swift"] }
+```
 
 ## Installation
 
