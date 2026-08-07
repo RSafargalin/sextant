@@ -87,7 +87,7 @@ bodies there is `body`.
 
 ## Status
 
-Working CLI and MCP server, version 0.7.x. 23 commands:
+Working CLI and MCP server, version 0.7.x. 25 commands:
 
 | Command | What it does | Layer |
 |---|---|---|
@@ -105,6 +105,8 @@ Working CLI and MCP server, version 0.7.x. 23 commands:
 | `construct <type>` | construction and injection sites (heuristic: `Type(`, or `[Type alloc]` in Objective-C) | heuristic |
 | `changed` | symbol-level git diff: what was added, removed, or changed signature; what it could not compare is named | syntax |
 | `golden` / `bench` | semantic regressions against a spec / latency and output volume | measurability |
+| `adoption` | how much code navigation went through sextant rather than grep, and what went past it | measurability |
+| `hook` | records one tool-use event for a client hook (`--install` explains it) | measurability |
 | `mcp` | MCP server (stdio) for Claude Code — the semantic layer as tools | integration |
 | `init` | set up a project: `.sextant.json`, registration in `.mcp.json`, and a check | integration |
 | `serve` | daemon with a warm index: cold CLI start 2.6s → 0.27s (measured on sextant itself) | integration |
