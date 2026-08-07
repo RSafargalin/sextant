@@ -13,9 +13,13 @@ struct ClangPatternSearchTests {
             .appendingPathComponent("Fixtures/IndexFixture")
     }
 
+    /// The C family needs the flags the build captured, not merely a build: a fixture compiled
+    /// but never indexed cannot be read structurally, and a test that fails there would be
+    /// reporting the missing step rather than the behaviour. `make fixture` prepares both.
     private static var isReady: Bool {
         FileManager.default.fileExists(atPath: fixture.appendingPathComponent(".build").path)
             && ClangLibrary.discoverPath() != nil
+            && !CompilationDatabase.load(forRoot: fixture.path).isEmpty
     }
 
     private func command(suffix: String) throws -> CompileCommand {
@@ -33,7 +37,7 @@ struct ClangPatternSearchTests {
     }
 
     @Test("A message send with a metavariable receiver finds every call site",
-          .enabled(if: isReady, "the fixture has not been built, or there is no toolchain"))
+          .enabled(if: isReady, "the fixture is not built and indexed (`make fixture`), or there is no toolchain"))
     func findsMessageSends() throws {
         let matches = try search("[$X ocFeed]", in: "ObjCFixture.m")
         // `return [self ocFeed] + [self ocFeed];` — two calls on one line, as grep would find them.
@@ -44,7 +48,7 @@ struct ClangPatternSearchTests {
     }
 
     @Test("A selector with an argument matches, and a different selector does not",
-          .enabled(if: isReady, "the fixture has not been built, or there is no toolchain"))
+          .enabled(if: isReady, "the fixture is not built and indexed (`make fixture`), or there is no toolchain"))
     func matchesSelectorWithArgument() throws {
         let matches = try search("[$X ocGreetWithName:$Y]", in: "ObjCFixture.m")
         #expect(matches.count == 1)
@@ -56,7 +60,7 @@ struct ClangPatternSearchTests {
     }
 
     @Test("A repeated metavariable requires the same text in both places",
-          .enabled(if: isReady, "the fixture has not been built, or there is no toolchain"))
+          .enabled(if: isReady, "the fixture is not built and indexed (`make fixture`), or there is no toolchain"))
     func repeatedMetavariableBindsConsistently() throws {
         #expect(try search("[$X ocFeed] + [$X ocFeed]", in: "ObjCFixture.m").count == 1)
         // Both receivers are `self`, so a pattern demanding two different receivers cannot match.
@@ -64,7 +68,7 @@ struct ClangPatternSearchTests {
     }
 
     @Test("C and C++ are searched by the same engine",
-          .enabled(if: isReady, "the fixture has not been built, or there is no toolchain"))
+          .enabled(if: isReady, "the fixture is not built and indexed (`make fixture`), or there is no toolchain"))
     func searchesCAndCxx() throws {
         // C++: a shape built from metavariables needs no name at all, and a repeated one still
         // has to bind the same text — `size_ * size_` matches, `value * 2` does not.
@@ -78,7 +82,7 @@ struct ClangPatternSearchTests {
     }
 
     @Test("A C++ name inside a namespace is out of the probe's reach, and says so",
-          .enabled(if: isReady, "the fixture has not been built, or there is no toolchain"))
+          .enabled(if: isReady, "the fixture is not built and indexed (`make fixture`), or there is no toolchain"))
     func namespacedNameIsRefusedWithItsReason() throws {
         // The probe is appended at file scope, where `scale` — declared inside `namespace
         // sextantfixture` — is not visible. The refusal carries clang's own reason rather than
@@ -92,7 +96,7 @@ struct ClangPatternSearchTests {
     }
 
     @Test("A pattern that cannot compile in a file is refused, not answered with zero",
-          .enabled(if: isReady, "the fixture has not been built, or there is no toolchain"))
+          .enabled(if: isReady, "the fixture is not built and indexed (`make fixture`), or there is no toolchain"))
     func refusesWhenThePatternDoesNotCompile() throws {
         // Objective-C syntax in a C file: clang cannot build the probe, and "no matches" would be
         // a confident answer to a question that was never asked.
@@ -102,7 +106,7 @@ struct ClangPatternSearchTests {
     }
 
     @Test("Code in an #if branch this build lacks is reported textually, apart from the matches",
-          .enabled(if: isReady, "the fixture has not been built, or there is no toolchain"))
+          .enabled(if: isReady, "the fixture is not built and indexed (`make fixture`), or there is no toolchain"))
     func reportsInactiveBranchesSeparately() throws {
         let outcome = CFamilySearch.run(pattern: "[$X ocFeed]", searchRoot: Self.fixture.path,
                                         projectRoot: Self.fixture.path, includeTests: false)
