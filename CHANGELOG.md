@@ -15,6 +15,10 @@ Human-readable text output is not covered — parse `--json`, not prose.
 
 ### Added
 
+- `changed` diffs Objective-C, C and C++ at the symbol level, not just Swift. A past revision has
+  no build of its own, but it does not need one: its text is parsed against the flags the file is
+  compiled with today, which measures clean. A file with no flags at all, or a revision that does
+  not parse, is named with the reason instead of being counted as unchanged.
 - `lint` runs its rules over Objective-C, C and C++ as well, reading each file once for all of
   them. A rule written for another language simply does not compile there, which is not a gap; a
   file where **no** rule could run is reported, because nothing about it was checked.
@@ -72,11 +76,10 @@ Human-readable text output is not covered — parse `--json`, not prose.
   agent never sees stderr. Actually reading those files is [ADR-0004](docs/adr/0004-structural-layer-for-c-family.md) work.
 - **Breaking (`--json` schema):** `changed --json` returns an object
   `{"files": [...], "notDiffed": [...]}` instead of a bare array; the former array is now the
-  `files` field. `notDiffed` lists changed files the symbol-level diff could not read.
-- `changed` names the C, C++ and Objective-C files it did not compare. It used to drop them, so
+  `files` field. Each `notDiffed` entry is `{"file": ..., "reason": ...}`.
+- `changed` names the C, C++ and Objective-C files it could not compare. It used to drop them, so
   a commit touching only `.m` files reported "no symbol-level changes" — a confident wrong
-  answer of exactly the kind this tool exists to prevent. Diffing them needs the source text of
-  an arbitrary revision, which an index cannot supply; that is ADR-0004 work.
+  answer of exactly the kind this tool exists to prevent.
 
 ### Fixed
 

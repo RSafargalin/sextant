@@ -64,9 +64,9 @@ The structural commands — `search` and `lint` — parse source text, which an 
 Swift goes through its own parser; Objective-C, C and C++ go through clang, with the exact flags
 each file was built with ([ADR-0004](docs/adr/0004-structural-layer-for-c-family.md)). Those
 flags come from `sextant index`, so without a built index those files are not read — and are
-named, rather than passed over in silence. `changed` is still Swift-only and lists the C, C++
-and Objective-C files it did not compare; `construct` is a heuristic and knows the shape each
-language builds an object with.
+named, rather than passed over in silence. `changed` reads the same four languages: a past revision's text is
+parsed against the flags the file is built with today. `construct` is a heuristic and knows the
+shape each language builds an object with.
 
 ## What it saves
 
@@ -103,7 +103,7 @@ Working CLI and MCP server, version 0.7.x. 23 commands:
 | `blast <symbol>` | impact analysis: what a change to this symbol touches | semantics |
 | `body <symbol>` | full text of a declaration (signature and body) | semantics + syntax |
 | `construct <type>` | construction and injection sites (heuristic: `Type(`, or `[Type alloc]` in Objective-C) | heuristic |
-| `changed` | symbol-level git diff: what was added, removed, or changed signature (Swift; other languages listed as not compared) | syntax |
+| `changed` | symbol-level git diff: what was added, removed, or changed signature; what it could not compare is named | syntax |
 | `golden` / `bench` | semantic regressions against a spec / latency and output volume | measurability |
 | `mcp` | MCP server (stdio) for Claude Code — the semantic layer as tools | integration |
 | `init` | set up a project: `.sextant.json`, registration in `.mcp.json`, and a check | integration |

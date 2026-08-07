@@ -374,12 +374,11 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
             change.result.removed.forEach { lines.append("  − \($0.decoratedHeader)") }
             change.result.changed.forEach { lines.append("  ~ \($0.old.decoratedHeader)  →  \($0.new.decoratedHeader)") }
         }
-        // Named, not dropped: a model reading this must not conclude the Objective-C side is
-        // unchanged when it was never compared.
+        // Named, not dropped: a model reading this must not conclude a file is unchanged when it
+        // was never compared.
         if !changes.notDiffed.isEmpty {
-            lines.append("not compared (\(changes.notDiffed.count)) — this diff covers Swift only; use `git diff` for these:")
-            changes.notDiffed.prefix(10).forEach { lines.append("  \($0)") }
-            if changes.notDiffed.count > 10 { lines.append("  … and \(changes.notDiffed.count - 10) more") }
+            lines += StructuralCoverage.report(changes.notDiffed)
+            lines.append("  use `git diff` for these")
         }
         return (capped(lines.joined(separator: "\n"), hint: "narrow the from/to revisions"), false)
 

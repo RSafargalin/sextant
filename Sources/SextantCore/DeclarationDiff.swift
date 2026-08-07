@@ -21,17 +21,16 @@ public enum DeclarationDiff {
     /// changed" means something different when three `.m` files were left out of it.
     public struct Changes {
         public let files: [(file: String, result: Result)]
-        public let notDiffed: [String]
+        public let notDiffed: [UnscannedFile]
     }
 
     /// Symbol-level changes across git revisions: file → added, removed, changed signature.
     /// `to == nil` compares against the working tree. nil means not a git repository, or a bad ref.
     /// Files with no symbol-level changes (body edits, reformatting) are omitted.
     ///
-    /// Only Swift is diffed. A revision's source exists as text, not as a build, so the compiler
-    /// index — which is what makes the other commands multi-language — has nothing to say about
-    /// it; C-family files are reported as not diffed until the structural layer of ADR-0004 can
-    /// parse them.
+    /// Swift is parsed directly; Objective-C, C and C++ are parsed by clang with the flags the
+    /// file is built with today, which is the only thing a past revision's text can be read
+    /// against. Whatever cannot be read that way is named in `notDiffed`.
     public static func changes(root: String, from: String, to: String?) -> Changes? {
         guard let (topLevel, swift, clang) = SwiftSources.changedFiles(root: root, from: from, to: to) else { return nil }
         let files = swift.compactMap { relative -> (file: String, result: Result)? in
@@ -42,7 +41,8 @@ public enum DeclarationDiff {
             let result = compare(old: declarations(fromSource: oldSource), new: declarations(fromSource: newSource))
             return result.isEmpty ? nil : (relative, result)
         }
-        return Changes(files: files, notDiffed: clang)
+        let cFamily = CFamilyDiff.changes(files: clang, topLevel: topLevel, projectRoot: root, from: from, to: to)
+        return Changes(files: (files + cFamily.files).sorted { $0.file < $1.file }, notDiffed: cFamily.notDiffed)
     }
 
     /// Matching declarations. Grouped by (kind:name); for a name UNIQUE in both versions, changed
