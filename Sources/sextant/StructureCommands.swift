@@ -203,13 +203,18 @@ func runSearch(arguments: [String]) -> Int32 {
         struct SearchOutput: Encodable {
             let matches: [SearchHit]
             let notScanned: [UnscannedFile]
+            /// Textual only: occurrences in `#if` branches the build does not contain.
+            let inactiveOccurrences: [StructuralHit]
         }
-        printJSON(SearchOutput(matches: hits, notScanned: cFamily.unscanned))
+        printJSON(SearchOutput(matches: hits, notScanned: cFamily.unscanned, inactiveOccurrences: cFamily.inactive))
         return 0
     }
     for hit in hits { print("\(hit.file):\(hit.line):\(hit.column): \(hit.text)") }
     print(hits.isEmpty ? "No matches." : "\ntotal: \(hits.count)")
-    StructuralCoverage.configurationNote(targets: cFamily.targets).forEach(reportError)
+    StructuralCoverage.inactiveReport(cFamily.inactive, targets: cFamily.targets).forEach(reportError)
+    if cFamily.inactive.isEmpty {
+        StructuralCoverage.configurationNote(targets: cFamily.targets).forEach(reportError)
+    }
     StructuralCoverage.report(cFamily.unscanned).forEach(reportError)
     return 0
 }

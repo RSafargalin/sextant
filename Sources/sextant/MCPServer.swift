@@ -301,7 +301,8 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
                                         projectRoot: context.projectRoot, includeTests: false)
         lines += cFamily.hits.prefix(200).map { "\($0.file):\($0.line):\($0.column): \($0.text)" }
         if lines.isEmpty { lines.append("no matches") }
-        lines += StructuralCoverage.configurationNote(targets: cFamily.targets)
+        lines += StructuralCoverage.inactiveReport(cFamily.inactive, targets: cFamily.targets)
+        if cFamily.inactive.isEmpty { lines += StructuralCoverage.configurationNote(targets: cFamily.targets) }
         lines += StructuralCoverage.report(cFamily.unscanned)
         return (lines.joined(separator: "\n"), false)
 

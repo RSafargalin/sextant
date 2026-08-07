@@ -35,10 +35,15 @@ Human-readable text output is not covered — parse `--json`, not prose.
   memory, because that is the only place its selectors are known — compiled on its own, an
   Objective-C pattern comes back from clang with an empty selector under ARC. Whatever cannot be
   read is named with its reason (no flags, the pattern does not compile here, a header is not a
-  compilation unit), never counted as "no matches". The answer also states which build
-  configuration it covers: clang runs the preprocessor, so code inside an inactive `#if` branch
-  is not part of that build and is not searched — measured on SDWebImage, where grep sees 28
-  occurrences and the search 15, the other 13 sitting under `#if SD_UIKIT` on a macOS build.
+  compilation unit), never counted as "no matches".
+- Occurrences inside `#if` branches the build does not contain are reported too, as a separate,
+  textual tier. clang runs the preprocessor, so such code never reaches the tree and cannot be
+  matched structurally — on SDWebImage a search finds 15 usages where grep counts 28, the other
+  13 sitting under `#if SD_UIKIT` on a macOS build. Reporting only 15 would leave an agent about
+  to change that API to break another platform; merging them would pass a textual guess off as a
+  verified match. So both are given, labelled and separate: `15 matches` plus `⚠ 13 more textual
+  occurrence(s) inside #if branches not built for x86_64-apple-macosx10.13 — found by text, NOT
+  structurally verified`. `--json` carries them in `inactiveOccurrences`.
 - A compile database: `index` records the exact flags each Objective-C, C and C++ file was built
   with, and `doctor` reports whether every such source is covered. This is the groundwork for
   reading those files structurally ([ADR-0004](docs/adr/0004-structural-layer-for-c-family.md)):

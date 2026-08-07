@@ -56,6 +56,10 @@ public struct ClangPatternSearch {
     private let sentinelNames: [String]
     private let sentinels: Set<String>
 
+    /// Identifiers the pattern spells out, metavariables excluded — `[$X reloadData]` anchors on
+    /// `reloadData`. They are what a textual look into code the build skipped can go on.
+    public let anchors: [String]
+
     public init(pattern: String) throws {
         let trimmed = pattern.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw Failure.emptyPattern }
@@ -63,9 +67,11 @@ public struct ClangPatternSearch {
         let substitution = Metavariable.substitute(trimmed)
         guard substitution.variadic.isEmpty else { throw Failure.variadicNotSupported }
 
-        sentinelNames = substitution.singleByName.keys.sorted()
-        sentinels = Set(sentinelNames)
+        let names = substitution.singleByName.keys.sorted()
+        sentinelNames = names
+        sentinels = Set(names)
         statement = substitution.text.hasSuffix(";") ? substitution.text : substitution.text + ";"
+        anchors = Self.identifiers(in: substitution.text).filter { !names.contains($0) }
     }
 
     /// The probe functions for this pattern, named after its position so that several patterns
@@ -84,9 +90,16 @@ public struct ClangPatternSearch {
         "sextant_probe_\(position)_\(probe)"
     }
 
+    /// What one file's parse produced: the matches, and the regions of it the build left out.
+    public struct FileOutcome {
+        public let matches: [(index: Int, match: StructuralMatch)]
+        /// Byte ranges the preprocessor skipped — the `#if` branches this build does not contain.
+        public let skippedRanges: [Range<Int>]
+    }
+
     /// Matches in one file, compiled with the flags it was built with.
     public func search(file: String, arguments: [String], library: ClangLibrary) throws -> [StructuralMatch] {
-        try Self.searchAll([self], file: file, arguments: arguments, library: library).map { $0.match }
+        try Self.searchAll([self], file: file, arguments: arguments, library: library).matches.map { $0.match }
     }
 
     /// Matches for several patterns in a single parse. Every pattern is appended to the file as
@@ -96,14 +109,16 @@ public struct ClangPatternSearch {
     /// A pattern that does not compile in this file is not an error for the others: it is left
     /// out of the results and reported through `notCompiled`.
     public static func searchAll(_ searches: [ClangPatternSearch], file: String, arguments: [String],
-                                 library: ClangLibrary) throws -> [(index: Int, match: StructuralMatch)] {
+                                 library: ClangLibrary) throws -> FileOutcome {
         try searchAll(searches, file: file, arguments: arguments, library: library, notCompiled: nil)
     }
 
     public static func searchAll(_ searches: [ClangPatternSearch], file: String, arguments: [String],
                                  library: ClangLibrary,
-                                 notCompiled: ((Int, [String]) -> Void)?) throws -> [(index: Int, match: StructuralMatch)] {
-        guard !searches.isEmpty, let sourceData = FileManager.default.contents(atPath: file) else { return [] }
+                                 notCompiled: ((Int, [String]) -> Void)?) throws -> FileOutcome {
+        guard !searches.isEmpty, let sourceData = FileManager.default.contents(atPath: file) else {
+            return FileOutcome(matches: [], skippedRanges: [])
+        }
         let source = String(decoding: sourceData, as: UTF8.self)
         // Appended, never inserted: the file's own offsets stay exactly as they are on disk, so a
         // match reports the position a reader would find.
@@ -153,7 +168,7 @@ public struct ClangPatternSearch {
             node.children.forEach(visit)
         }
         visit(unit.root)
-        return results
+        return FileOutcome(matches: results, skippedRanges: unit.skippedRanges)
     }
 
     // MARK: - Matching
@@ -245,6 +260,22 @@ public struct ClangPatternSearch {
                         bindings: &bindings) { return false }
         }
         return true
+    }
+
+    /// Identifiers in a pattern, in order of appearance.
+    static func identifiers(in text: String) -> [String] {
+        var result: [String] = []
+        var current = ""
+        for character in text {
+            if Metavariable.isIdentifierPart(character) {
+                current.append(character)
+            } else {
+                if !current.isEmpty, Metavariable.isIdentifierStart(current.first!) { result.append(current) }
+                current = ""
+            }
+        }
+        if !current.isEmpty, Metavariable.isIdentifierStart(current.first!) { result.append(current) }
+        return result
     }
 
     /// The source text a node spans.

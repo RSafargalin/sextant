@@ -101,6 +101,20 @@ struct ClangPatternSearchTests {
         }
     }
 
+    @Test("Code in an #if branch this build lacks is reported textually, apart from the matches",
+          .enabled(if: isReady, "the fixture has not been built, or there is no toolchain"))
+    func reportsInactiveBranchesSeparately() throws {
+        let outcome = CFamilySearch.run(pattern: "[$X ocFeed]", searchRoot: Self.fixture.path,
+                                        projectRoot: Self.fixture.path, includeTests: false)
+        // Structurally verified: the two calls in code this build contains.
+        #expect(outcome.hits.count == 2)
+        // Textual only: the call inside `#if TARGET_OS_IPHONE`, which clang never compiled here.
+        // Left out, the answer would say "2 usages" where a reader of the sources counts three.
+        #expect(outcome.inactive.count == 1)
+        #expect(outcome.inactive.first?.text.contains("[self ocFeed]") == true)
+        #expect(outcome.targets.contains { $0.contains("macosx") })
+    }
+
     @Test("A variadic is refused for the C family rather than quietly ignored")
     func refusesVariadic() {
         #expect(throws: ClangPatternSearch.Failure.self) {

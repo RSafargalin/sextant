@@ -41,6 +41,9 @@ public enum CFamilySearch {
         public let scannedCount: Int
         /// Target triples the scanned files were built for; they decide which `#if` branches exist.
         public let targets: Set<String>
+        /// Textual occurrences inside `#if` branches this build does not contain. Not structurally
+        /// verified — but leaving them out would answer for part of the sources as if it were all.
+        public let inactive: [StructuralHit]
     }
 
     public static func run(pattern: String, searchRoot: String, projectRoot: String, includeTests: Bool) -> Outcome {
@@ -48,7 +51,7 @@ public enum CFamilySearch {
         let sources = CompilationDatabase.compilableSources(projectRoot: searchRoot, includeTests: includeTests)
         let headers = headerFiles(searchRoot: searchRoot, includeTests: includeTests)
             .map { UnscannedFile(file: relative($0, root), reason: "a header is not a compilation unit") }
-        guard !sources.isEmpty else { return Outcome(hits: [], unscanned: headers, scannedCount: 0, targets: []) }
+        guard !sources.isEmpty else { return Outcome(hits: [], unscanned: headers, scannedCount: 0, targets: [], inactive: []) }
 
         let engine: ClangPatternSearch
         do {
@@ -56,7 +59,7 @@ public enum CFamilySearch {
         } catch {
             return Outcome(hits: [], unscanned: headers + sources.map {
                 UnscannedFile(file: relative($0, root), reason: "\(error)")
-            }, scannedCount: 0, targets: [])
+            }, scannedCount: 0, targets: [], inactive: [])
         }
 
         let library: ClangLibrary
@@ -65,7 +68,7 @@ public enum CFamilySearch {
         } catch {
             return Outcome(hits: [], unscanned: headers + sources.map {
                 UnscannedFile(file: relative($0, root), reason: "\(error)")
-            }, scannedCount: 0, targets: [])
+            }, scannedCount: 0, targets: [], inactive: [])
         }
 
         // The database is stored per project, while the search may be narrowed to a subdirectory.
@@ -78,6 +81,7 @@ public enum CFamilySearch {
         var unscanned = headers
         var scanned = 0
         var targets: Set<String> = []
+        var inactive: [StructuralHit] = []
         for source in sources {
             guard let command = commandByFile[source] else {
                 unscanned.append(UnscannedFile(
@@ -87,21 +91,29 @@ public enum CFamilySearch {
                 continue
             }
             do {
-                let matches = try engine.search(
-                    file: source,
+                let outcome = try ClangPatternSearch.searchAll(
+                    [engine], file: source,
                     arguments: CompilationDatabase.parseArguments(of: command),
                     library: library
                 )
                 scanned += 1
                 if let target = CompilationDatabase.target(of: command) { targets.insert(target) }
-                hits += matches.map {
-                    StructuralHit(file: relative(source, root), line: $0.line, column: $0.column, text: $0.text)
+                hits += outcome.matches.map {
+                    StructuralHit(file: relative(source, root), line: $0.match.line,
+                                  column: $0.match.column, text: $0.match.text)
+                }
+                // What the build skipped can only be answered textually, and is kept apart from
+                // the matches so the two are never read as one number.
+                if let data = FileManager.default.contents(atPath: source) {
+                    inactive += InactiveRegionScan
+                        .occurrences(anchors: engine.anchors, source: data, ranges: outcome.skippedRanges)
+                        .map { StructuralHit(file: relative(source, root), line: $0.line, column: $0.column, text: $0.text) }
                 }
             } catch {
                 unscanned.append(UnscannedFile(file: relative(source, root), reason: reason(of: error)))
             }
         }
-        return Outcome(hits: hits, unscanned: unscanned, scannedCount: scanned, targets: targets)
+        return Outcome(hits: hits, unscanned: unscanned, scannedCount: scanned, targets: targets, inactive: inactive)
     }
 
     /// Headers, listed separately: they carry no compile command of their own, so the search

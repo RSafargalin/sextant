@@ -51,6 +51,9 @@ public final class ClangLibrary: @unchecked Sendable {
     let spellingLocation: sx_getSpellingLocation
     let cString: sx_getCString
     let disposeString: sx_disposeString
+    let file: sx_getFile
+    let skippedRanges: sx_getSkippedRanges
+    let disposeSourceRangeList: sx_disposeSourceRangeList
 
     private init(path: String, handle: UnsafeMutableRawPointer) throws {
         func symbol<T>(_ name: String, _ type: T.Type) throws -> T {
@@ -82,6 +85,9 @@ public final class ClangLibrary: @unchecked Sendable {
         spellingLocation = try symbol("clang_getSpellingLocation", sx_getSpellingLocation.self)
         cString = try symbol("clang_getCString", sx_getCString.self)
         disposeString = try symbol("clang_disposeString", sx_disposeString.self)
+        file = try symbol("clang_getFile", sx_getFile.self)
+        skippedRanges = try symbol("clang_getSkippedRanges", sx_getSkippedRanges.self)
+        disposeSourceRangeList = try symbol("clang_disposeSourceRangeList", sx_disposeSourceRangeList.self)
     }
 
     /// A Swift string from a CXString, whose buffer belongs to libclang and is released here.
