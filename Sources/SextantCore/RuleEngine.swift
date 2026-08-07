@@ -35,6 +35,9 @@ public enum RuleEngine {
     public struct Outcome: Sendable {
         public let violations: [RuleViolation]
         public let unscanned: [UnscannedFile]
+        /// Possible violations in `#if` branches the build does not contain — textual, unverified.
+        public let inactive: [StructuralHit]
+        public let targets: Set<String>
     }
 
     /// Runs the rules over a project: Swift through its own parser, then Objective-C, C and C++
@@ -44,7 +47,8 @@ public enum RuleEngine {
                            cache: SourceParseCache = SourceParseCache()) -> Outcome {
         let violations = run(rules: rules, projectRoot: lintRoot, includeTests: includeTests, cache: cache)
         let cFamily = CFamilyLint.run(rules: rules, lintRoot: lintRoot, projectRoot: projectRoot, includeTests: includeTests)
-        return Outcome(violations: violations + cFamily.violations, unscanned: cFamily.unscanned)
+        return Outcome(violations: violations + cFamily.violations, unscanned: cFamily.unscanned,
+                       inactive: cFamily.inactive, targets: cFamily.targets)
     }
 
     /// Runs the rules over every Swift file in the project. A file is parsed once for all patterns.

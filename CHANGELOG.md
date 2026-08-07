@@ -43,7 +43,13 @@ Human-readable text output is not covered — parse `--json`, not prose.
   to change that API to break another platform; merging them would pass a textual guess off as a
   verified match. So both are given, labelled and separate: `15 matches` plus `⚠ 13 more textual
   occurrence(s) inside #if branches not built for x86_64-apple-macosx10.13 — found by text, NOT
-  structurally verified`. `--json` carries them in `inactiveOccurrences`.
+  structurally verified`. `--json` carries them in `inactiveOccurrences`. `lint` does the same,
+  reporting a rule that matches textually there as a possible violation.
+
+  Swift is not affected and stays broader than the build: SwiftSyntax does not evaluate `#if`, so
+  a Swift search covers every branch, including `#if false`. The asymmetry is deliberate — clang
+  cannot build a tree without running the preprocessor, and an extra hit sits in plain sight next
+  to its `#if` while a silent omission does not.
 - A compile database: `index` records the exact flags each Objective-C, C and C++ file was built
   with, and `doctor` reports whether every such source is covered. This is the groundwork for
   reading those files structurally ([ADR-0004](docs/adr/0004-structural-layer-for-c-family.md)):

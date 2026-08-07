@@ -318,7 +318,9 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
         let outcome = RuleEngine.run(rules: rules, projectRoot: context.projectRoot, lintRoot: context.project,
                                      includeTests: false)
         let violations = outcome.violations
-        let unscanned = StructuralCoverage.report(outcome.unscanned)
+        let unscanned = StructuralCoverage.inactiveReport(outcome.inactive, targets: outcome.targets,
+                                                          noun: "possible violation(s)")
+            + StructuralCoverage.report(outcome.unscanned)
         guard !violations.isEmpty else {
             return ((["✅ no violations found (\(rules.count) rules)"] + unscanned).joined(separator: "\n"), false)
         }
