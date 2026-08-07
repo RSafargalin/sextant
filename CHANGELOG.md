@@ -58,7 +58,12 @@ Human-readable text output is not covered — parse `--json`, not prose.
   than answered for. They are read from the build graph SwiftPM writes (`.build/<configuration>.yaml`),
   where each clang node carries its arguments as a JSON array, rather than scraped from build
   output: an incremental build that compiles nothing prints nothing, while the graph still
-  describes every file. An Xcode build writes no such graph and says so.
+  describes every file. Xcode writes no such graph — its own manifest lists compile nodes without
+  their arguments — so there the flags are read from the build log, where the full clang
+  invocation is printed, shell-escaped and behind a response file. Because an incremental build
+  compiles nothing and therefore prints nothing, a capture merges into what was already known
+  rather than replacing it: a project built one scheme at a time would otherwise keep losing the
+  flags of everything else.
 - Objective-C, C and C++ across the semantic commands. The index store is written by the whole
   clang family, so this needed symbol resolution to be fixed rather than a parser to be added:
   selectors (`greetWithName:`) are now matched, and a symbol declared in a header now resolves
