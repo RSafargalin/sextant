@@ -26,7 +26,7 @@ sextant (Swift package: CLI + MCP server)
   L2 structural — a grep replacement, structural search (ast-grep)
   L3 semantic   — defs/refs/callers/callees/public-API  (IndexStoreDB + sourcekit-lsp)
   L4 MCP        — tools + resources for Claude Code     (stdio, .mcp.json)
-  L5 (later)    — freshness automation, multi-language
+  L5 (done)     — multi-language (ADR-0004); freshness is a side effect of a build
 ```
 
 ## Iterations
@@ -226,9 +226,25 @@ strategic layer.** The dependencies are explicit: memory (Iter 8) rests on conte
 (Iter 5) and Resources (Iter 7). The numbers in brackets are items from the consolidated backlog
 (48 entries).
 
-**Status 2026-07-22:** Iter 4–5 are shipped, Iter 6–7 partially (see the notes below); what is
+**Status 2026-08-07:** Iter 4–5 are shipped, Iter 6–7 partially (see the notes below); what is
 left of Iter 6–7, and the order of everything after it, are sprints P1–P5 in **ADR-0003**;
 Iter 8–10 come after those.
+
+Two items have since moved out of Iter 10, because they were built rather than deferred:
+
+- **Multi-language (#36) is done** — [ADR-0004](adr/0004-structural-layer-for-c-family.md) closed
+  with all four gates. `search`, `lint`, `changed`, `api` and `construct` read Objective-C, C and
+  C++ through clang, on the flags captured from the build (SwiftPM's build graph, or the
+  `xcodebuild` log for an Xcode project). Verified on SDWebImage from both build systems: the same
+  15 structural matches plus 13 textual ones inside `#if` branches the build does not contain.
+- **The adoption metric (#41) is done** — as its own `adoption` command plus a `hook`, not inside
+  `bench`. What remains is not code but elapsed time: the number is worth reading only after real
+  sessions with the MCP server registered.
+
+What that leaves open, in order: the second half of the P3 gate (`brew install` on a machine with
+no Xcode toolchain), tuning the tool descriptions (#39) and hinting away from grep (#40) — both
+waiting on adoption data — and the two daemon questions in ADR-0003 (`serve` and MCP are separate
+processes; the AST caches are per-invocation).
 
 ### Iter 4 — Measurability and trust. The foundation. ✅ SHIPPED (v0.6.0)
 You cannot optimise what you do not measure, and you cannot call a tool "better" while it is
@@ -328,9 +344,10 @@ separates it from dangerous generic memory.
 ### Iter 10 — The strategic layer (by appetite). A change of league.
 - **A context compiler / retrieval inversion** — input = a task, output = a minimal context pack
   (#16).
-- **Multi-language** — semantics for Swift/ObjC/C/C++ already work through the index; the
-  structural layer for the C family goes through libclang, not tree-sitter (#36, see
-  `docs/adr/0004-structural-layer-for-c-family.md`).
+- ~~**Multi-language** (#36)~~ — **done, 2026-08-07.** Semantics came through the index; the
+  structural layer went through libclang rather than tree-sitter, and the reasoning, the
+  measurements that overturned three of its own assumptions, and the four gates are in
+  [ADR-0004](adr/0004-structural-layer-for-c-family.md).
 - **Graph-RAG intent search** — embeddings grounded on the graph (the model is our own Anthropic
   API, NOT sampling) (#18).
 - **A verification service** for claims (#19); **refactoring as a service** (#20).
@@ -355,8 +372,8 @@ Each of these must be answerable without a text grep:
 Cut deliberately at the start (the most risk for the least value), but scheduled for later:
 - **vector search** → graph-RAG in Iter 10 (grounded on the graph, not naive chunks).
 - **non-Swift semantics** → **done**: it works through the same index store, and no separate
-  layer was needed. What stays open is the structural layer — on libclang, not tree-sitter
-  (ADR-0004).
+  layer was needed. The structural layer for those languages is **done too** (2026-08-07), on
+  libclang rather than tree-sitter — see [ADR-0004](adr/0004-structural-layer-for-c-family.md).
 - **automatic freshness** → the build hook in Iter 9 (this is NOT a real-time file watcher —
   the update is a side effect of an ordinary build).
 
