@@ -228,7 +228,7 @@ func runChanged(arguments: [String]) -> Int32 {
         }
         struct Report: Encodable {
             let files: [FileChanges]
-            let notDiffed: [String]
+            let notDiffed: [UnscannedFile]
         }
         printJSON(Report(
             files: changes.files.map { change in
@@ -256,13 +256,12 @@ func runChanged(arguments: [String]) -> Int32 {
     return 0
 }
 
-/// Names the changed files the diff could not read, so an answer covering only Swift is never
-/// mistaken for an answer covering the whole change.
-private func printNotDiffed(_ files: [String]) {
+/// Names the changed files the diff could not read, so a partial answer is never mistaken for
+/// an answer covering the whole change.
+private func printNotDiffed(_ files: [UnscannedFile]) {
     guard !files.isEmpty else { return }
-    print("\n⚠ Not compared (\(files.count)) — the symbol-level diff covers Swift only; C, C++ and Objective-C need the structural layer:")
-    for file in files.prefix(10) { print("     \(file)") }
-    if files.count > 10 { print("     … and \(files.count - 10) more") }
+    print("")
+    StructuralCoverage.report(files).forEach { print($0) }
     print("  Use `git diff` for these.")
 }
 

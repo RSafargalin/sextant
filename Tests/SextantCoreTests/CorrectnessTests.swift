@@ -566,10 +566,12 @@ struct ChangedSwiftFilesTests {
         #expect(files.clang == ["Bar.m", "thing.c"])
 
         // Before the fix this reported "no symbol-level changes" and nothing else — a confident
-        // wrong answer about a commit that added two declarations.
+        // wrong answer about a commit that added two declarations. These files were never built,
+        // so there are no flags to parse them with; they are named, with what to do about it.
         let changes = try #require(DeclarationDiff.changes(root: repo.path, from: "HEAD", to: nil))
         #expect(changes.files.isEmpty)
-        #expect(changes.notDiffed == ["Bar.m", "thing.c"])
+        #expect(changes.notDiffed.map { $0.file } == ["Bar.m", "thing.c"])
+        #expect(changes.notDiffed.allSatisfy { $0.reason.contains("sextant index") })
     }
 }
 
