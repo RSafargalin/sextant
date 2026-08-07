@@ -98,6 +98,64 @@ public enum CompilationDatabase {
         return order.compactMap { byFile[$0] }
     }
 
+    // MARK: - Reading an Xcode build log
+
+    /// Compile commands from the output of `xcodebuild`.
+    ///
+    /// Xcode has no equivalent of SwiftPM's build graph: its own manifest lists compile nodes
+    /// without their arguments. What it does print, per file, is the block
+    ///
+    ///     CompileC <output.o> <source.m> normal <arch> <language> <compiler>
+    ///         cd <directory>
+    ///         <the full clang invocation>
+    ///
+    /// escaped for a shell and with most flags behind an `@response-file`. That is the only place
+    /// the real flags appear, so this reads them there rather than reconstructing a command line
+    /// from build settings — a reconstruction would be a guess, and a guess is what this whole
+    /// layer refuses to parse with.
+    ///
+    /// The format is Xcode's, not a contract. Anything that does not parse is skipped rather than
+    /// half-read, and the caller sees the count it did get.
+    public static func commands(inXcodeLog log: String) -> [CompileCommand] {
+        var results: [CompileCommand] = []
+        var pending: (file: String, directory: String)?
+
+        func flush(with invocation: String) {
+            guard let pending else { return }
+            let arguments = ShellWords.expandingResponseFiles(ShellWords.split(invocation))
+            guard arguments.count > 1 else { return }
+            results.append(CompileCommand(directory: pending.directory, file: pending.file, arguments: arguments))
+        }
+
+        for rawLine in log.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = String(rawLine)
+            if line.hasPrefix("CompileC ") {
+                let words = ShellWords.split(String(line.dropFirst("CompileC ".count)))
+                // <output> <source>: the source is what the command is about.
+                if words.count >= 2, compilableExtensions.contains((words[1] as NSString).pathExtension) {
+                    pending = (file: words[1], directory: (words[1] as NSString).deletingLastPathComponent)
+                } else {
+                    pending = nil
+                }
+                continue
+            }
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if pending != nil, trimmed.hasPrefix("cd ") {
+                let directory = ShellWords.split(String(trimmed.dropFirst(3))).first
+                if let directory, let file = pending?.file { pending = (file: file, directory: directory) }
+                continue
+            }
+            // The invocation itself: an absolute path to a compiler, with arguments after it.
+            if pending != nil, trimmed.hasPrefix("/"), trimmed.contains(" "),
+               let executable = ShellWords.split(trimmed).first,
+               (executable as NSString).lastPathComponent.hasPrefix("clang") {
+                flush(with: trimmed)
+                pending = nil
+            }
+        }
+        return results
+    }
+
     // MARK: - Storage
 
     /// The database for a project, kept in the cache directory rather than in the project.
@@ -124,6 +182,20 @@ public enum CompilationDatabase {
         guard let data = try? Data(contentsOf: path(forRoot: root)),
               let commands = try? JSONDecoder().decode([CompileCommand].self, from: data) else { return [] }
         return commands
+    }
+
+    /// Merges a fresh capture into what is already known.
+    ///
+    /// One build covers one scheme and one destination, so a project built in parts would keep
+    /// losing the flags of everything outside the last build. Entries for files that no longer
+    /// exist are dropped, so the database does not accumulate deleted ones.
+    public static func merge(existing: [CompileCommand], fresh: [CompileCommand]) -> [CompileCommand] {
+        var byFile: [String: CompileCommand] = [:]
+        for command in existing where FileManager.default.fileExists(atPath: command.file) {
+            byFile[command.file] = command
+        }
+        for command in fresh { byFile[command.file] = command }
+        return byFile.values.sorted { $0.file < $1.file }
     }
 
     // MARK: - Coverage

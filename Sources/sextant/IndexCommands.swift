@@ -35,22 +35,30 @@ func indexIsStale(paths: [String], root: String) -> Bool {
 /// capture never replaces a database that already has entries — silently losing the flags would
 /// turn later structural queries into refusals with no explanation.
 func captureCompileDatabase(root: String, stores: [String]) {
+    saveCompileDatabase(CompilationDatabase.capture(fromStores: stores), forRoot: root,
+                        emptyReason: "no clang commands in the build graph")
+}
+
+/// Stores a fresh capture, merged with what was already known. Nothing is lost when a project is
+/// built in parts (one scheme, one destination at a time), and an empty capture never wipes a
+/// database — that would turn every later structural query into an unexplained refusal.
+func saveCompileDatabase(_ captured: [CompileCommand], forRoot root: String, emptyReason: String) {
     let sources = CompilationDatabase.compilableSources(projectRoot: root, includeTests: true)
     guard !sources.isEmpty else { return }
 
-    let captured = CompilationDatabase.capture(fromStores: stores)
     guard !captured.isEmpty else {
-        reportError("⚠ compile database: no clang commands in the build graph — \(sources.count) Objective-C/C/C++ file(s) will not be readable structurally.")
+        reportError("⚠ compile database: \(emptyReason) — \(sources.count) Objective-C/C/C++ file(s) will not be readable structurally.")
         return
     }
+    let merged = CompilationDatabase.merge(existing: CompilationDatabase.load(forRoot: root), fresh: captured)
     do {
-        try CompilationDatabase.save(captured, forRoot: root)
+        try CompilationDatabase.save(merged, forRoot: root)
     } catch {
         reportError("⚠ compile database: could not be written (\(error)) — the C family will not be readable structurally.")
         return
     }
-    let missing = CompilationDatabase.missingSources(captured, among: sources)
-    print("compile database: \(captured.count) file(s)" + (missing.isEmpty ? "" : ", \(missing.count) without flags"))
+    let missing = CompilationDatabase.missingSources(merged, among: sources)
+    print("compile database: \(merged.count) file(s)" + (missing.isEmpty ? "" : ", \(missing.count) without flags"))
 }
 
 // MARK: - doctor (setup self-check)
@@ -157,23 +165,29 @@ func runXcodeIndex(root: URL, arguments: [String]) -> Int32 {
 
     reportError("ℹ sextant index --app will run xcodebuild (a build) — trusted code only.")
     print("▶ xcodebuild build -scheme \(scheme) -destination '\(destination)' (COMPILER_INDEX_STORE_ENABLE=YES)")
+    // The log goes to a file, not the terminal: the compile flags appear only in full output,
+    // which is thousands of lines, and that output is the only place Xcode states them.
+    let logFile = IndexBuild.umbrellaDirectory(forRoot: root.path).appendingPathComponent("xcodebuild.log")
+    try? FileManager.default.createDirectory(at: logFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+    print("   build log: \(logFile.path)")
     let buildArgs = ["xcodebuild", "build", "-scheme", scheme, "-destination", destination,
-                     "COMPILER_INDEX_STORE_ENABLE=YES", "CODE_SIGNING_ALLOWED=NO", "-quiet"] + containerFlag
-    let status = Command.status("/usr/bin/env", buildArgs, in: root)
+                     "COMPILER_INDEX_STORE_ENABLE=YES", "CODE_SIGNING_ALLOWED=NO"] + containerFlag
+    let status = Command.status("/usr/bin/env", buildArgs, in: root, loggingTo: logFile)
     guard status == 0 else {
         reportError("sextant index --app: xcodebuild failed (code \(status)). Check --scheme and --destination.")
+        if let log = try? String(contentsOf: logFile, encoding: .utf8) {
+            log.split(separator: "\n").suffix(15).forEach { reportError("   \($0)") }
+        }
         return 1
     }
     let derivedData = "\(FileManager.default.homeDirectoryForCurrentUser.path)/Library/Developer/Xcode/DerivedData"
     if let store = DerivedDataLocator.dataStore(forProjectRoot: root.path, derivedData: derivedData) {
         print("\nindex ready (app, DerivedData): \(store)")
-        // Semantics come from the store either way; only the structural layer needs the flags, and
-        // an Xcode build does not write the graph SwiftPM does. Said out loud, because a later
-        // refusal on those files must not look like a defect.
-        let sources = CompilationDatabase.compilableSources(projectRoot: root.path, includeTests: true)
-        if !sources.isEmpty {
-            reportError("⚠ compile database: an Xcode build is not captured yet — \(sources.count) Objective-C/C/C++ file(s) stay outside the structural layer.")
-        }
+        // Xcode writes no build graph with arguments in it, so the flags are read from the log
+        // the build just produced — the one place they are stated in full.
+        let log = (try? String(contentsOf: logFile, encoding: .utf8)) ?? ""
+        saveCompileDatabase(CompilationDatabase.commands(inXcodeLog: log), forRoot: root.path,
+                            emptyReason: "no compile commands in the xcodebuild log (an incremental build compiles nothing — try `xcodebuild clean` first)")
         return 0
     }
     print("\nbuild succeeded, but no DerivedData index was found (check WorkspacePath).")

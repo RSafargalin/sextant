@@ -109,7 +109,7 @@ Working CLI and MCP server, version 0.7.x. 23 commands:
 | `init` | set up a project: `.sextant.json`, registration in `.mcp.json`, and a check | integration |
 | `serve` | daemon with a warm index: cold CLI start 2.6s → 0.27s (measured on sextant itself) | integration |
 | `doctor` | self-check of the setup (sources, libIndexStore, index store, freshness) | diagnostics |
-| `index` | build an index store: SPM (`swift build`) or an app target (`--app`, xcodebuild) | build |
+| `index` | build an index store and capture the C-family compile flags: SPM (`swift build`) or an app target (`--app`, xcodebuild) | build |
 
 Shared flags, each on the commands it makes sense for: `--project <path>` (every command),
 `--json` (structured output, on every command that answers a query), `--reindex` (rebuild the

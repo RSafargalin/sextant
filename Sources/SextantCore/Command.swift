@@ -50,6 +50,28 @@ public enum Command {
         return process.terminationStatus
     }
 
+    /// Runs a command with its output going to a file instead of the terminal, and returns the
+    /// exit code. Used for a build whose log is the point: `xcodebuild` prints the compile flags
+    /// only in full (non-quiet) output, which is far too much to put in front of a reader.
+    @discardableResult
+    public static func status(_ launchPath: String, _ arguments: [String], in directory: URL? = nil,
+                              loggingTo logFile: URL) -> Int32 {
+        FileManager.default.createFile(atPath: logFile.path, contents: nil)
+        guard let handle = try? FileHandle(forWritingTo: logFile) else {
+            return status(launchPath, arguments, in: directory)
+        }
+        defer { try? handle.close() }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: launchPath)
+        process.arguments = arguments
+        process.currentDirectoryURL = directory
+        process.standardOutput = handle
+        process.standardError = handle
+        do { try process.run() } catch { return -1 }
+        process.waitUntilExit()
+        return process.terminationStatus
+    }
+
     /// Runs git in a directory, checking the exit code.
     public static func git(_ arguments: [String], in directory: String) -> String? {
         successOutput("/usr/bin/env", ["git", "-C", directory] + arguments)
