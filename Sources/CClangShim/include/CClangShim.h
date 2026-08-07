@@ -67,6 +67,9 @@ typedef SXSourceRange (*sx_getCursorExtent)(SXCursor);
 typedef SXSourceLocation (*sx_getRangeStart)(SXSourceRange);
 typedef SXSourceLocation (*sx_getRangeEnd)(SXSourceRange);
 typedef int (*sx_Location_isFromMainFile)(SXSourceLocation);
+/// C++ access of a member: 0 invalid, 1 public, 2 protected, 3 private.
+typedef int (*sx_getCXXAccessSpecifier)(SXCursor);
+typedef SXString (*sx_getFileName)(SXFile);
 typedef void (*sx_getSpellingLocation)(SXSourceLocation, SXFile *file, unsigned *line, unsigned *column, unsigned *offset);
 
 // MARK: - Strings

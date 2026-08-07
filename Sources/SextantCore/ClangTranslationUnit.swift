@@ -9,12 +9,18 @@ public struct ClangNode: Sendable {
     public let kind: Int32
     public let kindName: String
     public let spelling: String
+    /// The file the node is in — the main file, or a header the caller asked to keep.
+    public let file: String
     public let line: Int
     public let column: Int
     /// Byte range of the node in the file, for showing what matched.
     public let startOffset: Int
     public let endOffset: Int
+    /// C++ access of a member: 1 public, 2 protected, 3 private; 0 where it does not apply.
+    public let access: Int32
     public let children: [ClangNode]
+
+    public var isPublic: Bool { access == 0 || access == 1 }
 }
 
 /// A parsed C-family file.
@@ -59,8 +65,14 @@ public struct ClangTranslationUnit {
     /// flags and its module context all still apply. That is how a search pattern is compiled in
     /// the context of the file being searched, which is the only place the file's own selectors
     /// are known.
+    ///
+    /// `keepingHeaders` names files whose declarations are kept alongside the main file's. By
+    /// default a header's cursors are dropped — they belong to the header, and every file
+    /// including it would report them again — but a caller asking about a header itself needs
+    /// exactly those, and only a translation unit that includes it can supply them.
     public static func parse(file: String, arguments: [String], library: ClangLibrary,
-                             overlay: String? = nil) throws -> ClangTranslationUnit {
+                             overlay: String? = nil,
+                             keepingHeaders: Set<String> = []) throws -> ClangTranslationUnit {
         let index = library.createIndex(1, 0)   // no declarations from PCH, no diagnostics on stderr
         defer { library.disposeIndex(index) }
 
@@ -99,15 +111,38 @@ public struct ClangTranslationUnit {
             library.disposeDiagnostic(diagnostic)
         }
 
-        let root = node(of: library.translationUnitCursor(unit), library: library, includeChildrenOutsideMainFile: false)
+        let names = FileNames(library: library)
+        let root = node(of: library.translationUnitCursor(unit), library: library,
+                        keepingHeaders: keepingHeaders, names: names, insideKeptFile: false)
         return ClangTranslationUnit(root: root, errors: errors)
     }
 
     // MARK: - Copying the tree out
 
-    private static func node(of cursor: SXCursor, library: ClangLibrary, includeChildrenOutsideMainFile: Bool) -> ClangNode {
+    /// File names by `CXFile`, so a name is asked of libclang once per file rather than once per
+    /// cursor: a translation unit has thousands of cursors and a handful of files.
+    private final class FileNames {
+        private let library: ClangLibrary
+        private var names: [UInt: String] = [:]
+
+        init(library: ClangLibrary) { self.library = library }
+
+        func name(of file: SXFile?) -> String {
+            guard let file else { return "" }
+            let key = UInt(bitPattern: Int(bitPattern: file))
+            if let cached = names[key] { return cached }
+            let name = library.text(library.fileName(file))
+            names[key] = name
+            return name
+        }
+    }
+
+    private static func node(of cursor: SXCursor, library: ClangLibrary, keepingHeaders: Set<String>,
+                             names: FileNames, insideKeptFile: Bool) -> ClangNode {
         var line: UInt32 = 0, column: UInt32 = 0, offset: UInt32 = 0
-        library.spellingLocation(library.cursorLocation(cursor), nil, &line, &column, &offset)
+        var cursorFile: SXFile?
+        library.spellingLocation(library.cursorLocation(cursor), &cursorFile, &line, &column, &offset)
+        let filePath = names.name(of: cursorFile)
 
         let extent = library.cursorExtent(cursor)
         var startOffset: UInt32 = 0, endOffset: UInt32 = 0
@@ -115,18 +150,30 @@ public struct ClangTranslationUnit {
         library.spellingLocation(library.rangeStart(extent), nil, &startLine, &startColumn, &startOffset)
         library.spellingLocation(library.rangeEnd(extent), nil, &endLine, &endColumn, &endOffset)
 
-        let childCursors = children(of: cursor, library: library)
-            .filter { includeChildrenOutsideMainFile || library.isFromMainFile(library.cursorLocation($0)) != 0 }
+        // Below a node that is already kept, everything belongs to it. At the top level, a cursor
+        // is kept when it is the file's own or comes from a header the caller asked for.
+        let childCursors = children(of: cursor, library: library).filter { child in
+            guard !insideKeptFile else { return true }
+            if library.isFromMainFile(library.cursorLocation(child)) != 0 { return true }
+            guard !keepingHeaders.isEmpty else { return false }
+            var childFile: SXFile?
+            library.spellingLocation(library.cursorLocation(child), &childFile, nil, nil, nil)
+            return keepingHeaders.contains(names.name(of: childFile))
+        }
 
         return ClangNode(
             kind: cursor.kind,
             kindName: library.text(library.cursorKindSpelling(cursor.kind)),
             spelling: library.text(library.cursorSpelling(cursor)),
+            file: filePath,
             line: Int(line),
             column: Int(column),
             startOffset: Int(startOffset),
             endOffset: Int(endOffset),
-            children: childCursors.map { node(of: $0, library: library, includeChildrenOutsideMainFile: true) }
+            access: library.accessSpecifier(cursor),
+            children: childCursors.map {
+                node(of: $0, library: library, keepingHeaders: keepingHeaders, names: names, insideKeptFile: true)
+            }
         )
     }
 

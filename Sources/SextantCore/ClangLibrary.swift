@@ -46,6 +46,8 @@ public final class ClangLibrary: @unchecked Sendable {
     let rangeStart: sx_getRangeStart
     let rangeEnd: sx_getRangeEnd
     let isFromMainFile: sx_Location_isFromMainFile
+    let accessSpecifier: sx_getCXXAccessSpecifier
+    let fileName: sx_getFileName
     let spellingLocation: sx_getSpellingLocation
     let cString: sx_getCString
     let disposeString: sx_disposeString
@@ -75,6 +77,8 @@ public final class ClangLibrary: @unchecked Sendable {
         rangeStart = try symbol("clang_getRangeStart", sx_getRangeStart.self)
         rangeEnd = try symbol("clang_getRangeEnd", sx_getRangeEnd.self)
         isFromMainFile = try symbol("clang_Location_isFromMainFile", sx_Location_isFromMainFile.self)
+        accessSpecifier = try symbol("clang_getCXXAccessSpecifier", sx_getCXXAccessSpecifier.self)
+        fileName = try symbol("clang_getFileName", sx_getFileName.self)
         spellingLocation = try symbol("clang_getSpellingLocation", sx_getSpellingLocation.self)
         cString = try symbol("clang_getCString", sx_getCString.self)
         disposeString = try symbol("clang_disposeString", sx_disposeString.self)

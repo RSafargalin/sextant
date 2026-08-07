@@ -52,4 +52,55 @@ struct RuleEngineTests {
         let violations = RuleEngine.run(rules: RuleEngine.builtinRules, projectRoot: directory.path, includeTests: false)
         #expect(violations.contains { $0.ruleID == "system-state" })
     }
+
+    // MARK: - The C family
+
+    private static var fixture: URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Fixtures/IndexFixture")
+    }
+
+    private static var isReady: Bool {
+        FileManager.default.fileExists(atPath: fixture.appendingPathComponent(".build").path)
+            && ClangLibrary.discoverPath() != nil
+    }
+
+    @Test("An Objective-C rule is checked, and files no rule could cover are named",
+          .enabled(if: isReady, "the fixture has not been built, or there is no toolchain"))
+    func lintsObjectiveC() throws {
+        let rules = [
+            Rule(id: "objc-feed", message: "Direct ocFeed call", patterns: ["[$X ocFeed]"]),
+            Rule(id: "force-try", message: "Forced try!", patterns: ["try! $X"])
+        ]
+        let outcome = RuleEngine.run(rules: rules, projectRoot: Self.fixture.path,
+                                     lintRoot: Self.fixture.path, includeTests: false)
+
+        let feed = outcome.violations.filter { $0.ruleID == "objc-feed" }
+        #expect(feed.count == 2)
+        #expect(feed.allSatisfy { $0.file == "Sources/ObjCFixture/ObjCFixture.m" })
+        #expect(feed.allSatisfy { $0.text == "[self ocFeed]" })
+
+        // Neither rule is valid C or C++, so those files were not checked at all — and a lint
+        // report that stayed silent about them would be a clean bill of health for unread code.
+        let unscanned = Set(outcome.unscanned.map { $0.file })
+        #expect(unscanned.contains("Sources/CFixture/CFixture.c"))
+        #expect(unscanned.contains("Sources/CxxFixture/CxxFixture.cpp"))
+        #expect(!unscanned.contains("Sources/ObjCFixture/ObjCFixture.m"))
+    }
+
+    @Test("A rule that does compile keeps its file scanned, whatever the other rules do",
+          .enabled(if: isReady, "the fixture has not been built, or there is no toolchain"))
+    func oneCompilableRuleIsEnough() throws {
+        let rules = [
+            Rule(id: "swift-only", message: "Forced try!", patterns: ["try! $X"]),
+            Rule(id: "c-double", message: "Doubling by hand", patterns: ["$X * 2"])
+        ]
+        let outcome = RuleEngine.run(rules: rules, projectRoot: Self.fixture.path,
+                                     lintRoot: Self.fixture.path, includeTests: false)
+
+        #expect(outcome.violations.contains { $0.ruleID == "c-double" && $0.file.hasSuffix("CFixture.c") })
+        #expect(!outcome.unscanned.contains { $0.file.hasSuffix("CFixture.c") })
+    }
 }

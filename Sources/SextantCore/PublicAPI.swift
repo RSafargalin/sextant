@@ -8,12 +8,15 @@ public enum PublicAPI {
     /// declarations with that name across different files.
     /// Public surface. `index`, when given, adds the non-Swift targets: their public headers,
     /// read from the compiler index. Without it the result is exactly what it was before.
+    /// `compileDatabaseRoot` is where the C++ compile flags are looked up; it differs from
+    /// `projectRoot` when `--scope` narrows the surface to a subdirectory.
     public static func summaries(
         projectRoot: String,
         package: String?,
         type: String? = nil,
         cache: SourceParseCache = SourceParseCache(),
-        index: FileSymbolIndex? = nil
+        index: FileSymbolIndex? = nil,
+        compileDatabaseRoot: String? = nil
     ) -> [FileSummary] {
         let root = URL(fileURLWithPath: projectRoot, isDirectory: true)
         let store = DeclarationCache.makeStore()
@@ -31,7 +34,11 @@ public enum PublicAPI {
                 return FileSummary(relativePath: relative, package: packageName, declarations: declarations)
             }
 
-        var headers = IndexDeclarations.publicHeaderSummaries(root: root, index: index, package: package).summaries
+        let fromIndex = IndexDeclarations.publicHeaderSummaries(root: root, index: index, package: package)
+        var headers = fromIndex.summaries
+        // C++ headers carry no access level in the index, so they are read through clang instead.
+        headers += IndexDeclarations.cxxHeaderSummaries(fromIndex.cxxHeaders, root: root,
+                                                        compileDatabaseRoot: compileDatabaseRoot ?? projectRoot).summaries
         if let type {
             headers = headers.compactMap { summary in
                 let kept = summary.declarations.filter { $0.name == type }
@@ -46,9 +53,11 @@ public enum PublicAPI {
         package: String?,
         type: String? = nil,
         cache: SourceParseCache = SourceParseCache(),
-        index: FileSymbolIndex? = nil
+        index: FileSymbolIndex? = nil,
+        compileDatabaseRoot: String? = nil
     ) -> String {
-        render(summaries(projectRoot: projectRoot, package: package, type: type, cache: cache, index: index))
+        render(summaries(projectRoot: projectRoot, package: package, type: type, cache: cache,
+                         index: index, compileDatabaseRoot: compileDatabaseRoot))
     }
 
     static func render(_ summaries: [FileSummary]) -> String {

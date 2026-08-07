@@ -15,6 +15,16 @@ Human-readable text output is not covered — parse `--json`, not prose.
 
 ### Added
 
+- `lint` runs its rules over Objective-C, C and C++ as well, reading each file once for all of
+  them. A rule written for another language simply does not compile there, which is not a gap; a
+  file where **no** rule could run is reported, because nothing about it was checked.
+- `api` reports the public surface of C++ headers. They used to come from the index, which lists a
+  header's free functions and drops every class — a surface that looks complete and is not,
+  because the index carries no access level. A header with any C++ in it is now read through
+  clang, private and protected members excluded, using the flags of a translation unit that
+  includes it; a header no compiled source includes is named rather than shown as empty. The MCP
+  `api` tool answers the same as the CLI, which it did not before: it was never given the index,
+  so through MCP the surface was Swift-only.
 - `search` reads Objective-C, C and C++ through clang, so a structural pattern is no longer a
   Swift-only question: `sextant search '[$X reloadData]'` finds message sends the way
   `try? $X.save()` finds Swift calls. The pattern is compiled inside each file, appended to it in
@@ -35,9 +45,9 @@ Human-readable text output is not covered — parse `--json`, not prose.
   clang family, so this needed symbol resolution to be fixed rather than a parser to be added:
   selectors (`greetWithName:`) are now matched, and a symbol declared in a header now resolves
   to its definition in the implementation file.
-- `map` and `api` cover the same languages, reading non-Swift declarations from the index. `api`
-  refuses C++-only headers and reports how many it skipped: the index carries no access level,
-  so listing them would present private members as public API.
+- `map` and `api` cover the same languages, reading Objective-C and C declarations from the
+  index; C++ headers go through clang instead (see above), because the index carries no access
+  level.
 - `body` extracts C, C++ and Objective-C declarations. It previously answered for Swift only,
   and a C++ struct that happened to parse as Swift came back missing its trailing `;`.
 - A four-language fixture (Swift, Objective-C, C, C++) with an Objective-C protocol and its
@@ -70,6 +80,11 @@ Human-readable text output is not covered — parse `--json`, not prose.
 
 ### Fixed
 
+- `construct` looked for the Swift shape `Type(` in every language, so on an Objective-C project
+  it found nothing at all — which reads as "nothing constructs this type" rather than "this
+  command cannot see it". Objective-C creates objects by sending `alloc` or `new` to the class,
+  and that is what is looked for there now. A substring match also counted `makeStore(` as
+  constructing `Store`; a shape now has to start at a word boundary.
 - Index store selection used the store directory's own modification date, which does not change
   when units are rewritten inside it. A stale store could win over a fresh one and the semantic
   commands would answer from it — silently, and wrongly. All three selection sites now use the

@@ -27,8 +27,8 @@ public enum MCPTools {
                 "properties": ["pattern": ["type": "string", "description": "Structural pattern: an expression or statement using $X ($$$ is Swift only). Written in the language of the files being searched."]],
                 "required": ["pattern"]
             ]],
-            ["name": "lint", "description": "Structural code-hygiene rules (the set from .sextant.json, otherwise the built-in one). Swift only: the answer lists the Objective-C, C and C++ files the rules never ran on.", "inputSchema": ["type": "object", "properties": [String: Any]()]],
-            ["name": "api", "description": "Public surface of a package or type — signatures plus doc summaries, without reading files. An order of magnitude cheaper than reading the sources. Narrow it with package, type, or scope.", "inputSchema": [
+            ["name": "lint", "description": "Structural code-hygiene rules (the set from .sextant.json, otherwise the built-in one). Covers Swift plus Objective-C, C and C++; a file where no rule could be checked is listed with the reason, so a clean report never covers unread code.", "inputSchema": ["type": "object", "properties": [String: Any]()]],
+            ["name": "api", "description": "Public surface of a package or type — signatures plus doc summaries, without reading files. An order of magnitude cheaper than reading the sources. Covers Swift, Objective-C, C and C++ (C++ headers need the flags from `sextant index`). Narrow it with package, type, or scope.", "inputSchema": [
                 "type": "object",
                 "properties": [
                     "package": ["type": "string", "description": "Package name (for example MyLibrary) — its entire public surface."],
