@@ -13,6 +13,15 @@ Human-readable text output is not covered — parse `--json`, not prose.
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-08-07
+
+The C family stops being a blind spot. `search`, `lint`, `changed`, `api` and `construct` now
+read Objective-C, C and C++ as well as Swift — through clang, with the exact flags each file was
+built with, captured from the build. Where an answer cannot cover something, it says so: files
+without flags, patterns that do not compile there, and code inside `#if` branches the build does
+not contain are all named rather than passed over. `adoption` measures how much of an agent's
+code navigation goes through the tool at all.
+
 ### Added
 
 - `adoption` — the share of code navigation that went through sextant instead of past it, and,
