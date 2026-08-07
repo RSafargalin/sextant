@@ -312,13 +312,14 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
 
     case "lint":
         // Rules from .sextant.json, as in the CLI (MCP used to know only the built-in set).
-        let rules: [Rule]
+        let ruleSet: RuleEngine.RuleSet
         if let path = context.config?.rulesPath(projectRoot: context.projectRoot) {
-            do { rules = try RuleEngine.loadRules(fromJSONAt: path) }
+            do { ruleSet = try RuleEngine.loadRules(fromJSONAt: path) }
             catch { return ("could not load rules from .sextant.json (\(path)): \(error)", true) }
         } else {
-            rules = RuleEngine.builtinRules
+            ruleSet = RuleEngine.builtinSet
         }
+        let rules = ruleSet.rules
         let outcome = RuleEngine.run(rules: rules, projectRoot: context.projectRoot, lintRoot: context.project,
                                      includeTests: false)
         let violations = outcome.violations
@@ -326,7 +327,7 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
                                                           noun: "possible violation(s)")
             + StructuralCoverage.report(outcome.unscanned)
         guard !violations.isEmpty else {
-            return ((["✅ no violations found (\(rules.count) rules)"] + unscanned).joined(separator: "\n"), false)
+            return ((["✅ no violations found — rules: \(ruleSet.origin)"] + unscanned).joined(separator: "\n"), false)
         }
         let lines = violations
             .sorted { ($0.ruleID, $0.file, $0.line) < ($1.ruleID, $1.file, $1.line) }

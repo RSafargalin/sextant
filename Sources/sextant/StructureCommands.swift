@@ -232,14 +232,15 @@ func runLint(arguments: [String]) -> Int32 {
     let includeTests = arguments.contains("--include-tests")
     guard let root = scopedRoot(in: arguments) else { return 2 }
     guard withinScale(root, includeTests: includeTests, arguments: arguments) else { return 1 }
-    let rules: [Rule]
+    let ruleSet: RuleEngine.RuleSet
     if let rulesPath = optionValue("--rules", in: arguments)
         ?? loadConfig(arguments)?.rulesPath(projectRoot: projectRoot(in: arguments)) {
-        do { rules = try RuleEngine.loadRules(fromJSONAt: rulesPath) }
+        do { ruleSet = try RuleEngine.loadRules(fromJSONAt: rulesPath) }
         catch { reportError("sextant lint: could not load rules from \(rulesPath): \(error)"); return 2 }
     } else {
-        rules = RuleEngine.builtinRules
+        ruleSet = RuleEngine.builtinSet
     }
+    let rules = ruleSet.rules
     // Swift through its own parser, the C family through clang. A clean bill of health has to say
     // which files it covers, so whatever could not be read comes back named.
     let outcome = RuleEngine.run(rules: rules, projectRoot: projectRoot(in: arguments), lintRoot: root,
@@ -259,7 +260,7 @@ func runLint(arguments: [String]) -> Int32 {
     let inactive = StructuralCoverage.inactiveReport(outcome.inactive, targets: outcome.targets,
                                                      noun: "possible violation(s)")
     guard !violations.isEmpty else {
-        print("✅ No violations found (\(rules.count) rules)")
+        print("✅ No violations found — rules: \(ruleSet.origin)")
         inactive.forEach(reportError)
         StructuralCoverage.report(unscanned).forEach(reportError)
         return 0
@@ -267,7 +268,7 @@ func runLint(arguments: [String]) -> Int32 {
     for violation in violations.sorted(by: { ($0.ruleID, $0.file, $0.line) < ($1.ruleID, $1.file, $1.line) }) {
         print("[\(violation.ruleID)] \(violation.file):\(violation.line):\(violation.column)  \(violation.text)")
     }
-    print("\n❌ violations: \(violations.count)")
+    print("\n❌ violations: \(violations.count)  ·  rules: \(ruleSet.origin)")
     inactive.forEach(reportError)
     StructuralCoverage.report(unscanned).forEach(reportError)
     return 1
