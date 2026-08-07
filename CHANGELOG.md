@@ -15,6 +15,14 @@ Human-readable text output is not covered — parse `--json`, not prose.
 
 ### Added
 
+- `exclude` in `.sextant.json` and a repeatable `--exclude` flag: globs for files that are tracked
+  on purpose and still have no business in an answer — generated code, vendored sources, snapshot
+  fixtures. `--scope` could only narrow to one subtree; it cannot subtract. The filter sits after
+  both discovery paths, so a git project and a non-git one leave out exactly the same files, and
+  the syntax is a small predictable part of glob (`*`, `**`, a bare name at any depth) rather than
+  a subset of gitignore — a partial gitignore is unpredictable, and unpredictable exclusions hide
+  code without the user knowing. Closes [#9](https://github.com/RSafargalin/sextant/issues/9).
+
 - [docs/recipes.md](docs/recipes.md) — twelve questions and the commands that answer them, with
   real output: is this type safe to delete, who calls this through the protocol, what changed on
   this branch symbol by symbol. Everything shown was produced by running the command against
