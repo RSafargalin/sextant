@@ -13,6 +13,8 @@ Human-readable text output is not covered — parse `--json`, not prose.
 
 ## [Unreleased]
 
+## [0.8.1] — 2026-08-07
+
 ### Added
 
 - `doctor` reports when `PATH` holds more than one `sextant`, naming which one a shell would run
