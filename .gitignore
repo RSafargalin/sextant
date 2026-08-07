@@ -10,6 +10,12 @@ field-reports/
 # Local Claude Code settings — personal to each developer, never committed.
 .claude/settings.local.json
 
+# MCP registration — written by `sextant init` and personal to a checkout: it holds the absolute
+# path to the binary (which differs between Intel and Apple Silicon Homebrew) and the absolute
+# project root (which differs per worktree). `.sextant.json` next to it IS shared: budget, scope
+# and rules are properties of the project, not of a machine.
+.mcp.json
+
 # Release build artefacts: separate scratch paths per architecture and the
 # packaged binary. Created by .github/workflows/release.yml, and by anyone
 # reproducing a release locally.
