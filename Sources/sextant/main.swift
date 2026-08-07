@@ -205,6 +205,7 @@ func dispatch(_ arguments: [String]) -> Int32 {
     case "bench": return runBench(arguments: rest)
     case "adoption": return runAdoption(arguments: rest)
     case "hook": return runHook(arguments: rest)
+    case "completion": return runCompletion(arguments: rest)
     case "index": return runIndex(arguments: rest)
     case "--help", "-h", "help", nil: printUsage(); return 0
     case let command?:

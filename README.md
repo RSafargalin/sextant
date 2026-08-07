@@ -193,6 +193,16 @@ Measured on sextant itself (53 MB store, identical state): `refs` **2.6s → 0.2
 10×. On a small freshly built store the difference is smaller, because reusing the database
 between runs already gets you to ~0.3s.
 
+## Shell completion
+
+```bash
+sextant completion zsh > "${fpath[1]}/_sextant"     # then restart the shell
+sextant completion bash > /usr/local/etc/bash_completion.d/sextant
+```
+
+The script is generated from the command catalog, so it always offers the commands and flags the
+installed binary actually has — regenerate it after an upgrade.
+
 ## MCP — connecting to Claude Code
 
 `sextant mcp` is a stdio MCP server (JSON-RPC 2.0). The index is opened once at start-up and
