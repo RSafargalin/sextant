@@ -149,17 +149,31 @@ extension IndexDeclarations {
     /// One line, not a list: on an Objective-C project nearly every header has a `#if`, and a
     /// warning per header would be noise rather than information.
     public static func conditionalHeaderNote(root: URL, package: String?) -> [String] {
+        let count = conditionalFileCount(root: root, package: package, extensions: Array(headerExtensions), publicOnly: true)
+        guard count > 0 else { return [] }
+        return ["ℹ \(count) public header(s) use #if — only the declarations of the configuration that was built are listed."]
+    }
+
+    /// The same caveat for the map, which reads every non-Swift file rather than public headers.
+    public static func conditionalSourceNote(root: URL, includeTests: Bool) -> [String] {
+        let count = conditionalFileCount(root: root, package: nil, extensions: clangExtensions, publicOnly: false,
+                                         includeTests: includeTests)
+        guard count > 0 else { return [] }
+        return ["ℹ \(count) Objective-C/C/C++ file(s) use #if — declarations in branches this build does not contain are not on the map."]
+    }
+
+    private static func conditionalFileCount(root: URL, package: String?, extensions: [String],
+                                             publicOnly: Bool, includeTests: Bool = false) -> Int {
         var count = 0
-        for url in SwiftSources.files(under: root, includeTests: false, extensions: Array(headerExtensions)) {
-            guard url.pathComponents.contains("include") else { continue }
+        for url in SwiftSources.files(under: root, includeTests: includeTests, extensions: extensions) {
+            if publicOnly, !url.pathComponents.contains("include") { continue }
             let relative = SwiftSources.relativePath(of: url, root: root)
             if let package, SwiftSources.package(for: relative) != package { continue }
             if let source = try? String(contentsOf: url, encoding: .utf8), ConditionalRegions.areUsed(inSource: source) {
                 count += 1
             }
         }
-        guard count > 0 else { return [] }
-        return ["ℹ \(count) public header(s) use #if — only the declarations of the configuration that was built are listed."]
+        return count
     }
 
     /// Public surface of C++ headers, read through clang with the flags of a translation unit

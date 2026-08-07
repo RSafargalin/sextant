@@ -110,8 +110,9 @@ Human-readable text output is not covered — parse `--json`, not prose.
 - The textual fallback searches Objective-C, C and C++ as well. It walked `.swift` files only, so
   an unresolved Objective-C symbol degraded to a search that never opened a `.m` file and
   reported nothing at all.
-- `api` states when public headers use `#if`: their declarations come from the index, which holds
-  one configuration, so a branch that configuration does not contain is not in the surface.
+- `api` and `map` state when non-Swift files use `#if`: their declarations come from the index,
+  which holds one configuration, so a branch that configuration does not contain is not in the
+  answer. Swift declarations under `#if` are listed with their condition instead of counted.
 
 - `construct` looked for the Swift shape `Type(` in every language, so on an Objective-C project
   it found nothing at all — which reads as "nothing constructs this type" rather than "this
