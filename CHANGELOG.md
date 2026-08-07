@@ -15,6 +15,13 @@ Human-readable text output is not covered — parse `--json`, not prose.
 
 ### Added
 
+- [docs/recipes.md](docs/recipes.md) — twelve questions and the commands that answer them, with
+  real output: is this type safe to delete, who calls this through the protocol, what changed on
+  this branch symbol by symbol. Everything shown was produced by running the command against
+  Alamofire at `0455bfb`, which the page names so a reader can reproduce it, and re-running them
+  is now a step in the release checklist — documentation that drifts silently is worse than none.
+  Closes [#6](https://github.com/RSafargalin/sextant/issues/6).
+
 - `completion zsh` and `completion bash` print a completion script, generated from the command
   catalog — the same data that builds the help and validates flags, so a command added later
   cannot silently fall out of completion. Flags are offered per command rather than as one flat

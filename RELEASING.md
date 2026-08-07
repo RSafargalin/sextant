@@ -32,13 +32,16 @@ contract — see [CHANGELOG.md](CHANGELOG.md).
    READMEs, `V=…` in the download snippet, and the environment line in both benchmark pages.
    If the benchmarks were not re-measured, only the version string changes — the numbers are
    a record of what was measured and stay as they are.
-4. Run the full local check:
+4. Re-run the recipes in [docs/recipes.md](docs/recipes.md) against the commit named there.
+   Every block on that page is real output, which is the only reason it is worth reading — when
+   the output has moved, update the blocks, and bump the commit if the package has moved on.
+5. Run the full local check:
 
    ```bash
    make ci
    ```
 
-5. Commit and push. **Wait for CI to go green before tagging.**
+6. Commit and push. **Wait for CI to go green before tagging.**
 
 ## 2. Tag
 

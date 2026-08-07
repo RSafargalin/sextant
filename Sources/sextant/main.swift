@@ -104,8 +104,11 @@ func reportError(_ message: String) {
     FileHandle.standardError.write(Data("\(message)\n".utf8))
 }
 
+/// A path as an answer shows it: relative to the project when it is inside it, and only then a
+/// tail. The project root is read from the process arguments, which is where every command gets
+/// it — a display helper must not disagree with the command about what the project is.
 func shorten(_ path: String) -> String {
-    path.split(separator: "/").suffix(3).joined(separator: "/")
+    DisplayPath.of(path, root: projectRoot(in: CommandLine.arguments))
 }
 
 /// Compact output: yes for an agent (piped), no for a human (TTY). `--full` and `--compact`

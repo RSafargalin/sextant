@@ -193,6 +193,9 @@ Measured on sextant itself (53 MB store, identical state): `refs` **2.6s → 0.2
 10×. On a small freshly built store the difference is smaller, because reusing the database
 between runs already gets you to ~0.3s.
 
+Task-shaped examples — the question, the command, and its real output — are in
+[docs/recipes.md](docs/recipes.md).
+
 ## Shell completion
 
 ```bash
