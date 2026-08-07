@@ -152,7 +152,11 @@ through a browser, Gatekeeper attaches a quarantine attribute and blocks the fir
 it with `xattr -d com.apple.quarantine sextant`. Downloads via `curl` and Homebrew are not
 quarantined, but the command is harmless either way.
 
-**3. From source** — needs Swift 6.2+:
+**3. From source** — needs Swift 6.2+. Note that `make install` puts the binary in
+`~/.local/bin`, which usually comes before Homebrew's directory in `PATH`: from then on that
+copy is what runs, and `brew upgrade` cannot replace it. `sextant doctor` says so when it finds
+more than one.
+
 
 ```bash
 swift build && swift test

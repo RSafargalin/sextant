@@ -13,6 +13,13 @@ Human-readable text output is not covered — parse `--json`, not prose.
 
 ## [Unreleased]
 
+### Added
+
+- `doctor` reports when `PATH` holds more than one `sextant`, naming which one a shell would run
+  and which one is speaking. The two documented install routes land in different directories, and
+  a copy from `make install` in `~/.local/bin` usually comes first — so `brew upgrade` succeeds
+  while the tool keeps answering with the old version, and nothing points at why.
+
 ## [0.8.0] — 2026-08-07
 
 The C family stops being a blind spot. `search`, `lint`, `changed`, `api` and `construct` now

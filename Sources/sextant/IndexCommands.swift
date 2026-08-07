@@ -143,6 +143,12 @@ func runDoctor(arguments: [String]) -> Int32 {
         }
     }
 
+    // Which binary a shell would run. Not a fault of the setup, but a version answering that is
+    // not the version installed is the kind of thing nobody thinks to check.
+    let path = ProcessInfo.processInfo.environment["PATH"] ?? ""
+    InstallationCheck.report(binaries: InstallationCheck.binaries(inPath: path),
+                             running: launchURL().path).forEach { print($0) }
+
     print(ok ? "\n✅ ready — `sextant mcp` will work (semantics and structure)" : "\n❌ there are problems — see above")
     return ok ? 0 : 1
 }
