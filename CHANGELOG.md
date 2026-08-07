@@ -15,6 +15,23 @@ Human-readable text output is not covered — parse `--json`, not prose.
 
 ### Added
 
+- `adoption` — the share of code navigation that went through sextant instead of past it, and,
+  more usefully, what went past: the searches an agent ran as text, grouped by the shape of the
+  query. An identifier searched with grep is a question `defs` or `refs` answers exactly, so each
+  one is either a gap in the tool or a gap in how it describes itself. The share alone would be a
+  scoreboard; the residue is what there is to fix.
+
+  The denominator cannot come from sextant — the searches that went elsewhere are invisible to
+  it — so it is read from the client's own session transcripts. Only two fields of a record are
+  ever looked at, the tool's name and its query, and the query is reduced to a shape immediately:
+  no pattern, path or message text is kept or printed unless `--show-queries` asks for it, and
+  nothing is sent anywhere.
+- `hook` — the same signal live, for a client's `PreToolUse` hook: one line per navigation act
+  carrying a timestamp, a hash of the project root, the act and the shape of the query. Not the
+  query, not the command, not the path. `sextant hook --install` prints how to install it and
+  exactly what it writes; it is off until someone does. Beyond measurement it is the point where a
+  later version can offer the answer instead of counting the grep.
+
 - `changed` diffs Objective-C, C and C++ at the symbol level, not just Swift. A past revision has
   no build of its own, but it does not need one: its text is parsed against the flags the file is
   compiled with today, which measures clean. A file with no flags at all, or a revision that does

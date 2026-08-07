@@ -166,7 +166,19 @@ public enum CommandCatalog {
                     group: "Trust and measurability",
                     flags: [project, FlagSpec("--symbols", takesValue: true, "symbols, comma separated"),
                             FlagSpec("--iterations", takesValue: true, "number of iterations (default 20)"), indexStore, indexLib, json],
-                    details: ["payload is compact JSON as a RELATIVE proxy for volume, NOT tokens."])
+                    details: ["payload is compact JSON as a RELATIVE proxy for volume, NOT tokens."]),
+        CommandSpec(name: "adoption", summary: "how much code navigation went through sextant, not grep",
+                    group: "Trust and measurability",
+                    flags: [project, json,
+                            FlagSpec("--show-queries", "print the search patterns themselves (they stay local)")],
+                    details: ["reads this project's session transcripts; only the tool name and its query are looked at.",
+                              "queries are reduced to a shape (identifier, phrase, …) and NOT stored or printed",
+                              "unless --show-queries is given. Nothing is sent anywhere."]),
+        CommandSpec(name: "hook", summary: "record one tool-use event (for a client's PreToolUse hook)",
+                    group: "Trust and measurability",
+                    flags: [project, FlagSpec("--install", "print how to install it, and what it writes")],
+                    details: ["reads the event on stdin; writes an act and a query SHAPE, never the query,",
+                              "the command, the path or the project. Silent and exit 0 on anything unexpected."])
     ]
 
     public static func command(named name: String) -> CommandSpec? {

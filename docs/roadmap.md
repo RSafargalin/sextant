@@ -284,7 +284,9 @@ Only the primitives Claude Code supports and that survive the stateless transiti
 - **Tool annotations `readOnlyHint`** plus a simple `outputSchema`; a long build is NOT an inline
   tool (#34, #35).
 - **Adoption mechanics:** tuning the tool descriptions (#39), intercepting or hinting away from grep
-  (#40), an adoption metric in bench (#41); **`sextant init`** in one command (#37);
+  (#40), an adoption metric (#41) — shipped as its own `adoption` command rather than inside
+  `bench`, because bench measures latency on a fixed set of queries while adoption is a property
+  of a session; the two answer different questions and share nothing; **`sextant init`** in one command (#37);
   prebuilt/Homebrew (#38).
 - **Gate:** resources are reachable through `@`; the adoption metric (the share of searches that go
   through sextant) grows; staleness is handled interactively rather than by refusal.
