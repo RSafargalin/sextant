@@ -204,6 +204,11 @@ between runs already gets you to ~0.3s.
 Task-shaped examples — the question, the command, and its real output — are in
 [docs/recipes.md](docs/recipes.md).
 
+`sextant init --client <name>` registers the server for another client — `claude-code` (the
+default, a file in the project) or `claude-desktop` (one list per machine). Only clients verified
+against the running application are offered: a config written from documentation and never
+launched fails silently, and the user blames the tool.
+
 ## Shell completion
 
 ```bash
