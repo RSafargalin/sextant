@@ -161,6 +161,16 @@ code navigation goes through the tool at all.
 
 ### Fixed
 
+- `.gitignore` is now honoured in full for a project that is **not** under git. The fallback read
+  only bare directory names from it, dropping every line with a `/` or a `*` — so `Generated/**`,
+  `[Dd]ebug/` and `Sources/*/Legacy` did nothing, and those files landed in `map`, `api`, `search`
+  and `lint`. Rather than growing a subset of gitignore — attempted in
+  [#8](https://github.com/RSafargalin/sextant/pull/8), and unpredictable, because a partial
+  implementation fails silently — git itself is borrowed: the project becomes a work tree whose
+  git dir lives in the cache, so negation, bracket classes, nested `.gitignore` files and
+  "last matching pattern wins" all behave exactly as git defines them, and nothing is written
+  inside the project. Closes [#3](https://github.com/RSafargalin/sextant/issues/3).
+
 - Conditional compilation no longer makes declarations vanish quietly. `api` and `map` dropped
   everything inside a `#if` — an iOS-only public method was simply absent from the surface on a
   Mac, with nothing said about it. Those declarations are now listed with the condition that
