@@ -11,8 +11,8 @@ class Sextant < Formula
   # Updated per release from the block that release.yml prints into the GitHub Release notes.
   # No explicit `version`: Homebrew scans it from the URL, and a second copy would be one more
   # place to forget on release day.
-  url "https://github.com/RSafargalin/sextant/releases/download/v0.8.0/sextant-0.8.0-macos-universal.tar.gz"
-  sha256 "9d987e77b1412b2e1bbdec2bed83828d08cc8aa0789b726aff72192cbaea35fd"
+  url "https://github.com/RSafargalin/sextant/releases/download/v0.8.1/sextant-0.8.1-macos-universal.tar.gz"
+  sha256 "6eda8f44d4cdaf66b72082e1a8abc029ffdbebca4606709200cf2b7acda03b50"
   license "Apache-2.0"
 
   # The binary targets macOS 13+ (see platforms in Package.swift).
