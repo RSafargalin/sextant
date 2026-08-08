@@ -356,6 +356,23 @@ separates it from dangerous generic memory.
   (#43); **online relevance learning** (#44).
 - **Gate:** every feature gets its own measurement of value against a baseline before it is kept.
 
+## Backlog — waiting on circumstances, not on work
+
+Nothing here is blocked on a decision or on someone writing code. Each item needs something to
+happen in the world first, so it stays here instead of being raised at every planning turn.
+
+- **The second half of the П3 gate: `brew install` on a machine with no Xcode toolchain.** The
+  first half (a machine with one) is done. This half needs a machine that does not exist yet in
+  reach; without it, the claim "installs without a toolchain" stays at L1.
+- **Adoption data.** `sextant adoption` and the `PreToolUse` hook are shipped and recording. The
+  signal only means anything after roughly a week of ordinary sessions — until then #39 (tool
+  descriptions) and #40 (intercepting grep) have no ground to stand on, because both are changes
+  aimed at a behaviour that has not been measured yet.
+- **Linux.** Never planned either way. The semantic layer is IndexStoreDB (portable), the Swift
+  structural layer is SwiftSyntax (portable), the C-family layer is libclang loaded by `dlopen`
+  (portable in principle, but the path search is written for Xcode). The open question is not
+  "how hard" but "for whom" — no one has asked for it.
+
 ## Canonical queries (the system's acceptance test)
 
 Each of these must be answerable without a text grep:
