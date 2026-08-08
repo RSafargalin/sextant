@@ -328,6 +328,18 @@ separates it from dangerous generic memory.
 - **Gate:** on a long session, a measured drop in tokens thanks to handles/deltas; not one stale
   entry served unmarked.
 
+> **Phase 1 is closed — measured, and there is no ceiling to win (2026-08-08).** Across 26 real
+> agent sessions (~6.1 MB of navigational content) three independent definitions of "a repeat"
+> agree: the same call with the same arguments is **0.9 %** of navigational bytes, a byte-identical
+> result inside one session **0.5 %**, in a later session **0.5 %**, and a file re-read whose
+> content had not changed **5.5 % of read bytes**. A dedup protocol can therefore reclaim single
+> digits of a fraction of session tokens — before subtracting the handles' own cost (~15–20 tokens
+> per answer). The reason is in the same numbers: an agent rarely asks twice, and when it re-reads
+> a file the file has usually just been changed by the agent itself, which is exactly what a handle
+> cannot serve. The spend is not in the repeat but in the **first** delivery — which is the context
+> compiler (#16, Iter 10), untouched by this measurement. Reasoning and table in
+> [ADR-0003](adr/0003-path-to-production-v1.md).
+
 ### Iter 9 — Differential context + automatic freshness.
 
 > **Freshness is out of this iteration — the frame was disproved by measurement (P5 of
