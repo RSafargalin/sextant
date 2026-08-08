@@ -328,17 +328,33 @@ separates it from dangerous generic memory.
 - **Gate:** on a long session, a measured drop in tokens thanks to handles/deltas; not one stale
   entry served unmarked.
 
+> **Phase 1 is closed — measured, and there is no ceiling to win (2026-08-08).** Across 26 real
+> agent sessions (~6.1 MB of navigational content) three independent definitions of "a repeat"
+> agree: the same call with the same arguments is **0.9 %** of navigational bytes, a byte-identical
+> result inside one session **0.5 %**, in a later session **0.5 %**, and a file re-read whose
+> content had not changed **5.5 % of read bytes**. A dedup protocol can therefore reclaim single
+> digits of a fraction of session tokens — before subtracting the handles' own cost (~15–20 tokens
+> per answer). The reason is in the same numbers: an agent rarely asks twice, and when it re-reads
+> a file the file has usually just been changed by the agent itself, which is exactly what a handle
+> cannot serve. The spend is not in the repeat but in the **first** delivery — which is the context
+> compiler (#16, Iter 10), untouched by this measurement. Reasoning and table in
+> [ADR-0003](adr/0003-path-to-production-v1.md).
+
 ### Iter 9 — Differential context + automatic freshness.
 
-> Build-hook freshness (#17) has been raised in priority — it is P5 of ADR-0003 (it kills a whole
-> class of freshness patches at the root; until it lands we add no new ones). The `changed` command
-> is the first step towards differential context (#15); there is no session-aware layer yet.
+> **Freshness is out of this iteration — the frame was disproved by measurement (P5 of
+> ADR-0003, 2026-07).** An ordinary `swift build` **already** updates the index store, so a
+> build hook would have solved a problem the environment had solved from the start. The real
+> defect was in the freshness *signal*, and it is fixed: `IndexFreshness` in Core, one source
+> for the whole tool. The `changed` command is the first step towards differential context
+> (#15); there is no session-aware layer yet.
 - **Differential context** (session-aware) — "unchanged since turn N" / deltas (#15).
 - **Speculative prefetch** — warming the neighbours in the graph (#21).
 - **The context budget as a protocol** — the agent declares a budget and sextant packs to fit (#45).
-- **Build-hook freshness** — the index is updated as a side effect of an ordinary build (NOT a file
-  watcher) (#17).
-- **An SPM-only path + partial freshness** by unit timestamps (#9).
+- ~~**Build-hook freshness** (#17)~~ and ~~**partial freshness by unit timestamps** (#9)~~ —
+  **not doing.** See the reasoning and the measurement in
+  [ADR-0003](adr/0003-path-to-production-v1.md); reopen only if re-importing units after a rebuild
+  (~2.6s, masked by the daemon) is measured to actually get in the way.
 - **Gate:** a repeat query returns a delta, not a dump; the index is fresh with no manual reindex.
 
 ### Iter 10 — The strategic layer (by appetite). A change of league.
@@ -351,10 +367,47 @@ separates it from dangerous generic memory.
 - **Graph-RAG intent search** — embeddings grounded on the graph (the model is our own Anthropic
   API, NOT sampling) (#18).
 - **A verification service** for claims (#19); **refactoring as a service** (#20).
+
+  > **The documentation half of #19 was measured and has no defect to catch (2026-08-08).**
+  > Agents read Markdown constantly — 18.5 % of file reads and 27 % of read bytes across 30 real
+  > sessions, present in every one of 14 projects — and the files are README, roadmaps, ADRs and
+  > plans. That made "check what the docs claim against the code" look obvious. It is not: broken
+  > links and stale `file:line` references were counted across all 57 commits of this repository
+  > (**0**) and across 221 documents in Alamofire, swift-nio, swift-syntax, swift-argument-parser
+  > and swift-composable-architecture (**1**, itself probably a DocC asset reference). Documented
+  > flags matched the command catalogue exactly, and the bilingual twins diverged nowhere once
+  > `X.md` ↔ `X.ru.md` was normalised. A detector cannot be given a gate on a defect that does not
+  > occur.
+  >
+  > The drift that **is** real here is semantic: this roadmap promised build-hook freshness as an
+  > Iter 9 priority for weeks after ADR-0003 had recorded "not doing". Catching that means reading
+  > two documents for contradiction — a model, which is a separate decision (#18 sets the terms:
+  > our own API call, never sampling), not a Markdown parser.
+  >
+  > Still open and **not** measured: whether section-level navigation of docs (a table of contents
+  > under a budget, fetch one section rather than a 5.6 KB file) saves anything. That is a claim
+  > about the first delivery, and the same rule applies — measure before building.
 - **Cross-project intelligence** — one index across every project (#22).
 - **An architectural boundary linter** (#42); **"negative space"** for safe deletion plus dead code
   (#43); **online relevance learning** (#44).
 - **Gate:** every feature gets its own measurement of value against a baseline before it is kept.
+
+## Backlog — waiting on circumstances, not on work
+
+Nothing here is blocked on a decision or on someone writing code. Each item needs something to
+happen in the world first, so it stays here instead of being raised at every planning turn.
+
+- **The second half of the П3 gate: `brew install` on a machine with no Xcode toolchain.** The
+  first half (a machine with one) is done. This half needs a machine that does not exist yet in
+  reach; without it, the claim "installs without a toolchain" stays at L1.
+- **Adoption data.** `sextant adoption` and the `PreToolUse` hook are shipped and recording. The
+  signal only means anything after roughly a week of ordinary sessions — until then #39 (tool
+  descriptions) and #40 (intercepting grep) have no ground to stand on, because both are changes
+  aimed at a behaviour that has not been measured yet.
+- **Linux.** Never planned either way. The semantic layer is IndexStoreDB (portable), the Swift
+  structural layer is SwiftSyntax (portable), the C-family layer is libclang loaded by `dlopen`
+  (portable in principle, but the path search is written for Xcode). The open question is not
+  "how hard" but "for whom" — no one has asked for it.
 
 ## Canonical queries (the system's acceptance test)
 
@@ -374,7 +427,8 @@ Cut deliberately at the start (the most risk for the least value), but scheduled
 - **non-Swift semantics** → **done**: it works through the same index store, and no separate
   layer was needed. The structural layer for those languages is **done too** (2026-08-07), on
   libclang rather than tree-sitter — see [ADR-0004](adr/0004-structural-layer-for-c-family.md).
-- **automatic freshness** → the build hook in Iter 9 (this is NOT a real-time file watcher —
-  the update is a side effect of an ordinary build).
+- **automatic freshness** → **done, but not the way it was planned.** No build hook was needed:
+  an ordinary build already updates the index store, and what had to be fixed was the freshness
+  signal (`IndexFreshness`, P5 of ADR-0003).
 
 Still a non-goal: a real-time file watcher (continuously watching the filesystem).

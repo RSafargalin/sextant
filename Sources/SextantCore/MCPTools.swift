@@ -22,13 +22,13 @@ public enum MCPTools {
                 "depth": ["type": "integer", "description": "Traversal depth (default: 3)."]
             ])],
             ["name": "repo_map", "description": "Repository map: public and internal types by file, symbol-level.", "inputSchema": ["type": "object", "properties": ["budget": ["type": "integer", "description": "Token budget for the map (default 4000, honoured)."]]]],
-            ["name": "structural_search", "description": "Structural search over the AST, replacing grep: metavariables $X, variadic $$$, statement patterns. For example 'try? $X.save()' in Swift or '[$X reloadData]' in Objective-C. Swift is matched by its own parser; Objective-C, C and C++ by clang, which needs the flags from `sextant index`. Files that could not be read are listed with the reason, so 'no matches' never quietly covers them. Occurrences inside #if branches this build does not contain are reported separately as textual, NOT structurally verified — treat them as leads, not as matches.", "inputSchema": [
+            ["name": "structural_search", "description": "Structural search over the AST, replacing grep: metavariables $X, variadic $$$, statement patterns. For example 'try? $X.save()' in Swift or '[$X reloadData]' in Objective-C. Swift is matched by its own parser; Objective-C, C and C++ by clang, which needs the flags from `sextant index`, which RUNS the project's build (its manifest, plugins and macros are code) — so it is the user's call, not an automatic step. Files that could not be read are listed with the reason, so 'no matches' never quietly covers them. Occurrences inside #if branches this build does not contain are reported separately as textual, NOT structurally verified — treat them as leads, not as matches.", "inputSchema": [
                 "type": "object",
                 "properties": ["pattern": ["type": "string", "description": "Structural pattern: an expression or statement using $X ($$$ is Swift only). Written in the language of the files being searched."]],
                 "required": ["pattern"]
             ]],
             ["name": "lint", "description": "Structural code-hygiene rules (the set from .sextant.json, otherwise the built-in one). Covers Swift plus Objective-C, C and C++; a file where no rule could be checked is listed with the reason, so a clean report never covers unread code.", "inputSchema": ["type": "object", "properties": [String: Any]()]],
-            ["name": "api", "description": "Public surface of a package or type — signatures plus doc summaries, without reading files. An order of magnitude cheaper than reading the sources. Covers Swift, Objective-C, C and C++ (C++ headers need the flags from `sextant index`). Narrow it with package, type, or scope.", "inputSchema": [
+            ["name": "api", "description": "Public surface of a package or type — signatures plus doc summaries, without reading files. An order of magnitude cheaper than reading the sources. Covers Swift, Objective-C, C and C++ (C++ headers need the flags from `sextant index`, which RUNS the project's build (its manifest, plugins and macros are code) — so it is the user's call, not an automatic step). Narrow it with package, type, or scope.", "inputSchema": [
                 "type": "object",
                 "properties": [
                     "package": ["type": "string", "description": "Package name (for example MyLibrary) — its entire public surface."],
@@ -36,7 +36,7 @@ public enum MCPTools {
                     "scope": ["type": "string", "description": "Subdirectory of the project, to narrow the area."]
                 ]
             ]],
-            ["name": "changed", "description": "Symbol-level git diff: which declarations were added, removed, or changed signature between revisions. Not a line diff. Use for 'what changed' and 'what did I break'. Covers Swift, Objective-C, C and C++ (the last three need the flags from `sextant index`); a file that could not be compared is listed with the reason, so an empty result never means it is unchanged.", "inputSchema": [
+            ["name": "changed", "description": "Symbol-level git diff: which declarations were added, removed, or changed signature between revisions. Not a line diff. Use for 'what changed' and 'what did I break'. Covers Swift, Objective-C, C and C++ (the last three need the flags from `sextant index`, which RUNS the project's build (its manifest, plugins and macros are code) — so it is the user's call, not an automatic step); a file that could not be compared is listed with the reason, so an empty result never means it is unchanged.", "inputSchema": [
                 "type": "object",
                 "properties": [
                     "from": ["type": "string", "description": "Baseline revision (default HEAD)."],

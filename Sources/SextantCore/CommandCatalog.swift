@@ -110,7 +110,7 @@ public enum CommandCatalog {
                     FlagSpec("--scheme", takesValue: true, "Xcode scheme (otherwise auto-detected)"),
                     FlagSpec("--destination", takesValue: true, "xcodebuild destination"),
                     FlagSpec("--no-build", "only locate an existing index, do not build")],
-            details: ["index EXECUTES the project's manifest and build — run it only on code you trust."]
+            details: [BuildTrust.summary]
         ),
         CommandSpec(name: "refs", argument: "<symbol>", summary: "every usage of a symbol",
                     group: "Semantics (index store)", flags: semanticFlags,

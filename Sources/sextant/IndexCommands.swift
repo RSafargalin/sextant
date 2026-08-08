@@ -169,7 +169,7 @@ func runXcodeIndex(root: URL, arguments: [String]) -> Int32 {
     }
     let destination = optionValue("--destination", in: arguments) ?? "generic/platform=macOS"
 
-    reportError("ℹ sextant index --app will run xcodebuild (a build) — trusted code only.")
+    reportError(BuildTrust.xcodeNotice)
     print("▶ xcodebuild build -scheme \(scheme) -destination '\(destination)' (COMPILER_INDEX_STORE_ENABLE=YES)")
     // The log goes to a file, not the terminal: the compile flags appear only in full output,
     // which is thousands of lines, and that output is the only place Xcode states them.
@@ -214,7 +214,7 @@ func runIndex(arguments: [String]) -> Int32 {
         reportError("sextant index --no-build: no existing index (build in Xcode, or drop --no-build).")
         return 1
     }
-    reportError("ℹ sextant index will execute Package.swift (a build) — run it only on trusted code.")
+    reportError(BuildTrust.swiftPackageNotice)
 
     let root = URL(fileURLWithPath: rootPath, isDirectory: true)
     let packageDirs = IndexStoreLocator.swiftPackages(under: root)
