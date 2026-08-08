@@ -330,15 +330,19 @@ separates it from dangerous generic memory.
 
 ### Iter 9 — Differential context + automatic freshness.
 
-> Build-hook freshness (#17) has been raised in priority — it is P5 of ADR-0003 (it kills a whole
-> class of freshness patches at the root; until it lands we add no new ones). The `changed` command
-> is the first step towards differential context (#15); there is no session-aware layer yet.
+> **Freshness is out of this iteration — the frame was disproved by measurement (P5 of
+> ADR-0003, 2026-07).** An ordinary `swift build` **already** updates the index store, so a
+> build hook would have solved a problem the environment had solved from the start. The real
+> defect was in the freshness *signal*, and it is fixed: `IndexFreshness` in Core, one source
+> for the whole tool. The `changed` command is the first step towards differential context
+> (#15); there is no session-aware layer yet.
 - **Differential context** (session-aware) — "unchanged since turn N" / deltas (#15).
 - **Speculative prefetch** — warming the neighbours in the graph (#21).
 - **The context budget as a protocol** — the agent declares a budget and sextant packs to fit (#45).
-- **Build-hook freshness** — the index is updated as a side effect of an ordinary build (NOT a file
-  watcher) (#17).
-- **An SPM-only path + partial freshness** by unit timestamps (#9).
+- ~~**Build-hook freshness** (#17)~~ and ~~**partial freshness by unit timestamps** (#9)~~ —
+  **not doing.** See the reasoning and the measurement in
+  [ADR-0003](adr/0003-path-to-production-v1.md); reopen only if re-importing units after a rebuild
+  (~2.6s, masked by the daemon) is measured to actually get in the way.
 - **Gate:** a repeat query returns a delta, not a dump; the index is fresh with no manual reindex.
 
 ### Iter 10 — The strategic layer (by appetite). A change of league.
@@ -391,7 +395,8 @@ Cut deliberately at the start (the most risk for the least value), but scheduled
 - **non-Swift semantics** → **done**: it works through the same index store, and no separate
   layer was needed. The structural layer for those languages is **done too** (2026-08-07), on
   libclang rather than tree-sitter — see [ADR-0004](adr/0004-structural-layer-for-c-family.md).
-- **automatic freshness** → the build hook in Iter 9 (this is NOT a real-time file watcher —
-  the update is a side effect of an ordinary build).
+- **automatic freshness** → **done, but not the way it was planned.** No build hook was needed:
+  an ordinary build already updates the index store, and what had to be fixed was the freshness
+  signal (`IndexFreshness`, P5 of ADR-0003).
 
 Still a non-goal: a real-time file watcher (continuously watching the filesystem).
