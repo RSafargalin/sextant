@@ -15,6 +15,15 @@ Human-readable text output is not covered — parse `--json`, not prose.
 
 ### Added
 
+- `index` now states what it runs and what holds it back, and it says something different for each
+  path, because the two are not equally protected. Measured with a hostile manifest and a hostile
+  build plugin: SwiftPM sandboxes both — no network, no writes into your home directory — but they
+  can read it; `--app` runs `Run Script` phases with your full access and no sandbox at all. Both
+  notices name `--no-build`, which indexes an already-built project and runs nothing. Three MCP
+  tool descriptions sent an agent to run `sextant index` without ever saying it builds the project;
+  they say it now. Wrapping the build in `sandbox-exec` was measured and is impossible — SwiftPM
+  applies its own sandbox and a nested one is denied by the kernel.
+
 - `init --client <name>` registers the MCP server for a client other than Claude Code. The list is
   `claude-code` (default, a file in the project) and `claude-desktop` (one list per machine, so the
   project is named in the arguments). Everything the `.mcp.json` path was already careful about now

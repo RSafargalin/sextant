@@ -268,6 +268,31 @@ tools return a hint rather than a wrong answer.
 Before registering, check the setup with `sextant doctor --project <path>` — a checklist
 (sources, libIndexStore, index store and its freshness) with hints about what to build.
 
+### What `index` runs, and what holds it back
+
+Every other command reads. `index` is the one that runs the project's own code: `Package.swift`,
+build plugins and macros are code, and with `--app` a `Run Script` phase is a shell script. Run it
+on code you would build by hand. If you have already built the project, `sextant index --no-build`
+finds the existing store and runs nothing.
+
+The two paths are protected differently, measured on macOS 26.5.2 / Swift 6.2.3 with a hostile
+manifest and a hostile build plugin:
+
+| | `index` (SwiftPM) | `index --app` (xcodebuild) |
+|---|---|---|
+| Writing into your home directory | denied by SwiftPM | **allowed** |
+| Network from the manifest or plugin | denied by SwiftPM | **allowed** |
+| Reading your home directory | **allowed** | **allowed** |
+
+SwiftPM sandboxes the manifest and the plugins, so foreign code can read your home directory but
+cannot write to it or send what it read anywhere — a leak needs a second stage. Compilation itself,
+macros included, runs under `swiftc` rather than SwiftPM and is outside that measurement. The
+`--app` path has no sandbox at all: a `Run Script` phase runs with your full access.
+
+Wrapping the build in `sandbox-exec` is not possible: SwiftPM applies its own sandbox, and a nested
+one is denied by the kernel — even a fully permissive outer profile breaks the build.
+
+
 ## Architecture
 
 | Layer | Purpose | Technology | Status |
