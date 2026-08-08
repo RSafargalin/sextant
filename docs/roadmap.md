@@ -367,6 +367,26 @@ separates it from dangerous generic memory.
 - **Graph-RAG intent search** — embeddings grounded on the graph (the model is our own Anthropic
   API, NOT sampling) (#18).
 - **A verification service** for claims (#19); **refactoring as a service** (#20).
+
+  > **The documentation half of #19 was measured and has no defect to catch (2026-08-08).**
+  > Agents read Markdown constantly — 18.5 % of file reads and 27 % of read bytes across 30 real
+  > sessions, present in every one of 14 projects — and the files are README, roadmaps, ADRs and
+  > plans. That made "check what the docs claim against the code" look obvious. It is not: broken
+  > links and stale `file:line` references were counted across all 57 commits of this repository
+  > (**0**) and across 221 documents in Alamofire, swift-nio, swift-syntax, swift-argument-parser
+  > and swift-composable-architecture (**1**, itself probably a DocC asset reference). Documented
+  > flags matched the command catalogue exactly, and the bilingual twins diverged nowhere once
+  > `X.md` ↔ `X.ru.md` was normalised. A detector cannot be given a gate on a defect that does not
+  > occur.
+  >
+  > The drift that **is** real here is semantic: this roadmap promised build-hook freshness as an
+  > Iter 9 priority for weeks after ADR-0003 had recorded "not doing". Catching that means reading
+  > two documents for contradiction — a model, which is a separate decision (#18 sets the terms:
+  > our own API call, never sampling), not a Markdown parser.
+  >
+  > Still open and **not** measured: whether section-level navigation of docs (a table of contents
+  > under a budget, fetch one section rather than a 5.6 KB file) saves anything. That is a claim
+  > about the first delivery, and the same rule applies — measure before building.
 - **Cross-project intelligence** — one index across every project (#22).
 - **An architectural boundary linter** (#42); **"negative space"** for safe deletion plus dead code
   (#43); **online relevance learning** (#44).
