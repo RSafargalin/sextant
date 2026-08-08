@@ -432,3 +432,26 @@ Cut deliberately at the start (the most risk for the least value), but scheduled
   signal (`IndexFreshness`, P5 of ADR-0003).
 
 Still a non-goal: a real-time file watcher (continuously watching the filesystem).
+
+## Non-goals after the Apple-environment specialisation (2026-08-09)
+
+[ADR-0005](adr/0005-apple-environment-specialisation.md) narrows the product to the Apple
+environment — Swift with Objective-C, C and C++; SwiftPM and Xcode; iOS/macOS/watchOS/tvOS/visionOS
+— and trades breadth for a quality standard inside it. Breadth is held by Serena (LSP, 40+
+languages, MIT, alive); the Swift-specific competitors are archived or unmaintained. These move
+from "later" to "not us":
+
+- **Languages outside the Apple environment** (#36 beyond the C family): Rust, Go, Python,
+  Java/Kotlin, TypeScript.
+- **Linux** — the semantic backend is tied to the index store and the Xcode toolchain.
+- **Cross-project intelligence** (#22) and **graph-RAG intent search** (#18) — breadth of another
+  kind, same reasoning.
+- **Refactoring as a service** (#20) — Serena's ground, and it requires giving up read-only, which
+  is what the tool's trust rests on.
+- **"Negative space"** (#43) stays listed but is **not taken** without an answer to "how are we
+  better than [Periphery](https://swiftpackageindex.com/peripheryapp/periphery)" — seven years old,
+  on the same index store.
+
+What replaces them is depth: an index has an identity (platform, configuration, targets, coverage),
+a store is chosen by coverage rather than mtime, `#if` is reported alongside semantic results
+instead of only in place of them, and provenance names the build an answer describes.
