@@ -209,9 +209,7 @@ struct KnownDefectsIndexTests {
         let all = try sextant(["impls", "Shape", "--project", fixture.root.path, "--index-store", fixture.store])
         let limited = try sextant(["impls", "Shape", "--project", fixture.root.path, "--index-store", fixture.store, "--limit", "1"])
         guard all.stdout.contains("Shape: 3") else { return }
-        withKnownIssue("the header prints the truncated count with no sign of truncation") {
-            #expect(!limited.stdout.contains("Shape: 1") || limited.stdout.contains("more"))
-        }
+        #expect(!limited.stdout.contains("Shape: 1") || limited.stdout.contains("more"))
     }
 
     /// Two occurrences on one line are two entries in the list and two in the count, so the number
@@ -228,8 +226,6 @@ struct KnownDefectsIndexTests {
         let result = try sextant(["construct", "Box", "--project", fixture.root.path, "--index-store", fixture.store])
         let lines = result.stdout.split(separator: "\n").filter { $0.contains("a.swift:") }
         let positions = Set(lines.map { String($0) })
-        withKnownIssue("the same file:line is listed twice and counted twice") {
-            #expect(lines.count == positions.count)
-        }
+        #expect(lines.count == positions.count)
     }
 }

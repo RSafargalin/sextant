@@ -31,7 +31,7 @@ public enum RepoMap {
                 guard let declarations = DeclarationCache.declarations(for: url, parseCache: cache, store: store),
                       !declarations.isEmpty else { return nil }
                 let relative = SwiftSources.relativePath(of: url, root: root)
-                return FileSummary(relativePath: relative, package: SwiftSources.package(for: relative), declarations: declarations)
+                return FileSummary(relativePath: relative, package: SwiftSources.package(for: relative, root: root), declarations: declarations)
             }
         return swift + IndexDeclarations.summaries(root: root, index: index, includeTests: includeTests)
     }

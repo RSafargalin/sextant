@@ -63,8 +63,11 @@ public enum SwiftSources {
     /// parser that works on the text of an arbitrary revision, which the compiler index cannot
     /// supply — it only knows the built state. Dropping them silently made a commit touching only
     /// `.m` files report "no symbol-level changes".
+    /// `renamedFrom` maps a file's current path to the path it had at `from`. git detects a
+    /// rename and reports only the new path, so without it every declaration in a moved file reads
+    /// as added and nothing reads as removed — a rename would be reported as a rewrite.
     public static func changedFiles(root: String, from: String, to: String?)
-        -> (topLevel: String, swift: [String], clang: [String])? {
+        -> (topLevel: String, swift: [String], clang: [String], renamedFrom: [String: String])? {
         guard let topLevelRaw = runGit(["-C", root, "rev-parse", "--show-toplevel"]) else { return nil }
         let topLevel = topLevelRaw.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -79,11 +82,27 @@ public enum SwiftSources {
         let pathspecs = extensions.map { "*.\($0)" }
         let suffixes = extensions.map { ".\($0)" }
 
-        var arguments = ["-C", root, "diff", "--name-only", "-z", from]
+        var arguments = ["-C", root, "diff", "--name-status", "-z", "-M", from]
         if let to { arguments.append(to) }
         arguments += ["--"] + pathspecs
         guard let output = runGit(arguments) else { return nil }
-        var files = output.split(separator: "\0").map(String.init).filter { name in suffixes.contains(where: name.hasSuffix) }
+        // `--name-status -z` emits status\0path\0 per file, and status\0old\0new\0 for a rename
+        // or a copy, so the fields are read in order rather than paired blindly.
+        var files: [String] = []
+        var renamedFrom: [String: String] = [:]
+        var fields = output.split(separator: "\0").map(String.init).filter { !$0.isEmpty }.makeIterator()
+        while let status = fields.next() {
+            guard let first = fields.next() else { break }
+            if status.hasPrefix("R") || status.hasPrefix("C") {
+                guard let new = fields.next() else { break }
+                if suffixes.contains(where: new.hasSuffix) {
+                    files.append(new)
+                    if status.hasPrefix("R") { renamedFrom[new] = first }
+                }
+            } else if suffixes.contains(where: first.hasSuffix) {
+                files.append(first)
+            }
+        }
 
         // Comparing against the working tree: a new file is not in the git index yet, and without
         // it "what changed" would stay silent about a type just created. `--full-name` gives paths
@@ -93,7 +112,7 @@ public enum SwiftSources {
             files += untracked.split(separator: "\0").map(String.init).filter { name in suffixes.contains(where: name.hasSuffix) }
         }
         let unique = Array(Set(files)).sorted()
-        return (topLevel, unique.filter { $0.hasSuffix(".swift") }, unique.filter { !$0.hasSuffix(".swift") })
+        return (topLevel, unique.filter { $0.hasSuffix(".swift") }, unique.filter { !$0.hasSuffix(".swift") }, renamedFrom)
     }
 
     /// File contents at a git revision (`git show <revision>:<path>`); nil means the file does not
@@ -128,7 +147,31 @@ public enum SwiftSources {
     }
     private static let fileListMemo = FileListMemo()
 
-    public static func clearFileListMemo() { fileListMemo.clear() }
+    public static func clearFileListMemo() { fileListMemo.clear() ; exclusionEffect.clear() }
+
+    /// How many files the exclusion patterns removed from the walks made so far, and which
+    /// patterns are in force. An exclusion can empty an answer completely, and "nothing found" is
+    /// a different statement from "everything that could match was excluded".
+    private final class ExclusionEffect: @unchecked Sendable {
+        private let lock = NSLock()
+        private var removedPerWalk: [String: Int] = [:]
+        func record(_ count: Int, forKey key: String) { lock.withLock { removedPerWalk[key] = count } }
+        func clear() { lock.withLock { removedPerWalk.removeAll() } }
+        /// The largest single walk, not the sum: walks over different file kinds overlap, and an
+        /// overstated number is the same kind of wrong the report exists to prevent.
+        var count: Int { lock.withLock { removedPerWalk.values.max() ?? 0 } }
+    }
+    private static let exclusionEffect = ExclusionEffect()
+
+    /// The exclusions in force and how many files they have removed, or `nil` when they removed
+    /// nothing — nothing to say in that case.
+    public static func exclusionsInEffect() -> (patterns: [String], removed: Int)? {
+        let removed = exclusionEffect.count
+        guard removed > 0 else { return nil }
+        let raw = exclusions.rawPatterns
+        guard !raw.isEmpty else { return nil }
+        return (raw, removed)
+    }
 
     /// Patterns the user excluded, applied to every walk.
     ///
@@ -149,6 +192,7 @@ public enum SwiftSources {
         var current: (patterns: [ExclusionPattern], key: String) {
             lock.withLock { (patterns, source.joined(separator: "\u{1}")) }
         }
+        var rawPatterns: [String] { lock.withLock { source } }
     }
     private static let exclusions = Exclusions()
 
@@ -172,6 +216,7 @@ public enum SwiftSources {
         let result = patterns.isEmpty
             ? discovered
             : discovered.filter { !patterns.exclude(relativePath: relativePath(of: $0, root: root)) }
+        exclusionEffect.record(discovered.count - result.count, forKey: key)
         fileListMemo.set(key, result)
         return result
     }
@@ -324,9 +369,66 @@ public enum SwiftSources {
     }
 
     /// Package name from a relative path: `Packages/<X>/...` → X; otherwise the first component.
-    public static func package(for relativePath: String) -> String {
+    public static func package(for relativePath: String, root: URL? = nil) -> String {
+        if let root, let declared = manifests.name(forFile: relativePath, root: root) { return declared }
         let components = relativePath.split(separator: "/").map(String.init)
         if components.first == "Packages", components.count > 1 { return components[1] }
         return components.first ?? "."
     }
+
+    /// Every package name a project declares — what `--package` can address. The path-derived
+    /// names stay in the set: a directory of loose sources is addressable the way it always was.
+    public static func packageNames(under root: URL) -> Set<String> {
+        var names = Set(manifests.map(under: root).values)
+        for file in files(under: root, includeTests: true) {
+            names.insert(package(for: relativePath(of: file, root: root), root: root))
+        }
+        return names
+    }
+
+    /// Package names read from the manifests, keyed by the directory (relative to the root) that
+    /// holds each `Package.swift`. Deriving the name from the path assumes the `Packages/<name>`
+    /// layout, so any project that keeps its packages elsewhere cannot address them at all.
+    private final class Manifests: @unchecked Sendable {
+        private let lock = NSLock()
+        private var byRoot: [String: [String: String]] = [:]
+
+        func map(under root: URL) -> [String: String] {
+            if let cached = lock.withLock({ byRoot[root.path] }) { return cached }
+            var found: [String: String] = [:]
+            for file in files(under: root, includeTests: true) where file.lastPathComponent == "Package.swift" {
+                guard let text = try? String(contentsOf: file, encoding: .utf8),
+                      let name = declaredName(inManifest: text) else { continue }
+                let relative = relativePath(of: file, root: root)
+                found[String(relative.dropLast("Package.swift".count).dropLast())] = name
+            }
+            lock.withLock { byRoot[root.path] = found }
+            return found
+        }
+
+        /// The name of the innermost package containing a file.
+        func name(forFile relativePath: String, root: URL) -> String? {
+            let all = map(under: root)
+            guard !all.isEmpty else { return nil }
+            var best: (directory: String, name: String)?
+            for (directory, name) in all {
+                let contains = directory.isEmpty || relativePath.hasPrefix(directory + "/")
+                guard contains, directory.count >= (best?.directory.count ?? -1) else { continue }
+                best = (directory, name)
+            }
+            return best?.name
+        }
+
+        /// `Package(name: "X"` — the first `name:` label after the `Package(` call.
+        private func declaredName(inManifest text: String) -> String? {
+            guard let call = text.range(of: "Package(") else { return nil }
+            let rest = text[call.upperBound...]
+            guard let label = rest.range(of: "name:") else { return nil }
+            let afterLabel = rest[label.upperBound...]
+            guard let open = afterLabel.firstIndex(of: "\""),
+                  let close = afterLabel[afterLabel.index(after: open)...].firstIndex(of: "\"") else { return nil }
+            return String(afterLabel[afterLabel.index(after: open)..<close])
+        }
+    }
+    private static let manifests = Manifests()
 }

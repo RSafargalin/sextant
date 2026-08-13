@@ -17,10 +17,32 @@ public struct StructuralMatch: Sendable, Codable {
 /// - `$$$` (or `$$$Name`) is variadic: inside a list (arguments, elements, members) it absorbs any
 ///   number of elements. One variadic per list is supported.
 public struct PatternSearch {
-    public enum Failure: Error, Sendable {
+    public enum Failure: Error, Sendable, CustomStringConvertible {
         case emptyPattern
         case notAnExpression
         case tooBroad
+        /// The parser recovered from the text instead of rejecting it — an unbalanced bracket, for
+        /// example. The recovered tree matches nothing, so the answer would be "No matches."
+        case unparsable
+
+        /// Whether clang might still be able to use this pattern. `[self feed]` is not Swift and
+        /// is a perfectly good Objective-C pattern; an empty or bare-metavariable pattern is
+        /// wrong in every language.
+        public var mayBeCFamily: Bool {
+            switch self {
+            case .emptyPattern, .tooBroad: return false
+            case .notAnExpression, .unparsable: return true
+            }
+        }
+
+        public var description: String {
+            switch self {
+            case .emptyPattern: return "the pattern is empty"
+            case .notAnExpression: return "the pattern is not an expression, statement or declaration"
+            case .tooBroad: return "the pattern is a bare metavariable, which matches everything"
+            case .unparsable: return "the pattern does not parse — check for an unbalanced bracket or quote"
+            }
+        }
     }
 
     private let patternRoot: Syntax
@@ -36,6 +58,7 @@ public struct PatternSearch {
         let variadicSentinels = substitution.variadic
 
         let tree = Parser.parse(source: substitution.text)
+        guard !tree.hasError else { throw Failure.unparsable }
         guard let item = tree.statements.first?.item else { throw Failure.notAnExpression }
         let root: Syntax
         if let expression = item.as(ExprSyntax.self) {

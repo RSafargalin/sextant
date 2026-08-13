@@ -109,13 +109,14 @@ public final class IndexStoreSet {
 
         return order.map { usr in
             let hit = base[usr]!
-            let sorted = (references[usr] ?? []).sorted(by: SourceLocation.isOrderedBefore).prefix(limit)
+            let merged = (references[usr] ?? []).sorted(by: SourceLocation.isOrderedBefore)
             return SymbolHit(
                 name: hit.name,
                 usr: usr,
                 kind: hit.kind,
                 definition: hit.definition,
-                references: Array(sorted)
+                references: Array(merged.prefix(limit)),
+                totalReferences: merged.count
             )
         }
         .sorted { $0.usr < $1.usr }

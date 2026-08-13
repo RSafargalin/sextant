@@ -61,6 +61,31 @@ public enum RuleEngine {
         /// Possible violations in `#if` branches the build does not contain — textual, unverified.
         public let inactive: [StructuralHit]
         public let targets: Set<String>
+        /// Patterns that never compiled. They match nothing, so without naming them a clean report
+        /// is produced by a rule set that partly did not run.
+        public let broken: [BrokenPattern]
+    }
+
+    /// A rule pattern the structural parser rejected.
+    public struct BrokenPattern: Sendable {
+        public let ruleID: String
+        public let pattern: String
+        public let reason: String
+    }
+
+    /// The patterns in a rule set that do not compile.
+    public static func brokenPatterns(in rules: [Rule]) -> [BrokenPattern] {
+        rules.flatMap { rule in
+            rule.patterns.compactMap { pattern -> BrokenPattern? in
+                do { _ = try PatternSearch(pattern: pattern); return nil }
+                catch { return BrokenPattern(ruleID: rule.id, pattern: pattern, reason: "\(error)") }
+            }
+        }
+    }
+
+    /// One line per pattern that never ran, for the surfaces that print warnings.
+    public static func brokenReport(_ broken: [BrokenPattern]) -> [String] {
+        broken.map { "⚠ rule '\($0.ruleID)': pattern \($0.pattern) could not be compiled (\($0.reason)) — it matched nothing." }
     }
 
     /// Runs the rules over a project: Swift through its own parser, then Objective-C, C and C++
@@ -71,7 +96,8 @@ public enum RuleEngine {
         let violations = run(rules: rules, projectRoot: lintRoot, includeTests: includeTests, cache: cache)
         let cFamily = CFamilyLint.run(rules: rules, lintRoot: lintRoot, projectRoot: projectRoot, includeTests: includeTests)
         return Outcome(violations: violations + cFamily.violations, unscanned: cFamily.unscanned,
-                       inactive: cFamily.inactive, targets: cFamily.targets)
+                       inactive: cFamily.inactive, targets: cFamily.targets,
+                       broken: brokenPatterns(in: rules))
     }
 
     /// Runs the rules over every Swift file in the project. A file is parsed once for all patterns.

@@ -7,6 +7,15 @@ public enum Access: Int, Sendable, Comparable, Codable {
     case `public` = 2
 
     public static func < (lhs: Access, rhs: Access) -> Bool { lhs.rawValue < rhs.rawValue }
+
+    /// The keyword as it is written in source. `fileprivate` is folded into `private` upstream.
+    public var keyword: String {
+        switch self {
+        case .private: return "private"
+        case .internal: return "internal"
+        case .public: return "public"
+        }
+    }
 }
 
 /// Kind of declaration.
@@ -72,7 +81,16 @@ public struct Declaration: Sendable, Codable {
     /// into `#if os(iOS)` does not touch its header but does remove it from every other platform,
     /// and a diff that stayed quiet about that would be reporting less than happened.
     public var signature: String {
-        condition.map { "\(header)  [\($0)]" } ?? header
+        let base = "\(access.keyword) \(header)"
+        return condition.map { "\(base)  [\($0)]" } ?? base
+    }
+
+    /// Header as a diff renders it: the access level included, because narrowing it removes the
+    /// declaration from every other module while the rest of the line stays identical.
+    public var diffHeader: String {
+        let base = attributes.isEmpty ? header : attributes.joined(separator: " ") + " " + header
+        let withAccess = "\(access.keyword) \(base)"
+        return condition.map { "\(withAccess)  [\($0)]" } ?? withAccess
     }
 
     public var decoratedHeader: String {

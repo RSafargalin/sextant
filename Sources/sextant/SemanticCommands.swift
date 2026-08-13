@@ -200,11 +200,16 @@ func runConstruct(arguments: [String]) -> Int32 {
     }
     // The shape of construction depends on the language of the file the reference is in:
     // Objective-C sends `alloc` or `new` to the class rather than calling the type.
-    let sites = references.compactMap { location -> Site? in
+    // Two constructions on one line are one place in the source, and the count answers "in how
+    // many places", so a position is kept once.
+    var seen: Set<String> = []
+    let allSites = references.compactMap { location -> Site? in
         guard let text = reader.line(location.line, inFile: location.path),
               ConstructionSite.isConstruction(line: text, of: symbol, inFile: location.path) else { return nil }
+        guard seen.insert("\(location.path):\(location.line)").inserted else { return nil }
         return Site(file: location.path, line: location.line, text: text)
-    }.prefix(limit)
+    }
+    let sites = allSites.prefix(limit)
 
     let heuristic = Set(references.map { ConstructionSite.description(of: symbol, inFile: $0.path) })
         .sorted().joined(separator: ", ")
@@ -215,8 +220,9 @@ func runConstruct(arguments: [String]) -> Int32 {
         print("No construction sites found for '\(symbol)' (heuristic \(shown)).")
         return 0
     }
-    print("── \(symbol): construction and injection (heuristic \(shown)), \(sites.count):")
+    print("── \(symbol): construction and injection (heuristic \(shown)), \(allSites.count):")
     for site in sites { print("     \(shorten(site.file)):\(site.line)  \(site.text)") }
+    if allSites.count > sites.count { print("     … \(allSites.count - sites.count) more (--limit \(limit))") }
     return 0
 }
 
@@ -248,9 +254,9 @@ func runChanged(arguments: [String]) -> Int32 {
             files: changes.files.map { change in
                 FileChanges(
                     file: change.file,
-                    added: change.result.added.map(\.decoratedHeader),
-                    removed: change.result.removed.map(\.decoratedHeader),
-                    changed: change.result.changed.map { ["old": $0.old.decoratedHeader, "new": $0.new.decoratedHeader] }
+                    added: change.result.added.map(\.diffHeader),
+                    removed: change.result.removed.map(\.diffHeader),
+                    changed: change.result.changed.map { ["old": $0.old.diffHeader, "new": $0.new.diffHeader] }
                 )
             },
             notDiffed: changes.notDiffed
@@ -262,9 +268,9 @@ func runChanged(arguments: [String]) -> Int32 {
     }
     for change in changes.files {
         print("\n\(change.file)")
-        for declaration in change.result.added { print("  + \(declaration.decoratedHeader)") }
-        for declaration in change.result.removed { print("  − \(declaration.decoratedHeader)") }
-        for (old, new) in change.result.changed { print("  ~ \(old.decoratedHeader)  →  \(new.decoratedHeader)") }
+        for declaration in change.result.added { print("  + \(declaration.diffHeader)") }
+        for declaration in change.result.removed { print("  − \(declaration.diffHeader)") }
+        for (old, new) in change.result.changed { print("  ~ \(old.diffHeader)  →  \(new.diffHeader)") }
     }
     printNotDiffed(changes.notDiffed)
     return 0
@@ -333,8 +339,8 @@ func runRelated(_ query: RelationQuery, label: String, arguments: [String]) -> I
     }
     guard let set = openIndex(arguments, label: label) else { return 1 }
     let limit = max(1, optionValue("--limit", in: arguments).flatMap(Int.init) ?? 1000)
-    let related = Array(set.related(toName: symbol, query: query).prefix(limit))
-    if arguments.contains("--json") { printJSON(related); return 0 }
+    let related = set.related(toName: symbol, query: query)
+    if arguments.contains("--json") { printJSON(Array(related.prefix(limit))); return 0 }
     guard !related.isEmpty else { print("Nothing found for '\(symbol)'."); return 0 }
 
     // Grouped by symbol, because the count in the header answers "how many callees", not "how
@@ -348,9 +354,13 @@ func runRelated(_ query: RelationQuery, label: String, arguments: [String]) -> I
 
     let reader = SourceLineReader()
     let siteCount = related.count
+    // The header answers "how many there are", so it counts everything found; `--limit` shortens
+    // the list below it and says by how much. Otherwise a limited query answers a counting
+    // question with the limit.
     let header = siteCount == order.count ? "\(order.count)" : "\(order.count) (\(siteCount) sites)"
+    let shownOrder = order.prefix(limit)
     print("── \(symbol): \(header)")
-    for usr in order {
+    for usr in shownOrder {
         guard let group = sites[usr], let first = group.first else { continue }
         let snippet = reader.line(first.location.line, inFile: first.location.path).map { "  \($0)" } ?? ""
         print("   • \(first.name) [\(first.kind)]  \(shorten(first.location.path)):\(first.location.line)\(snippet)")
@@ -358,5 +368,6 @@ func runRelated(_ query: RelationQuery, label: String, arguments: [String]) -> I
             print("     also \(shorten(extra.location.path)):\(extra.location.line):\(extra.location.column)")
         }
     }
+    if order.count > shownOrder.count { print("   … \(order.count - shownOrder.count) more (--limit \(limit))") }
     return 0
 }

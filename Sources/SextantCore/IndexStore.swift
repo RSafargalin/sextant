@@ -129,7 +129,8 @@ public final class IndexStore {
                 usr: usr,
                 kind: "\(definitionOccurrence.symbol.kind)",
                 definition: definitionLocation,
-                references: Array(locations.sorted(by: SourceLocation.isOrderedBefore).prefix(limit))
+                references: Array(locations.sorted(by: SourceLocation.isOrderedBefore).prefix(limit)),
+                totalReferences: locations.count
             )
         }
         .sorted { $0.usr < $1.usr }

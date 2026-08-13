@@ -16,6 +16,14 @@ public enum DeclarationDiff {
         SwiftDeclarationExtractor.declarations(tree: Parser.parse(source: source))
     }
 
+    /// Declarations plus whether the parser had to recover. A recovery tree is missing whatever
+    /// followed the broken syntax, and diffing it reports those declarations as removed — which is
+    /// exactly the state an agent's half-finished edit leaves behind.
+    static func parsed(_ source: String) -> (declarations: [Declaration], recovered: Bool) {
+        let tree = Parser.parse(source: source)
+        return (SwiftDeclarationExtractor.declarations(tree: tree), tree.hasError)
+    }
+
     /// What a run of `changed` produced: the per-file diffs, and the changed files it could not
     /// diff at all. The second list is part of the answer, not a detail: a report of "nothing
     /// changed" means something different when three `.m` files were left out of it.
@@ -32,17 +40,31 @@ public enum DeclarationDiff {
     /// file is built with today, which is the only thing a past revision's text can be read
     /// against. Whatever cannot be read that way is named in `notDiffed`.
     public static func changes(root: String, from: String, to: String?) -> Changes? {
-        guard let (topLevel, swift, clang) = SwiftSources.changedFiles(root: root, from: from, to: to) else { return nil }
+        guard let (topLevel, swift, clang, renamedFrom) = SwiftSources.changedFiles(root: root, from: from, to: to)
+        else { return nil }
+        var unparsable: [UnscannedFile] = []
         let files = swift.compactMap { relative -> (file: String, result: Result)? in
             // A file missing at a revision (added or removed) is an empty source, not an error.
-            let oldSource = SwiftSources.fileContent(root: root, revision: from, relativePath: relative) ?? ""
+            // A renamed one is read at its previous path, so a pure move changes no symbol.
+            let previous = renamedFrom[relative] ?? relative
+            let oldSource = SwiftSources.fileContent(root: root, revision: from, relativePath: previous) ?? ""
             let newSource = to.map { SwiftSources.fileContent(root: root, revision: $0, relativePath: relative) ?? "" }
                 ?? (try? String(contentsOfFile: "\(topLevel)/\(relative)", encoding: .utf8)) ?? ""
-            let result = compare(old: declarations(fromSource: oldSource), new: declarations(fromSource: newSource))
-            return result.isEmpty ? nil : (relative, result)
+            let oldSide = parsed(oldSource), newSide = parsed(newSource)
+            guard !oldSide.recovered, !newSide.recovered else {
+                unparsable.append(UnscannedFile(
+                    file: relative,
+                    reason: "does not parse at \(newSide.recovered ? (to ?? "the working tree") : from) — "
+                          + "the parser recovers by dropping what follows, which a diff would report as removed symbols"))
+                return nil
+            }
+            let result = compare(old: oldSide.declarations, new: newSide.declarations)
+            let label = previous == relative ? relative : "\(relative) (renamed from \(previous))"
+            return result.isEmpty ? nil : (label, result)
         }
         let cFamily = CFamilyDiff.changes(files: clang, topLevel: topLevel, projectRoot: root, from: from, to: to)
-        return Changes(files: (files + cFamily.files).sorted { $0.file < $1.file }, notDiffed: cFamily.notDiffed)
+        return Changes(files: (files + cFamily.files).sorted { $0.file < $1.file },
+                       notDiffed: cFamily.notDiffed + unparsable)
     }
 
     /// Matching declarations. Grouped by (kind:name); for a name UNIQUE in both versions, changed

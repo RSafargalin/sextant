@@ -86,6 +86,14 @@ public enum SymbolReport {
             return "\(path(location.path)):\(position)\(text)"
         }
 
+        // The index layer caps how many occurrences it collects. Printing the cap as the count
+        // answers "how many are there" with "how many I looked at".
+        func counted(_ hit: SymbolHit) -> String {
+            hit.totalReferences > hit.references.count
+                ? "\(hit.references.count) of \(hit.totalReferences) (internal cap)"
+                : "\(hit.references.count)"
+        }
+
         var lines: [String] = []
         for hit in hits {
             lines.append("\(style.headerPrefix)\(hit.name)  [\(hit.kind)]")
@@ -101,13 +109,13 @@ public enum SymbolReport {
                 if style.compact {
                     // A histogram by file without snippets — exact, every occurrence is grouped.
                     let histogram = ReferenceHistogram.byFile(hit.references) { path($0.path) }
-                    lines.append("\(style.level1)\(label): \(hit.references.count) in \(histogram.count) file(s)")
+                    lines.append("\(style.level1)\(label): \(counted(hit)) in \(histogram.count) file(s)")
                     for entry in histogram {
                         lines.append("\(style.level2)\(entry.file): \(entry.lines.map(String.init).joined(separator: ", "))")
                     }
                     if let hint = style.fullHint { lines.append("\(style.level2)\(hint)") }
                 } else {
-                    lines.append("\(style.level1)\(label): \(hit.references.count)")
+                    lines.append("\(style.level1)\(label): \(counted(hit))")
                     for reference in hit.references.prefix(style.referenceLimit) {
                         lines.append("\(style.level2)• \(located(reference))")
                     }
