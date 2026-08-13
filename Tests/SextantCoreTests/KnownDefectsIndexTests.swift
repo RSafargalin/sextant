@@ -1,10 +1,10 @@
 import Foundation
 import Testing
 
-/// The half of the defect ledger that needs a real index store, so every test here builds a
-/// throwaway package first. Same contract as the CLI suite: the assertion states the correct
-/// answer, `withKnownIssue` keeps the suite green while the defect exists, and the test fails
-/// the moment someone fixes it.
+/// The half of the ledger that needs a real index store, so every test here builds a throwaway
+/// package first. Same contract as the CLI suite: the assertion states the correct answer, and
+/// while a defect was open it sat inside `withKnownIssue` so that fixing it failed the suite
+/// rather than passing unnoticed. All of them are fixed; these are regression guards now.
 ///
 /// Prerequisites (a toolchain, `libIndexStore`, a build that succeeds) are treated as "not
 /// applicable" rather than failure — the same way the existing integration suite does it.
@@ -151,10 +151,10 @@ struct KnownDefectsIndexTests {
         write("// shifted\n// shifted\npublic struct Widget {}\npublic let one = Widget()\n", to: "Sources/snip/a.swift", in: fixture)
 
         let result = try sextant(["refs", "Widget", "--project", fixture.root.path, "--index-store", fixture.store, "--full"])
-        let snippetLines = result.stdout.split(separator: "\n").filter { $0.contains("•") }
-        withKnownIssue("text from the current file is printed at stale coordinates") {
-            #expect(snippetLines.allSatisfy { $0.contains("Widget") })
-        }
+        // The recorded lines now hold the inserted comments. Withholding the text is the answer:
+        // the position is what the index knows, the text at it is not the symbol's any more.
+        #expect(!result.stdout.contains("// shifted"))
+        #expect(result.all.contains("withheld"))
     }
 
     // MARK: - The machine contract
@@ -170,10 +170,12 @@ struct KnownDefectsIndexTests {
         let text = try sextant(["refs", "localOnly", "--project", fixture.root.path, "--index-store", fixture.store])
         let json = try sextant(["refs", "localOnly", "--project", fixture.root.path, "--index-store", fixture.store, "--json"])
         guard text.all.contains("⚠") else { return }   // no degradation to compare against
-        let parsed = (try? JSONSerialization.jsonObject(with: Data(json.stdout.utf8))) as? [Any]
-        withKnownIssue("--json returns an empty array where the text answer degrades with a warning") {
-            #expect(parsed?.isEmpty == false)
-        }
+        // The degraded answer is an object, not the array a resolved answer returns: a consumer
+        // that decodes it as references would otherwise read textual matches as semantic ones.
+        let parsed = try #require((try? JSONSerialization.jsonObject(with: Data(json.stdout.utf8))) as? [String: Any])
+        #expect(parsed["degraded"] as? Bool == true)
+        #expect((parsed["textual"] as? [Any])?.isEmpty == false)
+        #expect((parsed["semantic"] as? [Any])?.isEmpty == true)
     }
 
     /// `--json` is a contract. On a symbol that is not in the index these three commands print
@@ -184,10 +186,8 @@ struct KnownDefectsIndexTests {
         for command in ["blast", "hierarchy", "context"] {
             let result = try sextant([command, "NoSuchSymbolXYZ", "--project", fixture.root.path,
                                       "--index-store", fixture.store, "--json"])
-            withKnownIssue("\(command) --json prints prose when the symbol is unknown") {
-                let trimmed = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-                #expect(trimmed.isEmpty || trimmed.hasPrefix("[") || trimmed.hasPrefix("{"))
-            }
+            let trimmed = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+            #expect(trimmed.isEmpty || trimmed.hasPrefix("[") || trimmed.hasPrefix("{"))
         }
     }
 

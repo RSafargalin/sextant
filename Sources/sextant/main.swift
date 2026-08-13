@@ -139,6 +139,15 @@ func printJSON<T: Encodable>(_ value: T) {
     }
 }
 
+/// The `--json` answer for a symbol the index does not hold. `--json` is a contract: prose on
+/// stdout gives the consumer a parse error where an answer was promised, and "not found" is an
+/// answer. The prose goes to stderr, where a human still sees it.
+func printNotFoundJSON(symbol: String, command: String) {
+    struct NotFound: Encodable { let symbol: String; let found: Bool; let message: String }
+    printJSON(NotFound(symbol: symbol, found: false, message: "not in the index"))
+    reportError("sextant \(command): symbol '\(symbol)' not found in the index.")
+}
+
 struct SearchHit: Encodable {
     let file: String
     let line: Int

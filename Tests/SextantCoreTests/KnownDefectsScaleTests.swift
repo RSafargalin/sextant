@@ -147,8 +147,6 @@ struct KnownDefectsScaleTests {
         let direct = try sextant(["map", "--project", fixture.root.path], environment: ["SEXTANT_NO_DAEMON": "1"])
         guard direct.stdout.contains("files: 2") else { return }   // the file really is there
 
-        withKnownIssue("the file list is memoised for the life of the daemon and never cleared") {
-            #expect(throughDaemon.stdout.contains("files: 2"))
-        }
+        #expect(throughDaemon.stdout.contains("files: 2"))
     }
 }
