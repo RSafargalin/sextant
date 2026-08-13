@@ -110,12 +110,12 @@ struct KnownDefectsCLITests {
     func invalidPatternIsReported() throws {
         let package = try makePackage(name: "pat", files: ["Sources/pat/a.swift": "public func f() { print(1) }\n"])
         let broken = try sextant(["search", "print(", "--project", package.path])
-        withKnownIssue("an unbalanced pattern yields `No matches.` and exit 0") {
-            #expect(broken.code != 0 || !broken.stdout.contains("No matches"))
-        }
+        #expect(broken.code != 0 || !broken.stdout.contains("No matches"))
     }
 
-    /// `--limit` is advertised in the catalog for `search` and ignored by it.
+    /// `--limit` is advertised in the catalog for `search` and ignored by it. Honouring it means
+    /// shortening the list and saying by how much — the total keeps counting everything found,
+    /// because a limit that rewrites the total answers "how many are there" with itself.
     @Test("search honours --limit, or does not advertise it")
     func searchLimitIsHonoured() throws {
         let source = (1...5).map { "public func f\($0)() { print(\($0)) }" }.joined(separator: "\n")
@@ -123,9 +123,13 @@ struct KnownDefectsCLITests {
         let all = try sextant(["search", "print($$$)", "--project", package.path])
         let limited = try sextant(["search", "print($$$)", "--project", package.path, "--limit", "1"])
         #expect(all.stdout.contains("total: 5"))
-        withKnownIssue("--limit is accepted and has no effect on search") {
-            #expect(!limited.stdout.contains("total: 5"))
+        func matchLines(_ output: String) -> Int {
+            output.split(separator: "\n").filter { $0.contains("a.swift:") }.count
         }
+        #expect(matchLines(all.stdout) == 5)
+        #expect(matchLines(limited.stdout) == 1)
+        #expect(limited.stdout.contains("more not shown"))
+        #expect(limited.stdout.contains("total: 5"))
     }
 
     // MARK: - Exclusions
@@ -137,9 +141,7 @@ struct KnownDefectsCLITests {
         let plain = try sextant(["search", "print($$$)", "--project", package.path])
         let excluded = try sextant(["search", "print($$$)", "--project", package.path, "--exclude", "Sources/**"])
         #expect(plain.stdout.contains("total: 1"))
-        withKnownIssue("results vanish with no mention of the exclusion that removed them") {
-            #expect(excluded.all.lowercased().contains("exclud"))
-        }
+        #expect(excluded.all.lowercased().contains("exclud"))
     }
 
     // A single-component exclusion matching only file names — so `--exclude Sources` leaves the
@@ -159,9 +161,7 @@ struct KnownDefectsCLITests {
         let rules = package.appendingPathComponent("rules.json")
         try #"[{"id":"broken","message":"m","patterns":["@#%^&"]}]"#.write(to: rules, atomically: true, encoding: .utf8)
         let result = try sextant(["lint", "--project", package.path, "--rules", rules.path])
-        withKnownIssue("the header says `rules: 1` for a rule that never compiled") {
-            #expect(result.all.lowercased().contains("could not") || result.code != 0)
-        }
+        #expect(result.all.lowercased().contains("could not") || result.code != 0)
     }
 
     // MARK: - Argument handling
@@ -229,9 +229,7 @@ struct KnownDefectsCLITests {
     func apiUnknownPackageIsNamed() throws {
         let package = try makePackage(name: "pkg", files: ["Sources/pkg/a.swift": "public struct Thing {}\n"])
         let result = try sextant(["api", "--project", package.path, "--package", "NoSuchPackage"])
-        withKnownIssue("an unmatched --package yields `declarations: 0` and exit 0") {
-            #expect(result.code != 0 || result.all.lowercased().contains("no such") || result.all.lowercased().contains("unknown package"))
-        }
+        #expect(result.code != 0 || result.all.lowercased().contains("no package named"))
     }
 
     /// The package name is derived from the first path component, so a project that keeps its
@@ -251,9 +249,7 @@ struct KnownDefectsCLITests {
         try "public struct AlphaType {}\n".write(to: inner.appendingPathComponent("Sources/Alpha/a.swift"), atomically: true, encoding: .utf8)
 
         let result = try sextant(["api", "--project", root.path, "--package", "Alpha"])
-        withKnownIssue("the name comes from the path, so `Alpha` addresses nothing") {
-            #expect(result.stdout.contains("AlphaType"))
-        }
+        #expect(result.stdout.contains("AlphaType"))
     }
 
     // MARK: - changed
@@ -269,9 +265,8 @@ struct KnownDefectsCLITests {
         commitAll(package, message: "narrow the surface")
 
         let result = try sextant(["changed", "--from", "HEAD~1", "--to", "HEAD", "--project", package.path])
-        withKnownIssue("access level is not part of the compared signature") {
-            #expect(!result.stdout.contains("No symbol-level changes"))
-        }
+        #expect(!result.stdout.contains("No symbol-level changes"))
+        #expect(result.stdout.contains("internal struct Alpha"))
     }
 
     /// A file that does not parse yields a partial tree, and the missing half is reported as
@@ -284,9 +279,8 @@ struct KnownDefectsCLITests {
             .write(to: package.appendingPathComponent("Sources/brk/a.swift"), atomically: true, encoding: .utf8)
 
         let result = try sextant(["changed", "--project", package.path])
-        withKnownIssue("a recovery tree is diffed as if it were the source") {
-            #expect(!result.stdout.contains("− func topLevel()"))
-        }
+        #expect(!result.stdout.contains("func topLevel()"))
+        #expect(result.all.contains("does not parse"))
     }
 
     /// git reports a pure rename as R100; the file list drops the old path, so every declaration
@@ -299,8 +293,7 @@ struct KnownDefectsCLITests {
         commitAll(package, message: "rename")
 
         let result = try sextant(["changed", "--from", "HEAD~1", "--to", "HEAD", "--project", package.path])
-        withKnownIssue("a moved file reads as an added type") {
-            #expect(!result.stdout.contains("+ struct Alpha"))
-        }
+        #expect(!result.stdout.contains("+ public struct Alpha"))
+        #expect(!result.stdout.contains("− public struct Alpha"))
     }
 }

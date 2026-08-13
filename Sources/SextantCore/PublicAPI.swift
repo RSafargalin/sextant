@@ -24,7 +24,7 @@ public enum PublicAPI {
             .filter { $0.lastPathComponent != "Package.swift" }
             .compactMap { url -> FileSummary? in
                 let relative = SwiftSources.relativePath(of: url, root: root)
-                let packageName = SwiftSources.package(for: relative)
+                let packageName = SwiftSources.package(for: relative, root: root)
                 if let package, packageName != package { return nil }
                 guard var declarations = DeclarationCache.declarations(for: url, parseCache: cache, store: store) else { return nil }
                 // Filter here rather than only when rendering: `--json` serialises these summaries

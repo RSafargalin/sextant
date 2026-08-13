@@ -22,6 +22,14 @@ public enum StructuralCoverage {
     ///
     /// Files are grouped by reason: twenty files skipped for one reason are one line of
     /// explanation and twenty names, not twenty repetitions.
+    /// Files the user's own exclusions removed from the walk. Without this, an answer emptied by
+    /// an exclusion is indistinguishable from an answer that found nothing.
+    public static func exclusionNote() -> [String] {
+        guard let effect = SwiftSources.exclusionsInEffect() else { return [] }
+        return ["ℹ at least \(effect.removed) file(s) excluded by: \(effect.patterns.joined(separator: ", ")) — "
+                + "the answer does not cover them."]
+    }
+
     public static func report(_ files: [UnscannedFile], limit: Int = 10) -> [String] {
         guard !files.isEmpty else { return [] }
         var lines: [String] = []

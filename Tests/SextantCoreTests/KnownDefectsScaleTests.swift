@@ -94,9 +94,7 @@ struct KnownDefectsScaleTests {
 
         let result = try sextant(["refs", "Widget", "--project", fixture.root.path, "--index-store", fixture.store])
         guard let usages = result.stdout.split(separator: "\n").first(where: { $0.contains("usages:") }) else { return }
-        withKnownIssue("the cap of 1000 is applied silently and printed as the total") {
-            #expect(usages.contains("1200") || usages.lowercased().contains("more") || usages.contains("+"))
-        }
+        #expect(usages.contains("1200") || usages.lowercased().contains("more") || usages.contains("cap"))
     }
 
     // MARK: - Choosing between stores — not covered here, and deliberately so

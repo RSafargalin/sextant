@@ -29,7 +29,7 @@ public enum IndexDeclarations {
                 let relative = SwiftSources.relativePath(of: url, root: root)
                 return FileSummary(
                     relativePath: relative,
-                    package: SwiftSources.package(for: relative),
+                    package: SwiftSources.package(for: relative, root: root),
                     declarations: declarations
                 )
             }
@@ -124,7 +124,7 @@ extension IndexDeclarations {
         for url in SwiftSources.files(under: root, includeTests: false, extensions: Array(headerExtensions)) {
             guard url.pathComponents.contains("include") else { continue }
             let relative = SwiftSources.relativePath(of: url, root: root)
-            let packageName = SwiftSources.package(for: relative)
+            let packageName = SwiftSources.package(for: relative, root: root)
             if let package, packageName != package { continue }
 
             // Any C++ at all sends the whole header to clang. Reading the rest from the index
@@ -168,7 +168,7 @@ extension IndexDeclarations {
         for url in SwiftSources.files(under: root, includeTests: includeTests, extensions: extensions) {
             if publicOnly, !url.pathComponents.contains("include") { continue }
             let relative = SwiftSources.relativePath(of: url, root: root)
-            if let package, SwiftSources.package(for: relative) != package { continue }
+            if let package, SwiftSources.package(for: relative, root: root) != package { continue }
             if let source = try? String(contentsOf: url, encoding: .utf8), ConditionalRegions.areUsed(inSource: source) {
                 count += 1
             }
@@ -208,7 +208,7 @@ extension IndexDeclarations {
                 continue
             }
             summaries.append(FileSummary(relativePath: relative,
-                                         package: SwiftSources.package(for: relative),
+                                         package: SwiftSources.package(for: relative, root: root),
                                          declarations: declarations))
         }
         return (summaries, missing)

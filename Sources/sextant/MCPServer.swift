@@ -282,8 +282,11 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
 
     case "structural_search":
         guard let pattern = (args["pattern"] as? String).flatMap({ $0.isEmpty ? nil : $0 }) else { return ("the pattern parameter is required", true) }
-        let engine: PatternSearch
+        // As in the CLI: a pattern the Swift parser rejects may still be a C-family one.
+        var engine: PatternSearch?
+        var swiftRejection: String?
         do { engine = try PatternSearch(pattern: pattern) }
+        catch let failure as PatternSearch.Failure where failure.mayBeCFamily { swiftRejection = failure.description }
         catch { return ("invalid pattern: \(error)", true) }
         let root = URL(fileURLWithPath: context.project, isDirectory: true)
         let cache = SourceParseCache()
@@ -291,6 +294,7 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
         var lines: [String] = []
         var scanned = 0
         for file in SwiftSources.files(under: root, includeTests: false) {
+            guard let engine else { break }
             scanned += 1
             if scanned > scanLimit { lines.append("… (scanned \(scanLimit) files, search stopped — narrow the scope)"); break }
             guard let tree = cache.tree(atPath: file.path) else { continue }
@@ -304,6 +308,11 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
         let cFamily = CFamilySearch.run(pattern: pattern, searchRoot: context.project,
                                         projectRoot: context.projectRoot, includeTests: false)
         lines += cFamily.hits.prefix(200).map { "\($0.file):\($0.line):\($0.column): \($0.text)" }
+        if let swiftRejection {
+            guard cFamily.scannedCount > 0 else { return ("invalid pattern: \(swiftRejection)", true) }
+            lines.append("⚠ the pattern does not parse as Swift (\(swiftRejection)) — the \(cFamily.scannedCount) "
+                         + "C-family file(s) were searched, the Swift ones were not.")
+        }
         if lines.isEmpty { lines.append("no matches") }
         lines += StructuralCoverage.inactiveReport(cFamily.inactive, targets: cFamily.targets)
         if cFamily.inactive.isEmpty { lines += StructuralCoverage.configurationNote(targets: cFamily.targets) }
@@ -326,6 +335,7 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
         let unscanned = StructuralCoverage.inactiveReport(outcome.inactive, targets: outcome.targets,
                                                           noun: "possible violation(s)")
             + StructuralCoverage.report(outcome.unscanned)
+            + RuleEngine.brokenReport(outcome.broken)
         guard !violations.isEmpty else {
             return ((["✅ no violations found — rules: \(ruleSet.origin)"] + unscanned).joined(separator: "\n"), false)
         }
@@ -380,9 +390,9 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
         }
         for change in changes.files {
             lines.append(change.file)
-            change.result.added.forEach { lines.append("  + \($0.decoratedHeader)") }
-            change.result.removed.forEach { lines.append("  − \($0.decoratedHeader)") }
-            change.result.changed.forEach { lines.append("  ~ \($0.old.decoratedHeader)  →  \($0.new.decoratedHeader)") }
+            change.result.added.forEach { lines.append("  + \($0.diffHeader)") }
+            change.result.removed.forEach { lines.append("  − \($0.diffHeader)") }
+            change.result.changed.forEach { lines.append("  ~ \($0.old.diffHeader)  →  \($0.new.diffHeader)") }
         }
         // Named, not dropped: a model reading this must not conclude a file is unchanged when it
         // was never compared.

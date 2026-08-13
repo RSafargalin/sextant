@@ -134,6 +134,15 @@ func runAPI(arguments: [String]) -> Int32 {
     guard withinScale(root, includeTests: false, arguments: arguments) else { return 1 }
     let package = optionValue("--package", in: arguments)
     let type = optionValue("--type", in: arguments)
+    // A filter that matches nothing must not be answered with "there is nothing": those are
+    // different statements, and only one of them is about the code.
+    if let package {
+        let known = SwiftSources.packageNames(under: URL(fileURLWithPath: root, isDirectory: true))
+        guard known.contains(package) else {
+            reportError("sextant api: no package named '\(package)'. Known: \(known.sorted().joined(separator: ", ")).")
+            return 2
+        }
+    }
     let index = clangIndex(root: root, arguments: arguments, includeTests: false)
     let databaseRoot = projectRoot(in: arguments)
     // C++ public headers are read through clang, which knows their access levels — the index does
@@ -150,12 +159,14 @@ func runAPI(arguments: [String]) -> Int32 {
                                       compileDatabaseRoot: databaseRoot))
         conditional.forEach(reportError)
         StructuralCoverage.report(unanswered).forEach(reportError)
+        StructuralCoverage.exclusionNote().forEach(reportError)
         return 0
     }
     print(PublicAPI.generate(projectRoot: root, package: package, type: type, index: index,
                              compileDatabaseRoot: databaseRoot))
     conditional.forEach(reportError)
     StructuralCoverage.report(unanswered).forEach(reportError)
+    StructuralCoverage.exclusionNote().forEach(reportError)
     return 0
 }
 
@@ -164,9 +175,15 @@ func runSearch(arguments: [String]) -> Int32 {
         reportError("sextant search: expected <pattern>, for example sextant search 'try? $X.save()'")
         return 2
     }
-    let engine: PatternSearch
+    // A pattern the Swift parser rejects can still be an Objective-C or C++ one, so it is carried
+    // to clang instead of ending the command. What must never happen is "No matches." for a
+    // pattern that nothing was able to use.
+    var engine: PatternSearch?
+    var swiftRejection: String?
     do {
         engine = try PatternSearch(pattern: pattern)
+    } catch let failure as PatternSearch.Failure where failure.mayBeCFamily {
+        swiftRejection = failure.description
     } catch {
         reportError("sextant search: invalid pattern (\(error)). Supported: an expression using $X and $$$.")
         return 2
@@ -187,6 +204,7 @@ func runSearch(arguments: [String]) -> Int32 {
         guard let contentHash = ContentHash.ofFile(file.path) else { continue }
         let key = "\(contentHash)-\(patternHash)"
 
+        guard let engine else { break }
         let fileHits: [CachedHit]
         if let cached = resultCache.value(forKey: key) {
             fileHits = cached
@@ -208,6 +226,15 @@ func runSearch(arguments: [String]) -> Int32 {
     hits += cFamily.hits.map { SearchHit(file: $0.file, line: $0.line, column: $0.column, text: $0.text) }
     hits.sort { ($0.file, $0.line, $0.column) < ($1.file, $1.line, $1.column) }
 
+    if let swiftRejection {
+        guard cFamily.scannedCount > 0 else {
+            reportError("sextant search: invalid pattern (\(swiftRejection)). Supported: an expression using $X and $$$.")
+            return 2
+        }
+        reportError("⚠ the pattern does not parse as Swift (\(swiftRejection)) — the \(cFamily.scannedCount) "
+                    + "C-family file(s) were searched, the Swift ones were not.")
+    }
+
     if arguments.contains("--json") {
         struct SearchOutput: Encodable {
             let matches: [SearchHit]
@@ -218,13 +245,18 @@ func runSearch(arguments: [String]) -> Int32 {
         printJSON(SearchOutput(matches: hits, notScanned: cFamily.unscanned, inactiveOccurrences: cFamily.inactive))
         return 0
     }
-    for hit in hits { print("\(hit.file):\(hit.line):\(hit.column): \(hit.text)") }
+    // `--limit` shortens the list; the total keeps counting everything found, and the difference
+    // is named. A limit that silently rewrites the total answers a counting question with itself.
+    let limit = optionValue("--limit", in: arguments).flatMap(Int.init).map { max(1, $0) } ?? hits.count
+    for hit in hits.prefix(limit) { print("\(hit.file):\(hit.line):\(hit.column): \(hit.text)") }
+    if hits.count > limit { print("… \(hits.count - limit) more not shown (--limit \(limit))") }
     print(hits.isEmpty ? "No matches." : "\ntotal: \(hits.count)")
     StructuralCoverage.inactiveReport(cFamily.inactive, targets: cFamily.targets).forEach(reportError)
     if cFamily.inactive.isEmpty {
         StructuralCoverage.configurationNote(targets: cFamily.targets).forEach(reportError)
     }
     StructuralCoverage.report(cFamily.unscanned).forEach(reportError)
+    StructuralCoverage.exclusionNote().forEach(reportError)
     return 0
 }
 
@@ -253,8 +285,11 @@ func runLint(arguments: [String]) -> Int32 {
             let notScanned: [UnscannedFile]
             /// Textual only: possible violations in `#if` branches the build does not contain.
             let inactiveOccurrences: [StructuralHit]
+            /// Rule patterns that never compiled, so they matched nothing.
+            let brokenRules: [String]
         }
-        printJSON(LintOutput(violations: violations, notScanned: unscanned, inactiveOccurrences: outcome.inactive))
+        printJSON(LintOutput(violations: violations, notScanned: unscanned, inactiveOccurrences: outcome.inactive,
+                             brokenRules: RuleEngine.brokenReport(outcome.broken)))
         return violations.isEmpty ? 0 : 1
     }
     let inactive = StructuralCoverage.inactiveReport(outcome.inactive, targets: outcome.targets,
@@ -262,7 +297,9 @@ func runLint(arguments: [String]) -> Int32 {
     guard !violations.isEmpty else {
         print("✅ No violations found — rules: \(ruleSet.origin)")
         inactive.forEach(reportError)
+        RuleEngine.brokenReport(outcome.broken).forEach(reportError)
         StructuralCoverage.report(unscanned).forEach(reportError)
+        StructuralCoverage.exclusionNote().forEach(reportError)
         return 0
     }
     for violation in violations.sorted(by: { ($0.ruleID, $0.file, $0.line) < ($1.ruleID, $1.file, $1.line) }) {
@@ -270,6 +307,8 @@ func runLint(arguments: [String]) -> Int32 {
     }
     print("\n❌ violations: \(violations.count)  ·  rules: \(ruleSet.origin)")
     inactive.forEach(reportError)
+    RuleEngine.brokenReport(outcome.broken).forEach(reportError)
     StructuralCoverage.report(unscanned).forEach(reportError)
+    StructuralCoverage.exclusionNote().forEach(reportError)
     return 1
 }
