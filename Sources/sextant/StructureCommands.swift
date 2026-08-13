@@ -227,11 +227,14 @@ func runSearch(arguments: [String]) -> Int32 {
     hits.sort { ($0.file, $0.line, $0.column) < ($1.file, $1.line, $1.column) }
 
     if let swiftRejection {
-        guard cFamily.scannedCount > 0 else {
+        // "Had files to try" rather than "scanned some": a C-family file that could not be read is
+        // reported by its own channel, and calling the pattern invalid because of it would name
+        // the wrong cause.
+        guard cFamily.scannedCount > 0 || !cFamily.unscanned.isEmpty else {
             reportError("sextant search: invalid pattern (\(swiftRejection)). Supported: an expression using $X and $$$.")
             return 2
         }
-        reportError("⚠ the pattern does not parse as Swift (\(swiftRejection)) — the \(cFamily.scannedCount) "
+        reportError("⚠ the pattern does not parse as Swift (\(swiftRejection)) — \(cFamily.scannedCount) "
                     + "C-family file(s) were searched, the Swift ones were not.")
     }
 

@@ -145,10 +145,8 @@ struct KnownDefectsSurfaceTests {
         let shifted = try sextant(["search", "[$X legacyValue]", "--project", fixture.root.path])
         let shiftedLine = shifted.stdout.split(separator: "\n").first { $0.contains("legacyValue") }
 
-        withKnownIssue("the lossy decode widens each bad byte, so clang's offsets no longer line up") {
-            #expect(shiftedLine?.contains("[self legacyValue]") == true)
-            #expect(goodColumn.map { String($0.suffix(20)) } == shiftedLine.map { String($0.suffix(20)) })
-        }
+        #expect(shiftedLine?.contains("[self legacyValue]") == true)
+        #expect(goodColumn.map { String($0.suffix(20)) } == shiftedLine.map { String($0.suffix(20)) })
     }
 
     /// A source that cannot be read is a file nobody looked at. The C-family reporter has a channel
@@ -162,9 +160,7 @@ struct KnownDefectsSurfaceTests {
         defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: file.path) }
 
         let result = try sextant(["search", "[$X legacyValue]", "--project", fixture.root.path])
-        withKnownIssue("an unreadable file is counted as scanned and never named") {
-            #expect(result.all.contains("not scanned") && result.all.contains("legacy.m"))
-        }
+        #expect(result.all.contains("not scanned") && result.all.contains("legacy.m"))
     }
 
     // MARK: - MCP surface
@@ -182,9 +178,7 @@ struct KnownDefectsSurfaceTests {
         let mcp = try callTool("repo_map", project: fixture.root.path)
         let text = try #require(mcp?.text)
 
-        withKnownIssue("MCPServer calls RepoMap.generate without an index") {
-            #expect(text.contains("legacy.m") || text.lowercased().contains("not covered") || text.lowercased().contains("non-swift"))
-        }
+        #expect(text.contains("legacy.m") || text.lowercased().contains("not covered") || text.lowercased().contains("non-swift"))
     }
 
     /// Provenance — the source of the index, its freshness, what it does not cover — is printed on
@@ -210,9 +204,7 @@ struct KnownDefectsSurfaceTests {
         let mcp = try callTool("find_references", arguments: ["symbol": "Thing"], project: fixture.root.path)
         let text = try #require(mcp?.text)
 
-        withKnownIssue("provenance and the staleness marker never leave stderr") {
-            #expect(text.contains("STALE") || text.lowercased().contains("stale") || text.lowercased().contains("index"))
-        }
+        #expect(text.contains("STALE") || text.lowercased().contains("stale") || text.lowercased().contains("index"))
     }
 
     /// Six symbol tools answer a symbol that does not exist with `isError: true`. This one reports
@@ -232,8 +224,6 @@ struct KnownDefectsSurfaceTests {
         guard known?.text.contains("Round") == true else { return }
         let unknown = try #require(try callTool("list_implementations", arguments: ["symbol": "NoSuchSymbolXYZ"], project: fixture.root.path))
 
-        withKnownIssue("an unknown symbol is answered with `no implementations found` and isError: false") {
-            #expect(unknown.isError)
-        }
+        #expect(unknown.isError)
     }
 }
