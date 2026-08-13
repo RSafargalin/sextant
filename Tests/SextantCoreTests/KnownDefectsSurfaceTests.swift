@@ -3,8 +3,8 @@ import Testing
 
 /// The rest of the defect ledger: the clang layer, where byte offsets and coverage are decided,
 /// and the MCP surface, which is what an agent actually sees. Same contract as the other two
-/// suites — the assertion states the correct answer and `withKnownIssue` holds the line until
-/// someone fixes it.
+/// suites — the assertion states the correct answer, and `withKnownIssue` held the line until the
+/// defect was fixed. All of them are fixed; these are regression guards now.
 @Suite("Known defects: clang layer and MCP surface", .serialized)
 struct KnownDefectsSurfaceTests {
 

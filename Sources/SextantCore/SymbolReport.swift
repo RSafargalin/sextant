@@ -79,11 +79,29 @@ public enum SymbolReport {
         // a state that no longer exists. Deleting a file makes nothing "newer", so the freshness
         // signal cannot see it; the answer itself is the only place where it shows.
         var vanished: Set<String> = []
-        func located(_ location: SourceLocation) -> String {
+        // Snippets are read from the file as it is now, at the line the index recorded. After an
+        // edit that line holds someone else's code, and printing it would attribute text to a
+        // symbol that is not there. The line number stays — it is what the index knows — and only
+        // the text is withheld.
+        var shifted = 0
+        func located(_ location: SourceLocation, symbolName: String) -> String {
             if !FileManager.default.fileExists(atPath: location.path) { vanished.insert(path(location.path)) }
             let position = style.showsColumns ? "\(location.line):\(location.column)" : "\(location.line)"
-            let text = snippet(location).map { "  \($0)" } ?? ""
+            var text = ""
+            if let line = snippet(location) {
+                if WordBoundary.contains(baseName(symbolName), in: line) {
+                    text = "  \(line)"
+                } else {
+                    shifted += 1
+                }
+            }
             return "\(path(location.path)):\(position)\(text)"
+        }
+
+        // `save(_:)` and `save:` are written `save(` and `save:` in source, so the part before the
+        // first separator is what a line can be checked against.
+        func baseName(_ name: String) -> String {
+            String(name.prefix { $0 != "(" && $0 != ":" })
         }
 
         // The index layer caps how many occurrences it collects. Printing the cap as the count
@@ -102,9 +120,9 @@ public enum SymbolReport {
                 if locations.isEmpty {
                     lines.append("\(style.level1)definition not in the index (an external symbol?) — try `\(style.referencesCommand) \(symbol)`")
                 }
-                locations.forEach { lines.append("\(style.level1)• \(located($0))") }
+                locations.forEach { lines.append("\(style.level1)• \(located($0, symbolName: hit.name))") }
             } else {
-                if let definition = hit.definition { lines.append("\(style.level1)def: \(located(definition))") }
+                if let definition = hit.definition { lines.append("\(style.level1)def: \(located(definition, symbolName: hit.name))") }
                 let label = query == .callers ? "calls" : "usages"
                 if style.compact {
                     // A histogram by file without snippets — exact, every occurrence is grouped.
@@ -117,7 +135,7 @@ public enum SymbolReport {
                 } else {
                     lines.append("\(style.level1)\(label): \(counted(hit))")
                     for reference in hit.references.prefix(style.referenceLimit) {
-                        lines.append("\(style.level2)• \(located(reference))")
+                        lines.append("\(style.level2)• \(located(reference, symbolName: hit.name))")
                     }
                     if hit.references.count > style.referenceLimit {
                         lines.append("\(style.level2)… \(hit.references.count - style.referenceLimit) more")
@@ -139,6 +157,10 @@ public enum SymbolReport {
                 Deleting a file cannot make an index look stale by time; rebuild the project or \
                 run `sextant index`.
                 """)
+        }
+        if shifted > 0 {
+            advisories.append("⚠ \(shifted) snippet(s) withheld: the recorded line no longer contains the symbol — "
+                              + "the file has changed since it was indexed. Rebuild the project or run `sextant index`.")
         }
         if query == .callers && typesOnly {
             advisories.append("ℹ '\(symbol)' is a type: types have no call sites. Use `\(style.referencesCommand) \(symbol)` or `\(style.contextCommand) \(symbol)`.")

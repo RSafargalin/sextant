@@ -14,7 +14,9 @@ import Foundation
 func degradeToTextual(symbol: String, arguments: [String]) -> Int32 {
     let rootPath = projectRoot(in: arguments)
     let scan = IdentifierScan.matches(of: symbol, underRoot: URL(fileURLWithPath: rootPath, isDirectory: true), includeTests: true, limit: 40)
+    let json = arguments.contains("--json")
     guard !scan.matches.isEmpty else {
+        if json { printNotFoundJSON(symbol: symbol, command: "query"); return 0 }
         print("Symbol '\(symbol)' not found (neither in the index nor textually).")
         return 0
     }
@@ -35,6 +37,27 @@ func degradeToTextual(symbol: String, arguments: [String]) -> Int32 {
         reason = "does not resolve semantically (a closure, a local, or another kind of symbol)"
     }
     reportError("⚠ 0 semantic hits → textual occurrences (\(scan.matches.count)\(scan.truncated ? "+" : "")): \(reason)")
+    // The machine gets what the human gets. An empty array here would read as "no references",
+    // which is a different — and wrong — statement about the code. The shape deliberately differs
+    // from the semantic answer: a consumer must not mistake textual matches for resolved ones.
+    if json {
+        struct Degraded: Encodable {
+            struct Match: Encodable { let file: String; let line: Int; let text: String; let conditional: Bool }
+            let symbol: String
+            let semantic: [SymbolHit] = []
+            let degraded = true
+            let textual: [Match]
+            let truncated: Bool
+            let reason: String
+        }
+        printJSON(Degraded(
+            symbol: symbol,
+            textual: scan.matches.map { .init(file: shorten($0.path), line: $0.line, text: $0.text, conditional: $0.conditional) },
+            truncated: scan.truncated,
+            reason: reason
+        ))
+        return 0
+    }
     let style = SymbolReport.Style.cli(compact: isCompact(arguments), referenceLimit: 40)
     SymbolReport.textual(symbol: symbol, matches: scan.matches, truncated: scan.truncated, style: style, path: shorten)
         .forEach { print($0) }
@@ -70,8 +93,8 @@ func runSemantic(_ query: SymbolQuery, arguments: [String]) -> Int32 {
 
     crossCheck(symbol: symbol, query: query, hits: ordered, arguments: arguments)
 
-    if arguments.contains("--json") { printJSON(ordered); return 0 }
     if ordered.isEmpty { return degradeToTextual(symbol: symbol, arguments: arguments) }
+    if arguments.contains("--json") { printJSON(ordered); return 0 }
 
     let fullPaths = arguments.contains("--full-paths")
     let format: (String) -> String = { fullPaths ? $0 : shorten($0) }
@@ -102,6 +125,7 @@ func runContext(arguments: [String]) -> Int32 {
     guard let set = openIndex(arguments, label: "context") else { return 1 }
     let sampleLimit = max(1, optionValue("--limit", in: arguments).flatMap(Int.init) ?? 10)
     guard let context = set.context(forName: symbol, sampleLimit: sampleLimit) else {
+        if arguments.contains("--json") { printNotFoundJSON(symbol: symbol, command: "context"); return 0 }
         print("Symbol '\(symbol)' not found in the index.")
         return 0
     }
@@ -128,6 +152,7 @@ func runBlast(arguments: [String]) -> Int32 {
     }
     guard let set = openIndex(arguments, label: "blast") else { return 1 }
     guard let radius = set.blastRadius(forName: symbol) else {
+        if arguments.contains("--json") { printNotFoundJSON(symbol: symbol, command: "blast"); return 0 }
         print("Symbol '\(symbol)' not found in the index.")
         return 0
     }
@@ -317,7 +342,11 @@ func runHierarchy(arguments: [String]) -> Int32 {
     }
 
     let roots = set.resolveSymbols(forName: symbol)
-    guard !roots.isEmpty else { print("Symbol '\(symbol)' not found in the index."); return 0 }
+    guard !roots.isEmpty else {
+        if arguments.contains("--json") { printNotFoundJSON(symbol: symbol, command: "hierarchy"); return 0 }
+        print("Symbol '\(symbol)' not found in the index.")
+        return 0
+    }
     let trees = roots.map { build(usr: $0.usr, name: $0.name, kind: $0.kind, location: $0.location, remaining: depth) }
 
     if arguments.contains("--json") { printJSON(trees); return 0 }

@@ -3,10 +3,10 @@ import Testing
 
 /// A ledger of defects found by measurement, written as the behaviour the tool *should* have.
 ///
-/// Each test states the correct answer and is wrapped in `withKnownIssue`, so the suite stays green
-/// while the defect exists and **fails the moment the defect is fixed** — which is the point: a
-/// list of defects that nobody notices being closed is a document, not a ledger. When a test here
-/// starts failing with "known issue was not recorded", delete the wrapper and keep the assertion.
+/// Every defect it holds has been fixed, so each test is now a plain regression guard. While one
+/// was open its assertion sat inside `withKnownIssue`: the suite stayed green until the defect was
+/// fixed and then failed with "known issue was not recorded", so a fix could not land unnoticed.
+/// A new defect found by measurement is added the same way.
 ///
 /// These cover the CLI surface only and need no index store: the binary, a temporary package and
 /// git. Index-dependent defects live in their own suite because they need a build.

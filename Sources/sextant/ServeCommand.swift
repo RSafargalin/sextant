@@ -44,6 +44,11 @@ func runServe(arguments: [String]) -> Int32 {
             response = DaemonResponse(exitCode: 2, output: "",
                                       errorOutput: "sextant serve: request is about a different project (\(request.projectRoot)) — this daemon serves \(project).\n")
         } else if DaemonPolicy.servesRequest(request.arguments) {
+            // A fresh file list per request, as the MCP server does: the memo exists to keep one
+            // command from walking the project twice, not to freeze the project for the life of
+            // the daemon. Without this a file created after start-up is invisible, and the daemon
+            // is what answers on a real project.
+            SwiftSources.clearFileListMemo()
             let captured = OutputCapture.capture { dispatch(request.arguments) }
             response = DaemonResponse(exitCode: captured.value, output: captured.output, errorOutput: captured.errorOutput)
         } else {
