@@ -99,10 +99,8 @@ struct KnownDefectsCLITests {
     @Test("a project path that does not exist is refused, not answered")
     func missingProjectIsRefused() throws {
         let result = try sextant(["lint", "--project", "/no/such/directory"])
-        withKnownIssue("lint answers ✅ No violations found with exit 0 for a missing directory") {
-            #expect(result.code != 0)
-            #expect(!result.stdout.contains("No violations found"))
-        }
+        #expect(result.code != 0)
+        #expect(!result.stdout.contains("No violations found"))
     }
 
     // MARK: - Structural patterns
@@ -144,16 +142,12 @@ struct KnownDefectsCLITests {
         }
     }
 
-    /// `ExclusionPattern` documents that naming a directory removes the tree; a single component
-    /// is treated as a file name instead, so `--exclude Sources` quietly does nothing.
-    @Test("a single-component exclusion excludes the directory it names")
-    func singleComponentExclusionWorks() throws {
-        let package = try makePackage(name: "exc1", files: ["Sources/exc1/a.swift": "public func f() { print(1) }\n"])
-        let excluded = try sextant(["search", "print($$$)", "--project", package.path, "--exclude", "Sources"])
-        withKnownIssue("`--exclude Sources` matches a file name, never a directory") {
-            #expect(!excluded.stdout.contains("total: 1"))
-        }
-    }
+    // A single-component exclusion matching only file names — so `--exclude Sources` leaves the
+    // `Sources` tree alone — was listed here as a defect and is not one. `ExclusionPattern` says
+    // a single component is a *name* at any depth, `ExclusionPatternTests` pins it ("a directory
+    // called `Generated` is not a file"), and the promise about directory patterns applies to the
+    // multi-component form (`Sources/Legacy`). I read that promise as general; it is not. The
+    // entry is removed rather than kept as a green test asserting behaviour nobody wants changed.
 
     // MARK: - Rules
 
@@ -180,9 +174,7 @@ struct KnownDefectsCLITests {
         let plain = try sextant(["search", "print($$$)", "--project", package.path])
         let mistyped = try sextant(["search", "-json", "print($$$)", "--project", package.path])
         #expect(plain.stdout.contains("total: 1"))
-        withKnownIssue("`-json` becomes the pattern and the real pattern is silently dropped") {
-            #expect(mistyped.code != 0 || !mistyped.stdout.contains("No matches"))
-        }
+        #expect(mistyped.code != 0 || !mistyped.stdout.contains("No matches"))
     }
 
     /// An empty symbol is a usage error, not a question with the answer "not found".
@@ -190,9 +182,7 @@ struct KnownDefectsCLITests {
     func emptySymbolIsUsageError() throws {
         let package = try makePackage(name: "empty", files: ["Sources/empty/a.swift": "public struct Thing {}\n"])
         let result = try sextant(["refs", "", "--project", package.path])
-        withKnownIssue("an empty symbol is answered with `not found` and exit 0") {
-            #expect(result.code == 2)
-        }
+        #expect(result.code == 2)
     }
 
     /// An unknown flag is a hard error; an unknown key in `.sextant.json` is silently ignored,
@@ -204,9 +194,7 @@ struct KnownDefectsCLITests {
             ".sextant.json": #"{ "maxfiles": 1, "excludes": ["Sources/**"], "scop": "nope" }"#,
         ])
         let result = try sextant(["doctor", "--project", package.path])
-        withKnownIssue("misspelled keys are accepted and the file is reported as read") {
-            #expect(result.all.lowercased().contains("unknown") || result.all.contains("maxfiles"))
-        }
+        #expect(result.all.lowercased().contains("unknown") || result.all.contains("maxfiles"))
     }
 
     // MARK: - Public API
@@ -224,10 +212,8 @@ struct KnownDefectsCLITests {
         let package = try makePackage(name: "vis", files: ["Sources/vis/a.swift": Self.visibility])
         let result = try sextant(["api", "--project", package.path, "--scope", "Sources"])
         #expect(result.stdout.contains("TrulyPublic"))
-        withKnownIssue("a type with public members is treated as public whatever its own access level") {
-            #expect(!result.stdout.contains("InternalWithPublicMembers"))
-            #expect(!result.stdout.contains("PrivateWithPublicMembers"))
-        }
+        #expect(!result.stdout.contains("InternalWithPublicMembers"))
+        #expect(!result.stdout.contains("PrivateWithPublicMembers"))
     }
 
     /// The same defect reaches the machine contract, where a consumer cannot even see the modifier.
@@ -235,9 +221,7 @@ struct KnownDefectsCLITests {
     func apiJSONExcludesInternalTypes() throws {
         let package = try makePackage(name: "visj", files: ["Sources/visj/a.swift": Self.visibility])
         let result = try sextant(["api", "--project", package.path, "--scope", "Sources", "--json"])
-        withKnownIssue("the JSON surface carries internal and private types too") {
-            #expect(!result.stdout.contains("InternalWithPublicMembers"))
-        }
+        #expect(!result.stdout.contains("InternalWithPublicMembers"))
     }
 
     /// A package filter that matches nothing is answered with "there is nothing".

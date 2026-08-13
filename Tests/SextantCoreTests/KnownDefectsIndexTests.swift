@@ -89,8 +89,9 @@ struct KnownDefectsIndexTests {
 
     // MARK: - Freshness
 
-    /// Deleting a source cannot make anything "newer", so the one-directional freshness test never
-    /// fires and a definition in a file that no longer exists is served under a trust marker.
+    /// Deleting a source makes nothing "newer", so the freshness test cannot see it. The answer
+    /// itself is the only place it shows: a location whose file is gone is the index describing a
+    /// state that no longer exists, and it has to be said rather than served as a fact.
     @Test("a deleted source makes the index stale")
     func deletionMarksTheIndexStale() throws {
         guard let fixture = buildFixture(name: "ghost", files: [
@@ -100,9 +101,7 @@ struct KnownDefectsIndexTests {
         try? FileManager.default.removeItem(at: fixture.root.appendingPathComponent("Sources/ghost/gone.swift"))
 
         let result = try sextant(["defs", "Gone", "--project", fixture.root.path, "--index-store", fixture.store])
-        withKnownIssue("the index is called fresh and the definition is served from a missing file") {
-            #expect(result.stderr.contains("STALE") || !result.stdout.contains("gone.swift"))
-        }
+        #expect(result.stderr.contains("no longer exist") || !result.stdout.contains("gone.swift"))
     }
 
     /// Freshness covers every language the index does. Walking `*.swift` alone once left the C
@@ -139,9 +138,7 @@ struct KnownDefectsIndexTests {
         write("public func beta() -> Int { 2 }\npublic func alpha() -> Int { 1 }\n", to: "Sources/body/a.swift", in: fixture)
 
         let result = try sextant(["body", "alpha", "--project", fixture.root.path, "--index-store", fixture.store])
-        withKnownIssue("the declaration on the recorded line is printed whatever its name") {
-            #expect(!result.stdout.contains("func beta"))
-        }
+        #expect(!result.stdout.contains("func beta"))
     }
 
     /// Snippets are read from the current file at the index's positions. After an edit the text no

@@ -64,9 +64,10 @@ struct SymbolReportTests {
                              definition: location("/repo/Event.swift", 1), references: [])
         #expect(render([type], query: .callers, style: .mcp).advisory?.contains("find_references") == true)
         #expect(render([type], query: .callers, style: .cli(compact: true, referenceLimit: 40)).advisory?.contains("`refs Event`") == true)
-        // A function gets no such hint — it would be noise.
+        // A function gets no such hint — it would be noise. The path is this very file: a location
+        // whose file is gone raises an advisory of its own, which would mask the absence of this one.
         let function = SymbolHit(name: "save", usr: "s:save", kind: "function",
-                                 definition: location("/repo/A.swift", 1), references: [])
+                                 definition: location(#filePath, 1), references: [])
         #expect(render([function], query: .callers, style: .mcp).advisory == nil)
     }
 

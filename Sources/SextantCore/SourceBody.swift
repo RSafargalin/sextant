@@ -14,11 +14,25 @@ public enum SourceBody {
     /// declaration ends — and answering it with SwiftParser silently mis-handled them: an
     /// Objective-C `@implementation` produced nothing, a C function produced nothing, and a C++
     /// struct happened to parse as Swift and came back missing its trailing `;`.
-    public static func declaration(atLine line: Int, inFile path: String) -> String? {
+    /// `named` is the symbol the caller asked about. The index records a line, the file moves, and
+    /// whatever declaration now starts on that line is not necessarily the one that was asked for —
+    /// so the text is returned only when the name is still there. Without the check, an edit that
+    /// shifts a file turns `body alpha` into someone else's body, printed as the answer.
+    public static func declaration(atLine line: Int, inFile path: String, named: String? = nil) -> String? {
         guard let source = try? String(contentsOfFile: path, encoding: .utf8) else { return nil }
-        return path.hasSuffix(".swift")
+        let text = path.hasSuffix(".swift")
             ? swiftDeclaration(atLine: line, inFile: path, source: source)
             : delimitedDeclaration(atLine: line, source: source)
+        guard let text, let named else { return text }
+        return declaresName(named, in: text) ? text : nil
+    }
+
+    /// Whether the extracted text declares that name — a word match on the first line, which is
+    /// where a declaration states what it is called.
+    static func declaresName(_ name: String, in text: String) -> Bool {
+        guard let header = text.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false).first
+        else { return false }
+        return WordBoundary.contains(name, in: header)
     }
 
     private static func swiftDeclaration(atLine line: Int, inFile path: String, source: String) -> String? {

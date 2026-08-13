@@ -32,10 +32,27 @@ public struct ProjectConfig: Codable, Sendable {
         guard FileManager.default.fileExists(atPath: url.path) else { return .missing }
         guard let data = try? Data(contentsOf: url) else { return .invalid("file is not readable") }
         do {
-            return .loaded(try JSONDecoder().decode(ProjectConfig.self, from: data))
+            let config = try JSONDecoder().decode(ProjectConfig.self, from: data)
+            // A misspelled key decodes cleanly and does nothing, so a whole configuration can be
+            // inert while `doctor` reports the file as read. An unknown flag is a hard error here;
+            // an unknown key was silence.
+            let unknown = unknownKeys(in: data)
+            guard unknown.isEmpty else {
+                let known = Self.knownKeys.sorted().joined(separator: ", ")
+                return .invalid("unknown key(s): \(unknown.sorted().joined(separator: ", ")) — known keys are \(known)")
+            }
+            return .loaded(config)
         } catch {
             return .invalid(describe(error))
         }
+    }
+
+    static let knownKeys: Set<String> = ["budget", "maxFiles", "scope", "rules", "exclude"]
+
+    /// Top-level keys the config does not declare.
+    static func unknownKeys(in data: Data) -> Set<String> {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [] }
+        return Set(object.keys).subtracting(knownKeys)
     }
 
     /// A short reason instead of a DecodingError dump: the user needs where it broke, not the type.
