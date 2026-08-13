@@ -230,6 +230,20 @@ func dispatch(_ arguments: [String]) -> Int32 {
 }
 
 let arguments = Array(CommandLine.arguments.dropFirst())
+
+/// A project root that does not exist is a typo, and it used to be answered rather than refused:
+/// `lint --project /no/such/dir` reported "✅ No violations found" with exit 0 — a clean bill of
+/// health for a directory nobody looked at. `--scope` has always refused the same mistake, so the
+/// two halves of the same question now behave the same way.
+if let root = optionValue("--project", in: arguments) {
+    var isDirectory: ObjCBool = false
+    let exists = FileManager.default.fileExists(atPath: root, isDirectory: &isDirectory)
+    if !exists || !isDirectory.boolValue {
+        reportError("sextant: --project '\(root)' — \(exists ? "not a directory" : "directory does not exist").")
+        exit(2)
+    }
+}
+
 let started = DispatchTime.now()
 // Use the warm-index daemon if one is running; otherwise the normal path — no daemon is not an error.
 let code = runViaDaemon(arguments) ?? dispatch(arguments)

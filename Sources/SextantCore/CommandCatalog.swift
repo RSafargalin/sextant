@@ -203,9 +203,17 @@ public enum CommandCatalog {
     }
 
     /// Flags a command does not declare. `--help` and `-h` are accepted everywhere.
+    ///
+    /// Single-dash spellings count too. `sextant search -json 'print($$$)'` used to take `-json`
+    /// as the pattern and drop the real one, answering "No matches." about the flag's own name —
+    /// a confident negative produced by a typo.
     public static func unknownFlags(in arguments: [String], for spec: CommandSpec) -> [String] {
         let known = Set(spec.flags.map(\.name)).union(["--help", "-h"])
-        return arguments.filter { $0.hasPrefix("--") && !known.contains($0) }
+        return arguments.filter { argument in
+            guard argument.hasPrefix("-"), argument != "-", !known.contains(argument) else { return false }
+            // A negative number is a value, not a flag.
+            return argument.hasPrefix("--") || Double(argument) == nil
+        }
     }
 
     /// The closest known flag by spelling — used to suggest a correction for a typo.

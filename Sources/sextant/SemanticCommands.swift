@@ -56,7 +56,7 @@ func crossCheck(symbol: String, query: SymbolQuery, hits: [SymbolHit], arguments
 }
 
 func runSemantic(_ query: SymbolQuery, arguments: [String]) -> Int32 {
-    guard let symbol = firstPositional(arguments) else {
+    guard let symbol = firstPositional(arguments), !symbol.trimmingCharacters(in: .whitespaces).isEmpty else {
         reportError("sextant: expected <symbol>, for example sextant refs MyType")
         return 2
     }
@@ -95,7 +95,7 @@ func runSemantic(_ query: SymbolQuery, arguments: [String]) -> Int32 {
 // MARK: - context (everything about one symbol)
 
 func runContext(arguments: [String]) -> Int32 {
-    guard let symbol = firstPositional(arguments) else {
+    guard let symbol = firstPositional(arguments), !symbol.trimmingCharacters(in: .whitespaces).isEmpty else {
         reportError("sextant context: expected <symbol>, for example sextant context MyType")
         return 2
     }
@@ -122,7 +122,7 @@ func runContext(arguments: [String]) -> Int32 {
 // MARK: - blast (impact analysis)
 
 func runBlast(arguments: [String]) -> Int32 {
-    guard let symbol = firstPositional(arguments) else {
+    guard let symbol = firstPositional(arguments), !symbol.trimmingCharacters(in: .whitespaces).isEmpty else {
         reportError("sextant blast: expected <symbol>, for example sextant blast MyRepository")
         return 2
     }
@@ -145,7 +145,7 @@ func runBlast(arguments: [String]) -> Int32 {
 // MARK: - body (declaration body)
 
 func runBody(arguments: [String]) -> Int32 {
-    guard let symbol = firstPositional(arguments) else {
+    guard let symbol = firstPositional(arguments), !symbol.trimmingCharacters(in: .whitespaces).isEmpty else {
         reportError("sextant body: expected <symbol>, for example sextant body myFunction")
         return 2
     }
@@ -160,7 +160,7 @@ func runBody(arguments: [String]) -> Int32 {
         let text: String
     }
     let bodies = definitions.compactMap { definition -> Body? in
-        SourceBody.declaration(atLine: definition.line, inFile: definition.path)
+        SourceBody.declaration(atLine: definition.line, inFile: definition.path, named: symbol)
             .map { Body(file: definition.path, line: definition.line, text: $0) }
     }
 
@@ -168,7 +168,7 @@ func runBody(arguments: [String]) -> Int32 {
     if json { printJSON(bodies); return 0 }
     guard !definitions.isEmpty else { print("Definition of '\(symbol)' not found (symbol outside the index? try `refs \(symbol)`)."); return 0 }
     guard !bodies.isEmpty else {
-        print("Could not extract the body of '\(symbol)' (no declaration on the definition line).")
+        print("Could not extract the body of '\(symbol)': no declaration of that name on the recorded line — the file has changed since it was indexed. Rebuild the project or run `sextant index`.")
         return 0
     }
     for body in bodies {
@@ -182,7 +182,7 @@ func runBody(arguments: [String]) -> Int32 {
 // MARK: - construct (construction and injection sites)
 
 func runConstruct(arguments: [String]) -> Int32 {
-    guard let symbol = firstPositional(arguments) else {
+    guard let symbol = firstPositional(arguments), !symbol.trimmingCharacters(in: .whitespaces).isEmpty else {
         reportError("sextant construct: expected <type>, for example sextant construct MyType")
         return 2
     }
@@ -290,7 +290,7 @@ struct CallNode: Encodable {
 }
 
 func runHierarchy(arguments: [String]) -> Int32 {
-    guard let symbol = firstPositional(arguments) else {
+    guard let symbol = firstPositional(arguments), !symbol.trimmingCharacters(in: .whitespaces).isEmpty else {
         reportError("sextant hierarchy: expected <symbol>, for example sextant hierarchy run --callees")
         return 2
     }
@@ -327,7 +327,7 @@ func runHierarchy(arguments: [String]) -> Int32 {
 // MARK: - Related symbols (callees / impls)
 
 func runRelated(_ query: RelationQuery, label: String, arguments: [String]) -> Int32 {
-    guard let symbol = firstPositional(arguments) else {
+    guard let symbol = firstPositional(arguments), !symbol.trimmingCharacters(in: .whitespaces).isEmpty else {
         reportError("sextant \(label): expected <symbol>, for example sextant \(label) MyType")
         return 2
     }

@@ -27,6 +27,11 @@ public enum PublicAPI {
                 let packageName = SwiftSources.package(for: relative)
                 if let package, packageName != package { return nil }
                 guard var declarations = DeclarationCache.declarations(for: url, parseCache: cache, store: store) else { return nil }
+                // Filter here rather than only when rendering: `--json` serialises these summaries
+                // straight through, and a surface that differs between the text and the machine
+                // contract is two answers to one question.
+                declarations = declarations.filter(isVisible)
+                if declarations.isEmpty { return nil }
                 if let type {
                     declarations = declarations.filter { $0.name == type }
                     if declarations.isEmpty { return nil }
@@ -91,9 +96,16 @@ public enum PublicAPI {
         return "  — " + String(doc.prefix(72))
     }
 
-    /// Visible when the declaration is public, or is a type with public members (extensions included).
-    private static func isVisible(_ declaration: Declaration) -> Bool {
-        declaration.access == .public
-            || (declaration.kind.isType && declaration.members.contains { $0.access == .public })
+    /// Visible when the declaration is public, or is an extension carrying public members.
+    ///
+    /// The rule used to be "a type with public members", which is wrong for every type but an
+    /// extension: `struct Box { public let a: Int }` without its own modifier is internal, and
+    /// nothing inside it is reachable from another module however its members are marked. An
+    /// extension is the exception — it has no meaningful access level of its own, so the members
+    /// decide. Listing an internal type as public surface misstates the contract in the one
+    /// command whose whole purpose is to state it.
+    static func isVisible(_ declaration: Declaration) -> Bool {
+        if declaration.access == .public { return true }
+        return declaration.kind == .extensionKind && declaration.members.contains { $0.access == .public }
     }
 }

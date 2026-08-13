@@ -75,7 +75,12 @@ public enum SymbolReport {
         path: (String) -> String,
         snippet: (SourceLocation) -> String?
     ) -> Rendering {
+        // A location whose file is gone is not a fact about the code — it is the index describing
+        // a state that no longer exists. Deleting a file makes nothing "newer", so the freshness
+        // signal cannot see it; the answer itself is the only place where it shows.
+        var vanished: Set<String> = []
         func located(_ location: SourceLocation) -> String {
+            if !FileManager.default.fileExists(atPath: location.path) { vanished.insert(path(location.path)) }
             let position = style.showsColumns ? "\(location.line):\(location.column)" : "\(location.line)"
             let text = snippet(location).map { "  \($0)" } ?? ""
             return "\(path(location.path)):\(position)\(text)"
@@ -116,10 +121,21 @@ public enum SymbolReport {
 
         // Types have no callers — point at usages, or an empty answer reads as "nobody uses this".
         let typesOnly = !hits.isEmpty && hits.allSatisfy { isTypeKind($0.kind) } && hits.allSatisfy { $0.references.isEmpty }
-        let advisory = (query == .callers && typesOnly)
-            ? "ℹ '\(symbol)' is a type: types have no call sites. Use `\(style.referencesCommand) \(symbol)` or `\(style.contextCommand) \(symbol)`."
-            : nil
-        return Rendering(lines: lines, advisory: advisory)
+        var advisories: [String] = []
+        if !vanished.isEmpty {
+            // The provenance line above is computed before the query and reports timestamps, which
+            // a deletion never moves. Saying so here keeps the two from contradicting each other.
+            advisories.append("""
+                ⚠ the index is out of date despite the marker above — \(vanished.count) file(s) in \
+                this answer no longer exist: \(vanished.sorted().joined(separator: ", ")). \
+                Deleting a file cannot make an index look stale by time; rebuild the project or \
+                run `sextant index`.
+                """)
+        }
+        if query == .callers && typesOnly {
+            advisories.append("ℹ '\(symbol)' is a type: types have no call sites. Use `\(style.referencesCommand) \(symbol)` or `\(style.contextCommand) \(symbol)`.")
+        }
+        return Rendering(lines: lines, advisory: advisories.isEmpty ? nil : advisories.joined(separator: "\n"))
     }
 
     /// Everything about one symbol (`context`).
