@@ -105,8 +105,9 @@ struct KnownDefectsIndexTests {
         }
     }
 
-    /// Freshness walks Swift sources only, so an edit to Objective-C, C or C++ — half of the
-    /// environment the product specialises in — leaves the marker saying `fresh`.
+    /// Freshness covers every language the index does. Walking `*.swift` alone once left the C
+    /// family — half of the Apple environment — outside the signal: an edit to a `.m` or a header
+    /// kept the marker saying `fresh`, which is a trust label on a stale answer.
     @Test("an edit to a C-family source makes the index stale")
     func cFamilyEditMarksTheIndexStale() throws {
         guard let fixture = buildFixture(name: "cfam", files: [
@@ -123,9 +124,7 @@ struct KnownDefectsIndexTests {
         write("int legacy(void) { return 2; }\n", to: "Sources/legacy/legacy.c", in: fixture)
 
         let result = try sextant(["defs", "Thing", "--project", fixture.root.path, "--index-store", fixture.store])
-        withKnownIssue("hasSourceNewer walks *.swift only") {
-            #expect(result.stderr.contains("STALE"))
-        }
+        #expect(result.stderr.contains("STALE"))
     }
 
     // MARK: - Positions that moved
