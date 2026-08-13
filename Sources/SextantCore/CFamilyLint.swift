@@ -58,6 +58,13 @@ public enum CFamilyLint {
         var inactive: [StructuralHit] = []
         var targets: Set<String> = []
         for source in sources {
+            // A file nobody could open is not a file that was checked. clang reports its own
+            // failure as diagnostics and returns an empty unit, which counts as "scanned, clean".
+            guard FileManager.default.isReadableFile(atPath: source) else {
+                unscanned.append(UnscannedFile(file: relative(source, root),
+                                               reason: "could not be read (permissions?)"))
+                continue
+            }
             guard let command = commandByFile[source] else {
                 unscanned.append(UnscannedFile(
                     file: relative(source, root),
@@ -79,7 +86,9 @@ public enum CFamilyLint {
                                                     text: match.text, message: rule.message))
                 }
                 // The same rules, looked for textually in the branches this build left out.
-                if let data = FileManager.default.contents(atPath: source), !outcome.skippedRanges.isEmpty {
+                if let raw = FileManager.default.contents(atPath: source),
+                   // The same byte sequence clang was given: see ClangPatternSearch.searchAll.
+                   case let data = Data(String(decoding: raw, as: UTF8.self).utf8), !outcome.skippedRanges.isEmpty {
                     var seen = Set<String>()
                     for (rule, engine) in compiled {
                         for hit in InactiveRegionScan.occurrences(anchors: engine.anchors, source: data,

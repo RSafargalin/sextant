@@ -119,7 +119,12 @@ public struct ClangPatternSearch {
         guard !searches.isEmpty, let sourceData = FileManager.default.contents(atPath: file) else {
             return FileOutcome(matches: [], skippedRanges: [])
         }
+        // clang is given the decoded text, so every offset it reports indexes THAT byte sequence.
+        // A byte that is not valid UTF-8 decodes to U+FFFD, which is three bytes wide, so slicing
+        // the file's original bytes at clang's offsets lands somewhere else in the file — the
+        // reported column and snippet would both be wrong while still presented as structural.
         let source = String(decoding: sourceData, as: UTF8.self)
+        let sourceBytes = Data(source.utf8)
         // Appended, never inserted: the file's own offsets stay exactly as they are on disk, so a
         // match reports the position a reader would find.
         let overlay = source + "\n" + searches.enumerated()
@@ -131,7 +136,7 @@ public struct ClangPatternSearch {
         let wrappers = Self.probeWrappers(in: unit.root)
         // The diagnostics that matter are the ones raised inside the appended text; errors the
         // file already had are the build's business, not the search's.
-        let probeErrors = unit.errors(in: sourceData.count..<overlayData.count).map { $0.text }
+        let probeErrors = unit.errors(in: sourceBytes.count..<overlayData.count).map { $0.text }
 
         var roots: [(index: Int, node: ClangNode)] = []
         for (position, search) in searches.enumerated() {
@@ -146,7 +151,7 @@ public struct ClangPatternSearch {
                                              diagnostics: probeErrors.isEmpty ? unit.errors.map { $0.text } : probeErrors)
         }
 
-        let sourceLength = sourceData.count
+        let sourceLength = sourceBytes.count
         var results: [(index: Int, match: StructuralMatch)] = []
         func visit(_ node: ClangNode) {
             // Only the file's own nodes are candidates; the appended patterns are not matches for
@@ -156,11 +161,11 @@ public struct ClangPatternSearch {
                 for (index, root) in roots {
                     var bindings: [String: String] = [:]
                     if searches[index].matches(pattern: root, candidate: node, patternSource: overlayData,
-                                               candidateSource: sourceData, bindings: &bindings) {
+                                               candidateSource: sourceBytes, bindings: &bindings) {
                         results.append((index, StructuralMatch(
                             line: node.line,
                             column: node.column,
-                            text: text(of: node, in: sourceData).split(separator: "\n").first.map(String.init) ?? ""
+                            text: text(of: node, in: sourceBytes).split(separator: "\n").first.map(String.init) ?? ""
                         )))
                     }
                 }

@@ -38,7 +38,14 @@ func runMCP(arguments: [String]) -> Int32 {
             if index != nil { logMCP("index appeared — opened, semantics available.") }
         }
 
-        let context = makeToolContext(project: project, index: index, warnedInvalidConfig: &configWarned)
+        let opened = index
+        let context = makeToolContext(project: project, index: index, provenance: {
+            guard opened != nil else { return nil }
+            let (paths, source) = resolveIndex(in: arguments)
+            guard !paths.isEmpty else { return nil }
+            let freshness = IndexFreshness.state(storePaths: paths, projectRoot: projectRoot(in: arguments))
+            return IndexProvenance(source: source, storeCount: paths.count, freshness: freshness).summary
+        }, warnedInvalidConfig: &configWarned)
         handleMCP(method: method, id: id, params: message["params"] as? [String: Any] ?? [:], context: context)
     }
     return 0
@@ -55,9 +62,14 @@ private struct ToolContext {
     let config: ProjectConfig?
     let index: IndexStoreSet?
     let reader: SourceLineReader
+    /// The trust label the CLI prints on stderr. An MCP client logs stderr at best, so without
+    /// this the agent — the main consumer — never sees where the answer came from or that the
+    /// index is stale. Computed on demand: freshness walks the sources.
+    let provenance: () -> String?
 }
 
-private func makeToolContext(project: String, index: IndexStoreSet?, warnedInvalidConfig: inout Bool) -> ToolContext {
+private func makeToolContext(project: String, index: IndexStoreSet?, provenance: @escaping () -> String?,
+                             warnedInvalidConfig: inout Bool) -> ToolContext {
     var config: ProjectConfig?
     var configProblem: String?
     switch ProjectConfig.read(projectRoot: project) {
@@ -91,7 +103,7 @@ private func makeToolContext(project: String, index: IndexStoreSet?, warnedInval
     SwiftSources.setExclusions(config?.exclude ?? [])
 
     return ToolContext(project: scoped, projectRoot: project, scopeProblem: scopeProblem,
-                       config: config, index: index, reader: SourceLineReader())
+                       config: config, index: index, reader: SourceLineReader(), provenance: provenance)
 }
 
 /// Store signature — detects an index appearing or being rebuilt without retry spam.
@@ -178,7 +190,12 @@ private func handleMCP(method: String, id: Any?, params: [String: Any], context:
         let name = params["name"] as? String ?? ""
         let toolArgs = params["arguments"] as? [String: Any] ?? [:]
         let started = DispatchTime.now()
-        let (text, isError) = callMCPTool(name: name, args: toolArgs, context: context)
+        var (text, isError) = callMCPTool(name: name, args: toolArgs, context: context)
+        // The same label the CLI prints, inside the answer: an agent that cannot see it has no way
+        // to tell a fresh answer from one describing yesterday's code.
+        if !isError, indexBackedTools.contains(name), let provenance = context.provenance() {
+            text += "\n\n\(provenance)"
+        }
         // Telemetry per CALL: otherwise an entire MCP session is one record, and the main
         // consumer — the agent — stays a blind spot in the usage statistics.
         Telemetry.record(
@@ -198,6 +215,12 @@ private func handleMCP(method: String, id: Any?, params: [String: Any], context:
 
 /// Tools that work over an area of the project rather than a symbol — they need a valid scope.
 private let areaTools: Set<String> = ["repo_map", "structural_search", "lint", "api", "changed"]
+
+/// Tools whose answer comes from the index, and which therefore carry its trust label.
+private let indexBackedTools: Set<String> = [
+    "context", "body", "blast_radius", "who_defines", "find_references", "find_callers",
+    "list_implementations", "call_hierarchy", "api", "repo_map",
+]
 
 /// Output cap: a long surface is truncated with an honest note — narrowing the query is
 /// cheaper for the agent than receiving a wall of text.
@@ -251,6 +274,9 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
     case "list_implementations":
         guard let symbol = symbol() else { return ("the symbol parameter is required", true) }
         guard let set = index else { return (indexUnavailable, true) }
+        // "No implementations" is a statement about a symbol that exists. For one the index has
+        // never heard of, it is a made-up answer — the other six symbol tools say so.
+        guard !set.resolveSymbols(forName: symbol).isEmpty else { return ("symbol not found: \(symbol)", true) }
         let related = set.related(toName: symbol, query: .implementations, limit: 1000)
         guard !related.isEmpty else { return ("no implementations found: \(symbol)", false) }
         return (related.map { "\($0.name) [\($0.kind)]  \(shorten($0.location.path)):\($0.location.line)" }.joined(separator: "\n"), false)
@@ -278,7 +304,20 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
         // The token budget is honoured (a field report found it being ignored); the default
         // comes from .sextant.json, as in the CLI. Clamped: a budget of 0 would collapse the map.
         let budget = max(500, (args["budget"] as? Int) ?? context.config?.budget ?? 4000)
-        return (RepoMap.generate(projectRoot: context.project, options: .init(tokenBudget: budget, includeTests: false)), false)
+        // The index is passed here as it is in the CLI: without it the map covers Swift only,
+        // while the same command in a terminal covers Objective-C, C and C++ as well. What is
+        // missing is named, because a map that looks complete is worse than a short one.
+        let mapRoot = URL(fileURLWithPath: context.project, isDirectory: true)
+        let foreign = SwiftSources.files(under: mapRoot, includeTests: false,
+                                         extensions: IndexDeclarations.clangExtensions)
+        var map = RepoMap.generate(projectRoot: context.project,
+                                   options: .init(tokenBudget: budget, includeTests: false),
+                                   index: context.index)
+        if !foreign.isEmpty, context.index == nil {
+            map += "\n\n⚠ \(foreign.count) non-Swift file(s) are missing from the map: no index store. "
+                 + "Build one with `sextant index`."
+        }
+        return (map, false)
 
     case "structural_search":
         guard let pattern = (args["pattern"] as? String).flatMap({ $0.isEmpty ? nil : $0 }) else { return ("the pattern parameter is required", true) }
@@ -309,8 +348,10 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
                                         projectRoot: context.projectRoot, includeTests: false)
         lines += cFamily.hits.prefix(200).map { "\($0.file):\($0.line):\($0.column): \($0.text)" }
         if let swiftRejection {
-            guard cFamily.scannedCount > 0 else { return ("invalid pattern: \(swiftRejection)", true) }
-            lines.append("⚠ the pattern does not parse as Swift (\(swiftRejection)) — the \(cFamily.scannedCount) "
+            guard cFamily.scannedCount > 0 || !cFamily.unscanned.isEmpty else {
+                return ("invalid pattern: \(swiftRejection)", true)
+            }
+            lines.append("⚠ the pattern does not parse as Swift (\(swiftRejection)) — \(cFamily.scannedCount) "
                          + "C-family file(s) were searched, the Swift ones were not.")
         }
         if lines.isEmpty { lines.append("no matches") }

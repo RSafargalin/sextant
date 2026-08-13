@@ -83,6 +83,13 @@ public enum CFamilySearch {
         var targets: Set<String> = []
         var inactive: [StructuralHit] = []
         for source in sources {
+            // A file nobody could open is not a file that was checked. clang reports its own
+            // failure as diagnostics and returns an empty unit, which counts as "scanned, clean".
+            guard FileManager.default.isReadableFile(atPath: source) else {
+                unscanned.append(UnscannedFile(file: relative(source, root),
+                                               reason: "could not be read (permissions?)"))
+                continue
+            }
             guard let command = commandByFile[source] else {
                 unscanned.append(UnscannedFile(
                     file: relative(source, root),
@@ -104,7 +111,9 @@ public enum CFamilySearch {
                 }
                 // What the build skipped can only be answered textually, and is kept apart from
                 // the matches so the two are never read as one number.
-                if let data = FileManager.default.contents(atPath: source) {
+                if let raw = FileManager.default.contents(atPath: source),
+                   // The same byte sequence clang was given: see ClangPatternSearch.searchAll.
+                   case let data = Data(String(decoding: raw, as: UTF8.self).utf8) {
                     inactive += InactiveRegionScan
                         .occurrences(anchors: engine.anchors, source: data, ranges: outcome.skippedRanges)
                         .map { StructuralHit(file: relative(source, root), line: $0.line, column: $0.column, text: $0.text) }
