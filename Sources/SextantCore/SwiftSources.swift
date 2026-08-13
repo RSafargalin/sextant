@@ -278,9 +278,14 @@ public enum SwiftSources {
         return false
     }
 
-    /// Whether any Swift file is newer than a date (early exit) — used to check index freshness.
+    /// Whether any source is newer than a date (early exit) — used to check index freshness.
+    ///
+    /// Every language the index covers counts, not just Swift. Walking `*.swift` alone left the
+    /// C family — half of the Apple environment — outside the freshness signal: editing a `.m`
+    /// or a header kept the marker saying `fresh`, which is a trust label on a stale answer.
     public static func hasSourceNewer(than date: Date, under root: URL) -> Bool {
-        if let git = gitSwiftFiles(under: root, includeTests: true) {
+        let extensions = ["swift"] + IndexDeclarations.clangExtensions
+        if let git = gitSwiftFiles(under: root, includeTests: true, extensions: extensions) {
             for url in git {
                 let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
                 if let modified, modified > date { return true }
@@ -301,7 +306,7 @@ public enum SwiftSources {
                 if shouldSkip(directory: url.lastPathComponent, ignored: ignored) { enumerator.skipDescendants() }
                 continue
             }
-            guard url.pathExtension == "swift", !url.lastPathComponent.hasPrefix(".") else { continue }
+            guard extensions.contains(url.pathExtension), !url.lastPathComponent.hasPrefix(".") else { continue }
             if let modified = values?.contentModificationDate, modified > date { return true }
         }
         return false
