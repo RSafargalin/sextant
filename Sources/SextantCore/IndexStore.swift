@@ -76,6 +76,25 @@ public final class IndexStore {
             }
     }
 
+    /// Records the store holds for a name that the scope filter rejected, and the foreign roots
+    /// they belong to.
+    ///
+    /// Without this, a store built from another checkout produces zero hits and the answer explains
+    /// them away — "a closure, a local, or another kind of symbol" — about a class the index knows
+    /// perfectly well. The store is not silent about the symbol; it is describing someone else's
+    /// copy of it, and that is what has to be said.
+    public func outOfScope(forName name: String) -> (count: Int, roots: Set<String>) {
+        var count = 0
+        var roots: Set<String> = []
+        for occurrence in resolveOccurrences(forName: name) where !isInScope(occurrence.location) {
+            guard Self.isProjectSource(occurrence.location) else { continue }
+            count += 1
+            let path = URL(fileURLWithPath: occurrence.location.path).resolvingSymlinksInPath().path
+            if let worktree = Self.worktreePrefix(of: path) { roots.insert(worktree) }
+        }
+        return (count, roots)
+    }
+
     /// Symbols with the given name: the definition plus occurrences of the requested kind.
     public func lookup(name: String, query: SymbolQuery, limit: Int = 1000) -> [SymbolHit] {
         let definitions = resolveOccurrences(forName: name)

@@ -30,6 +30,15 @@ public final class IndexStoreSet {
         return "\(usr)|\(path):\(location.line):\(location.column)"
     }
 
+    /// Records rejected by the scope filter across every open store.
+    public func outOfScope(forName name: String) -> (count: Int, roots: Set<String>) {
+        stores.reduce(into: (count: 0, roots: Set<String>())) { total, store in
+            let store = store.outOfScope(forName: name)
+            total.count += store.count
+            total.roots.formUnion(store.roots)
+        }
+    }
+
     public func related(toName name: String, query: RelationQuery, limit: Int = 1000) -> [RelatedSymbol] {
         var seen = Set<String>()
         var results: [RelatedSymbol] = []

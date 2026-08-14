@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+@testable import SextantCore
 
 /// The last of the defect ledger: the ones that need scale (a symbol past the internal cap), a
 /// second store on disk, or a live daemon. They are slower than the other suites because each
@@ -52,9 +53,13 @@ struct KnownDefectsScaleTests {
 
     private struct Fixture { let root: URL; let store: String }
 
-    private func buildFixture(name: String, files: [String: String], manifest: String? = nil) -> Fixture? {
-        let root = FileManager.default.temporaryDirectory
+    /// `subdirectory` puts the package below the temporary root, so a test can build one at a
+    /// path that looks like an agent worktree.
+    private func buildFixture(name: String, files: [String: String], manifest: String? = nil,
+                              subdirectory: String? = nil) -> Fixture? {
+        var root = FileManager.default.temporaryDirectory
             .appendingPathComponent("sextant-scale-\(name)-\(UUID().uuidString)")
+        if let subdirectory { root.appendPathComponent(subdirectory) }
         var all = files
         all["Package.swift"] = manifest ?? """
             // swift-tools-version: 5.9
@@ -148,6 +153,65 @@ struct KnownDefectsScaleTests {
             #expect(!chosen.all.contains("index-build"))
             #expect(!answer.stdout.contains("usages: 0"))
         }
+    }
+
+    /// Measured on the target project: two Xcode stores, one of them built inside an agent
+    /// worktree that lives under the checkout. The worktree store is newer, so it won selection —
+    /// and every record in it names a path the scope filter rejects, so the answer to every
+    /// semantic question was nothing, under a `fresh` label and a green `doctor`.
+    ///
+    /// No build needed: the locator takes the DerivedData directory as an argument, so the two
+    /// candidates can be laid out on disk exactly as Xcode leaves them.
+    @Test("a store built inside a nested worktree is not chosen for the checkout around it")
+    func worktreeStoreIsNotChosenForTheCheckout() throws {
+        let manager = FileManager.default
+        let temporary = manager.temporaryDirectory.appendingPathComponent("sextant-wt-\(UUID().uuidString)")
+        let root = temporary.appendingPathComponent("checkout")
+        let derived = temporary.appendingPathComponent("DerivedData")
+        defer { try? manager.removeItem(at: temporary) }
+
+        func makeStore(_ name: String, workspace: String, age: TimeInterval) throws -> String {
+            let entry = derived.appendingPathComponent(name)
+            let units = entry.appendingPathComponent("Index.noindex/DataStore/v5/units")
+            try manager.createDirectory(at: units, withIntermediateDirectories: true)
+            try (["WorkspacePath": workspace] as NSDictionary)
+                .write(to: entry.appendingPathComponent("info.plist"))
+            try manager.setAttributes([.modificationDate: Date().addingTimeInterval(age)],
+                                      ofItemAtPath: units.path)
+            return entry.appendingPathComponent("Index.noindex/DataStore").path
+        }
+        try manager.createDirectory(at: root, withIntermediateDirectories: true)
+        let mine = try makeStore("App-aaa", workspace: root.appendingPathComponent("App.xcodeproj").path, age: -600)
+        let worktree = try makeStore(
+            "App-bbb",
+            workspace: root.appendingPathComponent(".claude/worktrees/agent/App.xcodeproj").path,
+            age: 0)
+
+        let chosen = DerivedDataLocator.dataStore(forProjectRoot: root.path, derivedData: derived.path)
+        #expect(chosen == mine)
+        #expect(chosen != worktree)
+
+        // From inside the worktree the same store is the right one: it holds that worktree's paths.
+        let fromWorktree = DerivedDataLocator.dataStore(
+            forProjectRoot: root.appendingPathComponent(".claude/worktrees/agent").path, derivedData: derived.path)
+        #expect(fromWorktree == worktree)
+    }
+
+    /// The other half: when a foreign store is used anyway — `--index-store` names one, or another
+    /// layout puts one in reach — the empty answer has to say why. It used to explain a class away
+    /// as "a closure, a local, or another kind of symbol".
+    @Test("an answer emptied by scope names the store, not an invented reason")
+    func foreignStoreIsNamedAsTheReason() throws {
+        guard let fixture = buildFixture(name: "wtfx", files: [
+            "Sources/wtfx/a.swift": "public struct Widget { public init() {} }\npublic func use() { _ = Widget() }\n",
+        ], subdirectory: ".claude/worktrees/agent") else { return }
+        // The project is the checkout AROUND the worktree, so every record in the store is foreign.
+        let outer = fixture.root.deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+
+        let result = try sextant(["refs", "Widget", "--project", outer.path, "--index-store", fixture.store])
+        #expect(result.all.contains("outside this project"))
+        #expect(!result.all.contains("a closure, a local"))
     }
 
     // MARK: - The daemon

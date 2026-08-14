@@ -11,13 +11,24 @@ import Foundation
 /// untouched. When semantics come back empty, degrade to textual occurrences (the grep
 /// equivalent) while marking clearly that this is NOT semantics. That removes the round trip
 /// through a manual grep fallback: sextant answers instead.
-func degradeToTextual(symbol: String, arguments: [String]) -> Int32 {
+func degradeToTextual(symbol: String, arguments: [String], index: IndexStoreSet? = nil) -> Int32 {
     let rootPath = projectRoot(in: arguments)
     let scan = IdentifierScan.matches(of: symbol, underRoot: URL(fileURLWithPath: rootPath, isDirectory: true), includeTests: true, limit: 40)
     let json = arguments.contains("--json")
+    // The store may know the symbol perfectly well and be describing another checkout of it. That
+    // is a fact about the chosen store, not about the code, and it outranks every other reason:
+    // "not found" over a store full of records for this very name is the confident wrongness this
+    // layer exists to prevent.
+    let foreign = index?.outOfScope(forName: symbol) ?? (count: 0, roots: [])
+    let foreignReason: String? = foreign.count == 0 ? nil : {
+        let origin = foreign.roots.sorted().first.map { " — they belong to \(shorten($0))" } ?? ""
+        return "the index holds \(foreign.count) record(s) for this name, all outside this project\(origin); "
+             + "the chosen store was built from another checkout — pass `--index-store`, or rebuild this one"
+    }()
     guard !scan.matches.isEmpty else {
+        if let foreignReason { reportError("⚠ \(symbol): \(foreignReason)") }
         if json { printNotFoundJSON(symbol: symbol, command: "query"); return 0 }
-        print("Symbol '\(symbol)' not found (neither in the index nor textually).")
+        print("Symbol '\(symbol)' not found here\(foreignReason == nil ? " (neither in the index nor textually)" : " — see the warning above").")
         return 0
     }
     let stale = indexIsStale(paths: resolveStorePaths(in: arguments), root: rootPath)
@@ -27,7 +38,9 @@ func degradeToTextual(symbol: String, arguments: [String]) -> Int32 {
     let allConditional = !scan.matches.isEmpty && scan.matches.allSatisfy { $0.conditional }
     let someConditional = scan.matches.contains { $0.conditional }
     let reason: String
-    if stale {
+    if let foreignReason {
+        reason = foreignReason
+    } else if stale {
         reason = "the index is stale — run `sextant index`"
     } else if allConditional {
         reason = "every occurrence is inside a #if branch this build does not contain — the index only covers the configuration that was built"
@@ -93,7 +106,7 @@ func runSemantic(_ query: SymbolQuery, arguments: [String]) -> Int32 {
 
     crossCheck(symbol: symbol, query: query, hits: ordered, arguments: arguments)
 
-    if ordered.isEmpty { return degradeToTextual(symbol: symbol, arguments: arguments) }
+    if ordered.isEmpty { return degradeToTextual(symbol: symbol, arguments: arguments, index: set) }
     if arguments.contains("--json") { printJSON(ordered); return 0 }
 
     let fullPaths = arguments.contains("--full-paths")
