@@ -3,8 +3,11 @@ import Testing
 
 /// The last of the defect ledger: the ones that need scale (a symbol past the internal cap), a
 /// second store on disk, or a live daemon. They are slower than the other suites because each
-/// builds its own package, and they skip rather than fail when the environment cannot provide
-/// what they need.
+/// builds its own package. A missing toolchain is a skip; anything the test itself sets up is a
+/// hard requirement, so a defect can never stop being exercised in silence.
+///
+/// This suite holds the one defect still open — store choice by timestamp. Its test is wrapped in
+/// `withKnownIssue` and will fail the moment selection stops ranking by mtime.
 @Suite("Known defects: scale, store choice and the daemon", .serialized)
 struct KnownDefectsScaleTests {
 
@@ -93,29 +96,59 @@ struct KnownDefectsScaleTests {
         ]) else { return }
 
         let result = try sextant(["refs", "Widget", "--project", fixture.root.path, "--index-store", fixture.store])
-        guard let usages = result.stdout.split(separator: "\n").first(where: { $0.contains("usages:") }) else { return }
+        let usages = try #require(result.stdout.split(separator: "\n").first(where: { $0.contains("usages:") }))
         #expect(usages.contains("1200") || usages.lowercased().contains("more") || usages.contains("cap"))
     }
 
-    // MARK: - Choosing between stores — not covered here, and deliberately so
-    //
-    // Selection ranking a fresher-but-emptier store above the one that covers the project is
-    // real: it is the defect this whole ledger started from, and it reproduces by hand in a
-    // temporary package —
-    //
-    //     swift build --enable-index-store --package-path $P
-    //     mkdir -p $P/.build/index-build/host/debug/index
-    //     cp -R $P/.build/*/debug/index/store $P/.build/index-build/host/debug/index/store
-    //     rm -f $P/.build/index-build/host/debug/index/store/v5/units/b.swift*
-    //     ln -s host/debug $P/.build/index-build/debug
-    //     touch $P/.build/index-build/host/debug/index/store/v5/units
-    //     sextant doctor --project $P     # names .build/index-build/... — the emptier store
-    //     sextant refs Widget --project $P   # 0 usages; with --index-store on the good one, 1
-    //
-    // — and on a real Xcode project it takes the whole semantic layer down. Written as a test
-    // with the same steps it does *not* reproduce: the good store keeps winning, and I could not
-    // establish why. A test that quietly stops exercising its defect reads as "fixed", which is
-    // the failure this ledger exists to prevent, so it is absent rather than green.
+    // MARK: - Choosing between stores
+
+    /// Selection ranks candidate stores by the modification time of their units, so a store that
+    /// covers less of the project wins by being newer. On a project with agent worktrees this is
+    /// not a corner case: the tool picks a store belonging to someone else's build, then rejects
+    /// every record in it as foreign, and answers every semantic question with nothing — under a
+    /// `fresh` label and a green `doctor`.
+    ///
+    /// The rival is a real copy of the good store with one unit removed: the shape another indexer
+    /// leaves behind — same format, fewer units, newer timestamp. The assertion is on `doctor`,
+    /// which names the store the tool decided to use: the decision itself, not its effect.
+    @Test("the store that covers the project is not outranked by an emptier newer one")
+    func storeChoiceIsNotByTimestampAlone() throws {
+        guard let fixture = buildFixture(name: "pick", files: [
+            "Sources/pick/a.swift": "public struct Widget { public init() {} }\n",
+            "Sources/pick/b.swift": "public func use() { _ = Widget() }\n",
+        ]) else { return }
+
+        let rivalIndex = fixture.root.appendingPathComponent(".build/index-build/host/debug/index")
+        try? FileManager.default.createDirectory(at: rivalIndex, withIntermediateDirectories: true)
+        try #require(try? FileManager.default.copyItem(at: URL(fileURLWithPath: fixture.store),
+                                                       to: rivalIndex.appendingPathComponent("store")))
+        let rivalUnits = rivalIndex.appendingPathComponent("store/v5/units")
+        let units = try #require(try? FileManager.default.contentsOfDirectory(atPath: rivalUnits.path))
+        for unit in units where unit.hasPrefix("b.swift") {
+            try FileManager.default.removeItem(at: rivalUnits.appendingPathComponent(unit))
+        }
+        #expect(units.count > ((try? FileManager.default.contentsOfDirectory(atPath: rivalUnits.path))?.count ?? 0))
+
+        // The symlink is what lets the rival match the `<triple>/<configuration>` shape the locator
+        // probes for; `sourcekit-lsp` leaves exactly this behind. It has to stay RELATIVE — the
+        // URL-based API resolves a relative destination against the current directory, which
+        // silently produces a dangling link and a rival that is not on disk at all.
+        try FileManager.default.createSymbolicLink(
+            atPath: fixture.root.appendingPathComponent(".build/index-build/debug").path,
+            withDestinationPath: "host/debug")
+        Thread.sleep(forTimeInterval: 1.1)   // mtime granularity: the rival must land strictly later
+        try FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: rivalUnits.path)
+        try #require(FileManager.default.fileExists(
+            atPath: fixture.root.appendingPathComponent(".build/index-build/debug/index/store").path))
+
+        let chosen = try sextant(["doctor", "--project", fixture.root.path])
+        try #require(chosen.all.contains("index store"))
+        let answer = try sextant(["refs", "Widget", "--project", fixture.root.path])
+        withKnownIssue("selection ranks by unit mtime, so the emptier newer store wins") {
+            #expect(!chosen.all.contains("index-build"))
+            #expect(!answer.stdout.contains("usages: 0"))
+        }
+    }
 
     // MARK: - The daemon
 
@@ -138,14 +171,14 @@ struct KnownDefectsScaleTests {
         Thread.sleep(forTimeInterval: 1.0)
 
         let before = try sextant(["map", "--project", fixture.root.path])
-        guard before.stdout.contains("files: 1") else { return }   // the daemon answered
+        try #require(before.stdout.contains("files: 1"))   // the daemon answered
 
         try? "public struct Second {}\n"
             .write(to: fixture.root.appendingPathComponent("Sources/dmn/b.swift"), atomically: true, encoding: .utf8)
 
         let throughDaemon = try sextant(["map", "--project", fixture.root.path])
         let direct = try sextant(["map", "--project", fixture.root.path], environment: ["SEXTANT_NO_DAEMON": "1"])
-        guard direct.stdout.contains("files: 2") else { return }   // the file really is there
+        try #require(direct.stdout.contains("files: 2"))   // the file really is there
 
         #expect(throughDaemon.stdout.contains("files: 2"))
     }

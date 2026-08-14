@@ -135,7 +135,7 @@ struct KnownDefectsSurfaceTests {
         guard let fixture = mixedFixture(name: "enc", objcBody: clean) else { return }
 
         let good = try sextant(["search", "[$X legacyValue]", "--project", fixture.root.path])
-        guard good.stdout.contains("[self legacyValue]") else { return }
+        try #require(good.stdout.contains("[self legacyValue]"))
         let goodColumn = good.stdout.split(separator: "\n").first { $0.contains("[self legacyValue]") }
 
         // Same code, three Latin-1 bytes ahead of the match.
@@ -174,7 +174,7 @@ struct KnownDefectsSurfaceTests {
         guard let fixture = mixedFixture(name: "mcpmap", objcBody: body) else { return }
 
         let cli = try sextant(["map", "--project", fixture.root.path])
-        guard cli.stdout.contains("legacy.m") else { return }
+        try #require(cli.stdout.contains("legacy.m"))
         let mcp = try callTool("repo_map", project: fixture.root.path)
         let text = try #require(mcp?.text)
 
@@ -200,7 +200,7 @@ struct KnownDefectsSurfaceTests {
             .write(to: fixture.root.appendingPathComponent("Sources/prov/a.swift"), atomically: true, encoding: .utf8)
 
         let cli = try sextant(["refs", "Thing", "--project", fixture.root.path, "--index-store", fixture.store])
-        guard cli.stderr.contains("STALE") else { return }
+        try #require(cli.stderr.contains("STALE"))
         let mcp = try callTool("find_references", arguments: ["symbol": "Thing"], project: fixture.root.path)
         let text = try #require(mcp?.text)
 
@@ -221,7 +221,7 @@ struct KnownDefectsSurfaceTests {
             """) else { return }
 
         let known = try callTool("list_implementations", arguments: ["symbol": "Shape"], project: fixture.root.path)
-        guard known?.text.contains("Round") == true else { return }
+        try #require(known?.text.contains("Round") == true)
         let unknown = try #require(try callTool("list_implementations", arguments: ["symbol": "NoSuchSymbolXYZ"], project: fixture.root.path))
 
         #expect(unknown.isError)
