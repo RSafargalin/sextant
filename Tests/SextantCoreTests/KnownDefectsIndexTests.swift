@@ -169,7 +169,7 @@ struct KnownDefectsIndexTests {
 
         let text = try sextant(["refs", "localOnly", "--project", fixture.root.path, "--index-store", fixture.store])
         let json = try sextant(["refs", "localOnly", "--project", fixture.root.path, "--index-store", fixture.store, "--json"])
-        guard text.all.contains("⚠") else { return }   // no degradation to compare against
+        try #require(text.all.contains("⚠"))   // there is a degradation to compare against
         // The degraded answer is an object, not the array a resolved answer returns: a consumer
         // that decodes it as references would otherwise read textual matches as semantic ones.
         let parsed = try #require((try? JSONSerialization.jsonObject(with: Data(json.stdout.utf8))) as? [String: Any])
@@ -208,7 +208,7 @@ struct KnownDefectsIndexTests {
 
         let all = try sextant(["impls", "Shape", "--project", fixture.root.path, "--index-store", fixture.store])
         let limited = try sextant(["impls", "Shape", "--project", fixture.root.path, "--index-store", fixture.store, "--limit", "1"])
-        guard all.stdout.contains("Shape: 3") else { return }
+        try #require(all.stdout.contains("Shape: 3"))
         #expect(!limited.stdout.contains("Shape: 1") || limited.stdout.contains("more"))
     }
 
