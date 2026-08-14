@@ -52,10 +52,20 @@ public enum DerivedDataLocator {
         path.hasSuffix(".xcodeproj") || path.hasSuffix(".xcworkspace")
     }
 
-    /// Whether the workspace lies inside the project root, respecting path component boundaries.
+    /// Whether the workspace lies inside the project root, respecting path component boundaries,
+    /// and holds paths this project can use.
+    ///
+    /// The second half is not a refinement — it is the whole difference between an answer and
+    /// nothing. An agent worktree lives *inside* the checkout (`.claude/worktrees/<name>`), so its
+    /// DerivedData passes the prefix test, and being rebuilt more recently it also wins on
+    /// freshness. Every record in it then names a path under that worktree, which the record
+    /// filter rejects as foreign — so the tool picks a store, opens it, reports `fresh`, and
+    /// answers every question with nothing. Selection has to apply the same predicate the filter
+    /// applies, or the two layers disagree and the disagreement is invisible.
     static func workspace(_ workspacePath: String, isInProjectRoot projectRoot: String) -> Bool {
         let workspace = URL(fileURLWithPath: workspacePath).resolvingSymlinksInPath().standardizedFileURL.path
         let root = URL(fileURLWithPath: projectRoot).resolvingSymlinksInPath().standardizedFileURL.path
-        return workspace == root || workspace.hasPrefix(root.hasSuffix("/") ? root : root + "/")
+        guard workspace == root || workspace.hasPrefix(root.hasSuffix("/") ? root : root + "/") else { return false }
+        return IndexStore.inScope(path: workspace, root: root)
     }
 }
