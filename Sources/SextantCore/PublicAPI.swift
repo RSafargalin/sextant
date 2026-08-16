@@ -16,11 +16,12 @@ public enum PublicAPI {
         type: String? = nil,
         cache: SourceParseCache = SourceParseCache(),
         index: FileSymbolIndex? = nil,
-        compileDatabaseRoot: String? = nil
+        compileDatabaseRoot: String? = nil,
+        fileLimit: Int? = nil
     ) -> [FileSummary] {
         let root = URL(fileURLWithPath: projectRoot, isDirectory: true)
         let store = DeclarationCache.makeStore()
-        let swift = SwiftSources.files(under: root, includeTests: false)
+        let swift = SwiftSources.files(under: root, includeTests: false, limit: fileLimit)
             .filter { $0.lastPathComponent != "Package.swift" }
             .compactMap { url -> FileSummary? in
                 let relative = SwiftSources.relativePath(of: url, root: root)
@@ -59,20 +60,35 @@ public enum PublicAPI {
         type: String? = nil,
         cache: SourceParseCache = SourceParseCache(),
         index: FileSymbolIndex? = nil,
-        compileDatabaseRoot: String? = nil
+        compileDatabaseRoot: String? = nil,
+        fileLimit: Int? = nil,
+        tokenBudget: Int? = nil
     ) -> String {
         render(summaries(projectRoot: projectRoot, package: package, type: type, cache: cache,
-                         index: index, compileDatabaseRoot: compileDatabaseRoot))
+                         index: index, compileDatabaseRoot: compileDatabaseRoot, fileLimit: fileLimit),
+               budget: tokenBudget)
     }
 
-    static func render(_ summaries: [FileSummary]) -> String {
+    /// `budget` is in tokens, as `map`'s is, and bounds the rendered surface. It has no default:
+    /// a public surface is a contract, and cutting one by default would change what every existing
+    /// answer says. When it is given, the header states how much was left out — a shorter surface
+    /// that says so is an answer; a shorter surface that does not is a wrong one.
+    static func render(_ summaries: [FileSummary], budget: Int? = nil) -> String {
         let packages = Dictionary(grouping: summaries, by: \.package)
+        let budgetChars = budget.map { $0 * 4 }
         var body = ""
         var total = 0
+        var omittedFiles = 0
+        var omittedDeclarations = 0
 
         for packageName in packages.keys.sorted() {
             var packageBlock = ""
             for file in (packages[packageName] ?? []).sorted(by: { $0.relativePath < $1.relativePath }) {
+                if let budgetChars, body.count + packageBlock.count > budgetChars {
+                    omittedFiles += 1
+                    omittedDeclarations += count(file.declarations)
+                    continue
+                }
                 var fileBlock = ""
                 for declaration in file.declarations where isVisible(declaration) {
                     fileBlock += "  \(declaration.decoratedHeader)\(docSuffix(declaration))\n"
@@ -88,7 +104,17 @@ public enum PublicAPI {
             }
             if !packageBlock.isEmpty { body += "\n## \(packageName)\(packageBlock)" }
         }
-        return "# Public API  •  declarations: \(total)\(body)"
+        var header = "# Public API  •  declarations: \(total)"
+        if omittedFiles > 0 {
+            header += "  •  ⚠ truncated: \(omittedFiles) file(s) with \(omittedDeclarations) declaration(s) "
+                + "left out by --budget \(budget ?? 0) tok — narrow with --package/--type/--scope, or raise it"
+        }
+        return header + body
+    }
+
+    /// Declarations including members — what a file contributes to the surface.
+    private static func count(_ declarations: [Declaration]) -> Int {
+        declarations.reduce(0) { $0 + 1 + count($1.members) }
     }
 
     private static func docSuffix(_ declaration: Declaration) -> String {

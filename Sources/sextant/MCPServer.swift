@@ -229,6 +229,20 @@ private func handleMCP(method: String, id: Any?, params: [String: Any], context:
 
 // MARK: - Tool dispatch
 
+/// How many files an area tool may read, and the line that says what it did not. An agent never
+/// sees stderr, so on a large project the bound has to travel inside the answer or the answer
+/// reads as complete.
+private func fileLimit(_ context: ToolContext) -> Int { max(1, context.config?.maxFiles ?? 4000) }
+
+private func scaleNoteMCP(_ context: ToolContext, includeTests: Bool = false) -> [String] {
+    let limit = fileLimit(context)
+    let total = SwiftSources.count(under: URL(fileURLWithPath: context.project, isDirectory: true),
+                                   includeTests: includeTests)
+    guard total > limit else { return [] }
+    return ["⚠ covered \(limit) of \(total) file(s) — the walk stops at maxFiles \(limit) "
+            + "(.sextant.json). Narrow with scope, or raise it."]
+}
+
 /// Tools that work over an area of the project rather than a symbol — they need a valid scope.
 private let areaTools: Set<String> = ["repo_map", "structural_search", "lint", "api", "changed"]
 
@@ -327,8 +341,10 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
         let foreign = SwiftSources.files(under: mapRoot, includeTests: false,
                                          extensions: IndexDeclarations.clangExtensions)
         var map = RepoMap.generate(projectRoot: context.project,
-                                   options: .init(tokenBudget: budget, includeTests: false),
+                                   options: .init(tokenBudget: budget, includeTests: false,
+                                                  fileLimit: fileLimit(context)),
                                    index: context.index)
+        scaleNoteMCP(context).forEach { map += "\n\n\($0)" }
         if !foreign.isEmpty, context.index == nil {
             map += "\n\n⚠ \(foreign.count) non-Swift file(s) are missing from the map: no index store. "
                  + "Build one with `sextant index`."
@@ -387,12 +403,13 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
         }
         let rules = ruleSet.rules
         let outcome = RuleEngine.run(rules: rules, projectRoot: context.projectRoot, lintRoot: context.project,
-                                     includeTests: false)
+                                     includeTests: false, fileLimit: fileLimit(context))
         let violations = outcome.violations
         let unscanned = StructuralCoverage.inactiveReport(outcome.inactive, targets: outcome.targets,
                                                           noun: "possible violation(s)")
             + StructuralCoverage.report(outcome.unscanned)
             + RuleEngine.brokenReport(outcome.broken)
+            + scaleNoteMCP(context)
         guard !violations.isEmpty else {
             return ((["✅ no violations found — rules: \(ruleSet.origin)"] + unscanned).joined(separator: "\n"), false)
         }
@@ -425,14 +442,19 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
             package: package,
             type: (args["type"] as? String).flatMap { $0.isEmpty ? nil : $0 },
             index: index,
-            compileDatabaseRoot: context.projectRoot
+            compileDatabaseRoot: context.projectRoot,
+            fileLimit: fileLimit(context),
+            // The MCP surface is read by an agent with a context window, so here the budget has a
+            // default: the CLI can afford to hand a person three megabytes, a tool call cannot.
+            tokenBudget: max(500, (args["budget"] as? Int) ?? context.config?.budget ?? 8000)
         )
+        let bounded = scaleNoteMCP(context)
         let cxxHeaders = IndexDeclarations.publicHeaderSummaries(root: rootURL, index: index, package: package).cxxHeaders
         let unanswered = IndexDeclarations.cxxHeaderSummaries(cxxHeaders, root: rootURL,
                                                               compileDatabaseRoot: context.projectRoot).unanswered
         let answer = ([capped(surface, hint: "narrow it with package, type, or scope")]
                       + (index == nil ? [] : IndexDeclarations.conditionalHeaderNote(root: rootURL, package: package))
-                      + StructuralCoverage.report(unanswered)).joined(separator: "\n")
+                      + StructuralCoverage.report(unanswered) + bounded).joined(separator: "\n")
         return (answer, false)
 
     case "changed":
@@ -485,7 +507,9 @@ private func readResource(uri: String, context: ToolContext) -> (text: String, o
     if uri == "sextant://repo_map" {
         if let problem = context.scopeProblem { return ("config: \(problem)", false) }
         let budget = max(500, context.config?.budget ?? 6000)
-        return (RepoMap.generate(projectRoot: context.project, options: .init(tokenBudget: budget, includeTests: false)), true)
+        return (RepoMap.generate(projectRoot: context.project,
+                                 options: .init(tokenBudget: budget, includeTests: false,
+                                                fileLimit: fileLimit(context))), true)
     }
     let prefix = "sextant://symbol/"
     if uri.hasPrefix(prefix) {

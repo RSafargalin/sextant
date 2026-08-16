@@ -92,8 +92,9 @@ public enum RuleEngine {
     /// through clang. `projectRoot` is where the compile flags are looked up, which is not always
     /// the directory being linted (`--scope` narrows the second, not the first).
     public static func run(rules: [Rule], projectRoot: String, lintRoot: String, includeTests: Bool,
-                           cache: SourceParseCache = SourceParseCache()) -> Outcome {
-        let violations = run(rules: rules, projectRoot: lintRoot, includeTests: includeTests, cache: cache)
+                           cache: SourceParseCache = SourceParseCache(), fileLimit: Int? = nil) -> Outcome {
+        let violations = run(rules: rules, projectRoot: lintRoot, includeTests: includeTests, cache: cache,
+                             fileLimit: fileLimit)
         let cFamily = CFamilyLint.run(rules: rules, lintRoot: lintRoot, projectRoot: projectRoot, includeTests: includeTests)
         return Outcome(violations: violations + cFamily.violations, unscanned: cFamily.unscanned,
                        inactive: cFamily.inactive, targets: cFamily.targets,
@@ -103,7 +104,8 @@ public enum RuleEngine {
     /// Runs the rules over every Swift file in the project. A file is parsed once for all patterns.
     /// Result cache keyed by (file content hash + rules hash): on an unchanged file with the same
     /// rules, parsing and matching are skipped — linting a whole project on a warm cache is sub-second.
-    public static func run(rules: [Rule], projectRoot: String, includeTests: Bool, cache: SourceParseCache = SourceParseCache()) -> [RuleViolation] {
+    public static func run(rules: [Rule], projectRoot: String, includeTests: Bool,
+                           cache: SourceParseCache = SourceParseCache(), fileLimit: Int? = nil) -> [RuleViolation] {
         let root = URL(fileURLWithPath: projectRoot, isDirectory: true)
         let compiled: [(rule: Rule, search: PatternSearch)] = rules.flatMap { rule in
             rule.patterns.compactMap { pattern in
@@ -116,7 +118,7 @@ public enum RuleEngine {
         let resultCache = PersistentCache<[CachedViolation]>(namespace: "lint-v1")
 
         var violations: [RuleViolation] = []
-        for file in SwiftSources.files(under: root, includeTests: includeTests) {
+        for file in SwiftSources.files(under: root, includeTests: includeTests, limit: fileLimit) {
             let relative = SwiftSources.relativePath(of: file, root: root)
             guard let contentHash = ContentHash.ofFile(file.path) else { continue }
             let key = "\(contentHash)-\(rulesHash)"

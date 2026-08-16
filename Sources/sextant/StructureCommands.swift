@@ -24,17 +24,22 @@ private func clangIndex(root: String, arguments: [String], includeTests: Bool) -
 func runMap(arguments: [String]) -> Int32 {
     let includeTests = arguments.contains("--include-tests")
     guard let root = scopedRoot(in: arguments) else { return 2 }
-    guard withinScale(root, includeTests: includeTests, arguments: arguments) else { return 1 }
+    let limit = scaleLimit(in: arguments)
     if arguments.contains("--semantic") { return runSemanticMap(root: root, arguments: arguments) }
     if arguments.contains("--pagerank") { return runPageRankMap(root: root, arguments: arguments) }
     if arguments.contains("--json") {
         printJSON(RepoMap.summaries(projectRoot: root, includeTests: includeTests,
-                                    index: clangIndex(root: root, arguments: arguments, includeTests: includeTests)))
+                                    index: clangIndex(root: root, arguments: arguments, includeTests: includeTests),
+                                    fileLimit: limit))
+        scaleNote(root: root, includeTests: includeTests, arguments: arguments).forEach(reportError)
         return 0
     }
     let budget = optionValue("--budget", in: arguments).flatMap(Int.init) ?? loadConfig(arguments)?.budget ?? 6000
     let index = clangIndex(root: root, arguments: arguments, includeTests: includeTests)
-    print(RepoMap.generate(projectRoot: root, options: .init(tokenBudget: budget, includeTests: includeTests), index: index))
+    print(RepoMap.generate(projectRoot: root,
+                           options: .init(tokenBudget: budget, includeTests: includeTests, fileLimit: limit),
+                           index: index))
+    scaleNote(root: root, includeTests: includeTests, arguments: arguments).forEach(reportError)
     // Swift declarations under `#if` are on the map with their condition; the non-Swift ones come
     // from the index, which holds one configuration, so those can only be accounted for.
     if index != nil {
@@ -131,7 +136,10 @@ func runPageRankMap(root: String, arguments: [String]) -> Int32 {
 
 func runAPI(arguments: [String]) -> Int32 {
     guard let root = scopedRoot(in: arguments) else { return 2 }
-    guard withinScale(root, includeTests: false, arguments: arguments) else { return 1 }
+    let fileLimit = scaleLimit(in: arguments)
+    // A surface has no default budget: cutting one silently would change what every existing
+    // answer says. Asked for, it bounds the output and the header states what it left out.
+    let tokenBudget = optionValue("--budget", in: arguments).flatMap(Int.init).map { max(200, $0) }
     let package = optionValue("--package", in: arguments)
     let type = optionValue("--type", in: arguments)
     // A filter that matches nothing must not be answered with "there is nothing": those are
@@ -156,17 +164,19 @@ func runAPI(arguments: [String]) -> Int32 {
 
     if arguments.contains("--json") {
         printJSON(PublicAPI.summaries(projectRoot: root, package: package, type: type, index: index,
-                                      compileDatabaseRoot: databaseRoot))
+                                      compileDatabaseRoot: databaseRoot, fileLimit: fileLimit))
         conditional.forEach(reportError)
         StructuralCoverage.report(unanswered).forEach(reportError)
         StructuralCoverage.exclusionNote().forEach(reportError)
+        scaleNote(root: root, includeTests: false, arguments: arguments).forEach(reportError)
         return 0
     }
     print(PublicAPI.generate(projectRoot: root, package: package, type: type, index: index,
-                             compileDatabaseRoot: databaseRoot))
+                             compileDatabaseRoot: databaseRoot, fileLimit: fileLimit, tokenBudget: tokenBudget))
     conditional.forEach(reportError)
     StructuralCoverage.report(unanswered).forEach(reportError)
     StructuralCoverage.exclusionNote().forEach(reportError)
+    scaleNote(root: root, includeTests: false, arguments: arguments).forEach(reportError)
     return 0
 }
 
@@ -190,7 +200,7 @@ func runSearch(arguments: [String]) -> Int32 {
     }
     let includeTests = arguments.contains("--include-tests")
     guard let rootPath = scopedRoot(in: arguments) else { return 2 }
-    guard withinScale(rootPath, includeTests: includeTests, arguments: arguments) else { return 1 }
+    let fileLimit = scaleLimit(in: arguments)
     let root = URL(fileURLWithPath: rootPath, isDirectory: true)
     let cache = SourceParseCache()
     // Result cache keyed by (file content hash + pattern): on an unchanged file with the same
@@ -199,7 +209,7 @@ func runSearch(arguments: [String]) -> Int32 {
     let patternHash = ContentHash.of(pattern)
     let resultCache = PersistentCache<[CachedHit]>(namespace: "search-v1")
     var hits: [SearchHit] = []
-    for file in SwiftSources.files(under: root, includeTests: includeTests) {
+    for file in SwiftSources.files(under: root, includeTests: includeTests, limit: fileLimit) {
         let relative = SwiftSources.relativePath(of: file, root: root)
         guard let contentHash = ContentHash.ofFile(file.path) else { continue }
         let key = "\(contentHash)-\(patternHash)"
@@ -265,13 +275,14 @@ func runSearch(arguments: [String]) -> Int32 {
     }
     StructuralCoverage.report(cFamily.unscanned).forEach(reportError)
     StructuralCoverage.exclusionNote().forEach(reportError)
+    scaleNote(root: rootPath, includeTests: includeTests, arguments: arguments).forEach(reportError)
     return 0
 }
 
 func runLint(arguments: [String]) -> Int32 {
     let includeTests = arguments.contains("--include-tests")
     guard let root = scopedRoot(in: arguments) else { return 2 }
-    guard withinScale(root, includeTests: includeTests, arguments: arguments) else { return 1 }
+    let fileLimit = scaleLimit(in: arguments)
     let ruleSet: RuleEngine.RuleSet
     if let rulesPath = optionValue("--rules", in: arguments)
         ?? loadConfig(arguments)?.rulesPath(projectRoot: projectRoot(in: arguments)) {
@@ -284,7 +295,7 @@ func runLint(arguments: [String]) -> Int32 {
     // Swift through its own parser, the C family through clang. A clean bill of health has to say
     // which files it covers, so whatever could not be read comes back named.
     let outcome = RuleEngine.run(rules: rules, projectRoot: projectRoot(in: arguments), lintRoot: root,
-                                 includeTests: includeTests)
+                                 includeTests: includeTests, fileLimit: fileLimit)
     let violations = outcome.violations
     let unscanned = outcome.unscanned
     if arguments.contains("--json") {
@@ -308,6 +319,7 @@ func runLint(arguments: [String]) -> Int32 {
         RuleEngine.brokenReport(outcome.broken).forEach(reportError)
         StructuralCoverage.report(unscanned).forEach(reportError)
         StructuralCoverage.exclusionNote().forEach(reportError)
+    scaleNote(root: root, includeTests: includeTests, arguments: arguments).forEach(reportError)
         return 0
     }
     for violation in violations.sorted(by: { ($0.ruleID, $0.file, $0.line) < ($1.ruleID, $1.file, $1.line) }) {
@@ -318,5 +330,6 @@ func runLint(arguments: [String]) -> Int32 {
     RuleEngine.brokenReport(outcome.broken).forEach(reportError)
     StructuralCoverage.report(unscanned).forEach(reportError)
     StructuralCoverage.exclusionNote().forEach(reportError)
+    scaleNote(root: root, includeTests: includeTests, arguments: arguments).forEach(reportError)
     return 1
 }

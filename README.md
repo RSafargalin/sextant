@@ -118,6 +118,27 @@ Shared flags, each on the commands it makes sense for: `--project <path>` (every
 `--json` (structured output, on every command that answers a query), `--reindex` (rebuild the
 index before the query), `--scope <subdirectory>` and `--max-files <N>` (`map`, `api`, `search`,
 `lint`). Run `sextant <command> --help` for the exact set. Defaults come from `.sextant.json`.
+
+### Big projects: a bounded answer, never a refusal
+
+The four file-walking commands are minutes of work on a large project — measured on one with
+12 351 files: `search` 335s, `api` 139s and 3.75 MB of output, `lint` over six minutes. So the walk
+is bounded by `--max-files` (default 4000, from `.sextant.json` if set), and what it did not read
+is named:
+
+```
+⚠ covered 4000 of 12351 file(s): the walk stops at --max-files 4000.
+  The rest were not looked at — narrow with --scope <subdirectory>, or raise --max-files.
+```
+
+The bound is a prefix of the file list in a fixed order, so two runs cover the same files. It used
+to be a refusal instead, which answered a question about the first four thousand files with
+nothing at all.
+
+`api` is separate: a public surface is a contract, so it is **not** cut by default however large it
+is. `--budget <tokens>` bounds it when you want that, and the header then states what was left out
+(`⚠ truncated: 1384 file(s) with 13778 declaration(s) left out by --budget 6000 tok`). Over MCP the
+budget does have a default — an agent reads the answer into a context window.
 ### Which index store answers
 
 A project routinely has more than one index store: `swift build` writes one, an editor's own

@@ -643,17 +643,6 @@ struct IndexProvenanceTests {
 
 @Suite("Scope guard")
 struct ScaleGuardTests {
-    @Test("exceedsLimit with an early exit")
-    func exceedsLimitEarlyExit() throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("sextant-scale-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        for index in 0..<5 {
-            try "struct S\(index) {}".write(to: directory.appendingPathComponent("F\(index).swift"), atomically: true, encoding: .utf8)
-        }
-        #expect(SwiftSources.exceedsLimit(under: directory, includeTests: false, limit: 3))
-        #expect(!SwiftSources.exceedsLimit(under: directory, includeTests: false, limit: 10))
-    }
 }
 
 @Suite("Rule dedup")
