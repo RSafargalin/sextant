@@ -82,11 +82,24 @@ struct CompilationDatabaseTests {
         #expect(CompilationDatabase.commands(inManifest: broken, directory: "/pkg").isEmpty)
     }
 
+    /// The sources are real files: reading the database drops entries whose file is gone, so a
+    /// round trip over invented paths would test the pruning rather than the round trip.
     @Test("A round trip through the stored file keeps the commands")
     func savesAndLoads() throws {
-        let root = "/tmp/sextant-compile-db-test-\(UUID().uuidString)"
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("sextant-compile-db-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let root = directory.path
         defer { try? FileManager.default.removeItem(at: CompilationDatabase.path(forRoot: root)) }
-        let commands = CompilationDatabase.commands(inManifest: manifest, directory: "/pkg")
+
+        let commands = try CompilationDatabase.commands(inManifest: manifest, directory: "/pkg")
+            .map { command -> CompileCommand in
+                let file = directory.appendingPathComponent((command.file as NSString).lastPathComponent).path
+                try "int placeholder(void) { return 0; }\n".write(toFile: file, atomically: true, encoding: .utf8)
+                return CompileCommand(directory: command.directory, file: file, arguments: command.arguments)
+            }
+        #expect(!commands.isEmpty)
 
         try CompilationDatabase.save(commands, forRoot: root)
         #expect(CompilationDatabase.load(forRoot: root) == commands)
