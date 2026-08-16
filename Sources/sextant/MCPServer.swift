@@ -320,14 +320,24 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
         guard !roots.isEmpty else { return ("symbol not found: \(symbol)", true) }
         var visited = Set<String>()
         var lines: [String] = []
-        func walk(_ usr: String, _ label: String, _ location: SourceLocation, _ remaining: Int, _ indent: Int) {
-            lines.append(String(repeating: "  ", count: indent) + "\(label)  \(shorten(location.path)):\(location.line)")
+        // As in the CLI: where the symbol is defined and where the call was written are two facts,
+        // and the answer states which is which.
+        func walk(_ usr: String, _ label: String, _ location: SourceLocation, _ callSite: SourceLocation?,
+                  _ definitionKnown: Bool, _ remaining: Int, _ indent: Int) {
+            var line = String(repeating: "  ", count: indent) + "\(label)  \(shorten(location.path)):\(location.line)"
+            if !definitionKnown {
+                line += " — that is the call site; the index has no definition for it (external or system symbol)"
+            } else if let callSite {
+                line += "  · called at \(shorten(callSite.path)):\(callSite.line)"
+            }
+            lines.append(line)
             guard remaining > 0, visited.insert(usr).inserted else { return }
             for child in set.calls(ofUSR: usr, direction: direction).prefix(40) {
-                walk(child.usr, "\(child.name) [\(child.kind)]", child.location, remaining - 1, indent + 1)
+                walk(child.usr, "\(child.name) [\(child.kind)]", child.location, child.callSite,
+                     child.definitionKnown, remaining - 1, indent + 1)
             }
         }
-        for root in roots { walk(root.usr, "\(root.name) [\(root.kind)]", root.location, depth, 0) }
+        for root in roots { walk(root.usr, "\(root.name) [\(root.kind)]", root.location, nil, true, depth, 0) }
         return (lines.joined(separator: "\n"), false)
 
     case "repo_map":

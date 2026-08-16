@@ -32,13 +32,27 @@ public struct RelatedSymbol: Sendable, Codable {
     public let name: String
     public let usr: String
     public let kind: String
+    /// Where the symbol is defined. For a call hierarchy this is the definition of the callee or
+    /// of the caller — not the place the call was written, which is `callSite`. The two used to be
+    /// the same field, so a hierarchy pointed at the line a function was called from and called it
+    /// the function: `timestamp(ofStore:)` was shown at line 48 while it is defined at line 25,
+    /// and nothing in the answer said which of the two it meant.
     public let location: SourceLocation
+    /// Where the call was written. `nil` for relations that are not calls (implementations).
+    public let callSite: SourceLocation?
+    /// False when the index does not hold the definition — an external or system symbol — and
+    /// `location` is standing in for it with the call site. Saying so is the difference between a
+    /// missing fact and a wrong one.
+    public let definitionKnown: Bool
 
-    public init(name: String, usr: String, kind: String, location: SourceLocation) {
+    public init(name: String, usr: String, kind: String, location: SourceLocation,
+                callSite: SourceLocation? = nil, definitionKnown: Bool = true) {
         self.name = name
         self.usr = usr
         self.kind = kind
         self.location = location
+        self.callSite = callSite
+        self.definitionKnown = definitionKnown
     }
 }
 

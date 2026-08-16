@@ -328,8 +328,15 @@ private func printNotDiffed(_ files: [UnscannedFile]) {
 struct CallNode: Encodable {
     let name: String
     let kind: String
+    /// Where the symbol is defined.
     let file: String
     let line: Int
+    /// Where the call to it was written — the parent's side of the edge.
+    let calledAtFile: String?
+    let calledAtLine: Int?
+    /// False when the index has no definition for the symbol (an external one), and `file`/`line`
+    /// are the call site standing in for it.
+    let definitionKnown: Bool
     let children: [CallNode]
 }
 
@@ -344,14 +351,19 @@ func runHierarchy(arguments: [String]) -> Int32 {
     let breadth = 40
 
     var visited = Set<String>()
-    func build(usr: String, name: String, kind: String, location: SourceLocation, remaining: Int) -> CallNode {
+    func build(usr: String, name: String, kind: String, location: SourceLocation,
+               callSite: SourceLocation?, definitionKnown: Bool, remaining: Int) -> CallNode {
         var children: [CallNode] = []
         if remaining > 0, visited.insert(usr).inserted {
             for child in set.calls(ofUSR: usr, direction: direction).prefix(breadth) {
-                children.append(build(usr: child.usr, name: child.name, kind: child.kind, location: child.location, remaining: remaining - 1))
+                children.append(build(usr: child.usr, name: child.name, kind: child.kind, location: child.location,
+                                      callSite: child.callSite, definitionKnown: child.definitionKnown,
+                                      remaining: remaining - 1))
             }
         }
-        return CallNode(name: name, kind: kind, file: shorten(location.path), line: location.line, children: children)
+        return CallNode(name: name, kind: kind, file: shorten(location.path), line: location.line,
+                        calledAtFile: callSite.map { shorten($0.path) }, calledAtLine: callSite?.line,
+                        definitionKnown: definitionKnown, children: children)
     }
 
     let roots = set.resolveSymbols(forName: symbol)
@@ -360,11 +372,27 @@ func runHierarchy(arguments: [String]) -> Int32 {
         print("Symbol '\(symbol)' not found in the index.")
         return 0
     }
-    let trees = roots.map { build(usr: $0.usr, name: $0.name, kind: $0.kind, location: $0.location, remaining: depth) }
+    let trees = roots.map {
+        build(usr: $0.usr, name: $0.name, kind: $0.kind, location: $0.location,
+              callSite: nil, definitionKnown: true, remaining: depth)
+    }
 
     if arguments.contains("--json") { printJSON(trees); return 0 }
     func printNode(_ node: CallNode, indent: Int) {
-        print(String(repeating: "  ", count: indent) + "\(node.name) [\(node.kind)]  \(node.file):\(node.line)")
+        // Two positions, and they are not interchangeable: where the symbol lives, and where the
+        // edge into it was written. A line that shows one of them without saying which is the
+        // defect this rendering exists to avoid.
+        var line = String(repeating: "  ", count: indent) + "\(node.name) [\(node.kind)]  "
+        if node.definitionKnown {
+            line += "\(node.file):\(node.line)"
+            if let file = node.calledAtFile, let called = node.calledAtLine {
+                line += "  · called at \(file):\(called)"
+            }
+        } else {
+            line += "\(node.file):\(node.line) — that is the call site; the index has no definition "
+                  + "for it (external or system symbol)"
+        }
+        print(line)
         for child in node.children { printNode(child, indent: indent + 1) }
     }
     print("# call hierarchy (\(direction == .callers ? "← callers" : "→ callees"), depth \(depth))")
