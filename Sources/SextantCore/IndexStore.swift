@@ -143,13 +143,17 @@ public final class IndexStore {
                     .first { isInScope($0.location) }
                     .map(SourceLocation.init)
 
+            // A macro records the same reference twice — where it is written and where it was
+            // expanded from — so the positions the source does not carry are dropped before
+            // anything is counted.
+            let carried = ReferencePositions.verified(locations, name: definitionOccurrence.symbol.name)
             return SymbolHit(
                 name: definitionOccurrence.symbol.name,
                 usr: usr,
                 kind: "\(definitionOccurrence.symbol.kind)",
                 definition: definitionLocation,
-                references: Array(locations.sorted(by: SourceLocation.isOrderedBefore).prefix(limit)),
-                totalReferences: locations.count
+                references: Array(carried.sorted(by: SourceLocation.isOrderedBefore).prefix(limit)),
+                totalReferences: carried.count
             )
         }
         .sorted { $0.usr < $1.usr }
