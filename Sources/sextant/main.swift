@@ -223,6 +223,7 @@ func dispatch(_ arguments: [String]) -> Int32 {
     case "construct": return runConstruct(arguments: rest)
     case "changed": return runChanged(arguments: rest)
     case "mcp": return runMCP(arguments: rest)
+    case "store": return runStore(arguments: rest)
     case "doctor": return runDoctor(arguments: rest)
     case "golden": return runGolden(arguments: rest)
     case "bench": return runBench(arguments: rest)

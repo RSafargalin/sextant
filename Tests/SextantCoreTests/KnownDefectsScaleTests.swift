@@ -107,16 +107,14 @@ struct KnownDefectsScaleTests {
 
     // MARK: - Choosing between stores
 
-    /// Selection ranks candidate stores by the modification time of their units, so a store that
-    /// covers less of the project wins by being newer. On a project with agent worktrees this is
-    /// not a corner case: the tool picks a store belonging to someone else's build, then rejects
-    /// every record in it as foreign, and answers every semantic question with nothing — under a
-    /// `fresh` label and a green `doctor`.
+    /// Two usable stores of one project, the newer one covering less — the shape an editor's own
+    /// indexer leaves behind. Ranking by timestamp answered such a project with silence and no
+    /// sign that a second store existed; the fix is not a better ranking but a visible decision:
+    /// with no policy set nothing is chosen, and with one set the answer says what it read and
+    /// what it left.
     ///
-    /// The rival is a real copy of the good store with one unit removed: the shape another indexer
-    /// leaves behind — same format, fewer units, newer timestamp. The assertion is on `doctor`,
-    /// which names the store the tool decided to use: the decision itself, not its effect.
-    @Test("the store that covers the project is not outranked by an emptier newer one")
+    /// The rival is a real copy of the good store with one unit removed.
+    @Test("with several usable stores the choice is made explicitly, not by timestamp alone")
     func storeChoiceIsNotByTimestampAlone() throws {
         guard let fixture = buildFixture(name: "pick", files: [
             "Sources/pick/a.swift": "public struct Widget { public init() {} }\n",
@@ -146,13 +144,21 @@ struct KnownDefectsScaleTests {
         try #require(FileManager.default.fileExists(
             atPath: fixture.root.appendingPathComponent(".build/index-build/debug/index/store").path))
 
-        let chosen = try sextant(["doctor", "--project", fixture.root.path])
-        try #require(chosen.all.contains("index store"))
-        let answer = try sextant(["refs", "Widget", "--project", fixture.root.path])
-        withKnownIssue("selection ranks by unit mtime, so the emptier newer store wins") {
-            #expect(!chosen.all.contains("index-build"))
-            #expect(!answer.stdout.contains("usages: 0"))
-        }
+        // No policy: the tool must not pick. Both stores are named, with what each policy would
+        // do, because the two answers below differ and nothing in an answer would show which.
+        let unset = try sextant(["doctor", "--project", fixture.root.path])
+        #expect(unset.all.contains("no store policy is set") || unset.all.contains("NOT SET"))
+        #expect(unset.all.contains("index-build"))
+
+        // `union` reads both, so the reference held only by the good store is found.
+        let union = try sextant(["refs", "Widget", "--project", fixture.root.path, "--store-policy", "union"])
+        #expect(union.stdout.contains("usages: 1"))
+
+        // `recency` reads the newer store, which here is the emptier one — the documented cost of
+        // that policy. What it must not do is stay quiet about the store it did not read.
+        let recency = try sextant(["refs", "Widget", "--project", fixture.root.path, "--store-policy", "recency"])
+        #expect(recency.all.contains("candidate(s), policy `recency`"))
+        #expect(recency.all.contains("left") && recency.all.contains("index-build"))
     }
 
     /// Measured on the target project: two Xcode stores, one of them built inside an agent

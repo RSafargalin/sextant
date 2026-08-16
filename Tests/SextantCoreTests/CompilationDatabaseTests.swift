@@ -121,7 +121,7 @@ struct CompilationDatabaseTests {
           .enabled(if: FileManager.default.fileExists(atPath: fixture.appendingPathComponent(".build").path),
                    "the fixture has not been built"))
     func capturesFromRealBuild() throws {
-        let stores = IndexStoreLocator.stores(under: Self.fixture)
+        let stores = IndexStoreLocator.usableStorePaths(under: Self.fixture)
         let commands = CompilationDatabase.capture(fromStores: stores)
 
         let files = Set(commands.map { ($0.file as NSString).lastPathComponent })

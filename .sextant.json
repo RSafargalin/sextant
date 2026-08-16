@@ -1,4 +1,5 @@
 {
   "budget" : 6000,
-  "maxFiles" : 4000
+  "maxFiles" : 4000,
+  "storePolicy" : "recency"
 }

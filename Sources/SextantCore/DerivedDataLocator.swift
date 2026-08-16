@@ -17,6 +17,51 @@ public enum DerivedDataLocator {
         }?.path
     }
 
+    /// Every DataStore Xcode holds for this project, with the facts needed to choose between them.
+    /// A project routinely has several: a second checkout, an opened nested package, a stale
+    /// directory from a renamed scheme. Which one answers is a decision, so they all come back.
+    public static func candidates(forProjectRoot projectRoot: String, derivedData: String) -> [StoreCandidate] {
+        let manager = FileManager.default
+        guard let entries = try? manager.contentsOfDirectory(atPath: derivedData) else { return [] }
+
+        var apps: [StoreCandidate] = []
+        var packages: [StoreCandidate] = []
+        for entry in entries.sorted() {
+            let infoPlist = "\(derivedData)/\(entry)/info.plist"
+            guard let info = NSDictionary(contentsOfFile: infoPlist),
+                  let workspacePath = info["WorkspacePath"] as? String else { continue }
+            let store = "\(derivedData)/\(entry)/Index.noindex/DataStore"
+            guard manager.fileExists(atPath: store) else { continue }
+
+            let modified = IndexFreshness.timestamp(ofStore: store)
+            let rejection: String?
+            if !workspace(workspacePath, isInProjectRoot: projectRoot) {
+                // Only stores that belong to this checkout are shown at all; another project's
+                // DerivedData is not a candidate anybody would want listed.
+                continue
+            } else if modified == nil {
+                rejection = "no units — nothing to read"
+            } else {
+                rejection = nil
+            }
+            let candidate = StoreCandidate(path: store, origin: workspacePath,
+                                           unitCount: StoreCandidate.unitCount(ofStore: store),
+                                           modified: modified, rejection: rejection)
+            if isAppWorkspace(workspacePath) { apps.append(candidate) } else { packages.append(candidate) }
+        }
+        // An app workspace (.xcodeproj/.xcworkspace) covers the whole project; the index of an
+        // opened nested package is partial, so it is used only when no app store exists — and it
+        // is still listed, with the reason, rather than disappearing.
+        guard !apps.contains(where: \.isUsable) else {
+            return apps + packages.map {
+                StoreCandidate(path: $0.path, origin: $0.origin, unitCount: $0.unitCount, modified: $0.modified,
+                               rejection: $0.rejection ?? "a nested package's index, partial by construction — "
+                                        + "an app workspace store covers the project")
+            }
+        }
+        return apps + packages
+    }
+
     /// The project's freshest DataStore, located through `info.plist` → WorkspacePath. Matching by
     /// project path rather than scheme name is reliable and excludes other worktrees.
     public static func dataStore(forProjectRoot projectRoot: String, derivedData: String) -> String? {
