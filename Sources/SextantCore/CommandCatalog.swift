@@ -59,11 +59,13 @@ public enum CommandCatalog {
     static let reindex = FlagSpec("--reindex", "rebuild the index before the query")
     static let indexStore = FlagSpec("--index-store", takesValue: true, "path to an index store")
     static let indexLib = FlagSpec("--index-lib", takesValue: true, "path to libIndexStore.dylib")
+    static let derivedData = FlagSpec("--derived-data", takesValue: true,
+                                      "Xcode DerivedData directory (default: ~/Library/Developer/Xcode/DerivedData)")
     static let storePolicyFlag = FlagSpec("--store-policy", takesValue: true,
                                           "for this command only: \(StorePolicy.known) (see `sextant store`)")
 
     static var semanticFlags: [FlagSpec] {
-        [project, indexStore, indexLib, storePolicyFlag, reindex, limit, fullPaths, full, compact, verify, json]
+        [project, indexStore, indexLib, storePolicyFlag, derivedData, reindex, limit, fullPaths, full, compact, verify, json]
     }
 
     // MARK: Commands
@@ -127,30 +129,30 @@ public enum CommandCatalog {
                     group: "Semantics (index store)", flags: semanticFlags,
                     details: ["Types have no call sites — use refs, context, or blast for those."]),
         CommandSpec(name: "callees", argument: "<symbol>", summary: "what a symbol calls (best effort)",
-                    group: "Semantics (index store)", flags: [project, indexStore, indexLib, storePolicyFlag, reindex, limit, json]),
+                    group: "Semantics (index store)", flags: [project, indexStore, indexLib, storePolicyFlag, derivedData, reindex, limit, json]),
         CommandSpec(name: "impls", argument: "<type>", summary: "implementations and subtypes of a protocol or class",
-                    group: "Semantics (index store)", flags: [project, indexStore, indexLib, storePolicyFlag, reindex, limit, json]),
+                    group: "Semantics (index store)", flags: [project, indexStore, indexLib, storePolicyFlag, derivedData, reindex, limit, json]),
         CommandSpec(name: "supertypes", argument: "<type>", summary: "bases and protocols of a type",
-                    group: "Semantics (index store)", flags: [project, indexStore, indexLib, storePolicyFlag, reindex, limit, json]),
+                    group: "Semantics (index store)", flags: [project, indexStore, indexLib, storePolicyFlag, derivedData, reindex, limit, json]),
         CommandSpec(
             name: "hierarchy", argument: "<symbol>", summary: "transitive call graph, as a tree",
             group: "Semantics (index store)",
             flags: [project, FlagSpec("--callees", "down the call graph (default)"), FlagSpec("--callers", "up to the callers"),
-                    FlagSpec("--depth", takesValue: true, "traversal depth (default 3)"), indexStore, indexLib, storePolicyFlag, reindex, json]
+                    FlagSpec("--depth", takesValue: true, "traversal depth (default 3)"), indexStore, indexLib, storePolicyFlag, derivedData, reindex, json]
         ),
         CommandSpec(name: "context", argument: "<symbol>", summary: "everything about one symbol in a single query",
-                    group: "Semantics (index store)", flags: [project, indexStore, indexLib, storePolicyFlag, reindex, limit, json],
+                    group: "Semantics (index store)", flags: [project, indexStore, indexLib, storePolicyFlag, derivedData, reindex, limit, json],
                     details: ["Definition, usages, callers, callees, hierarchy — instead of a series of greps."]),
         CommandSpec(name: "blast", argument: "<symbol>", summary: "impact analysis: what a change would touch",
-                    group: "Semantics (index store)", flags: [project, indexStore, indexLib, storePolicyFlag, reindex, json]),
+                    group: "Semantics (index store)", flags: [project, indexStore, indexLib, storePolicyFlag, derivedData, reindex, json]),
         CommandSpec(name: "body", argument: "<symbol>", summary: "full text of a declaration (signature and body)",
-                    group: "Semantics (index store)", flags: [project, indexStore, indexLib, storePolicyFlag, reindex, limit, json]),
+                    group: "Semantics (index store)", flags: [project, indexStore, indexLib, storePolicyFlag, derivedData, reindex, limit, json]),
         CommandSpec(name: "construct", argument: "<type>", summary: "construction and injection sites of a type",
-                    group: "Semantics (index store)", flags: [project, indexStore, indexLib, storePolicyFlag, reindex, limit, json],
+                    group: "Semantics (index store)", flags: [project, indexStore, indexLib, storePolicyFlag, derivedData, reindex, limit, json],
                     details: ["A `Type(` heuristic over usages — not exact semantics."]),
 
         CommandSpec(name: "mcp", summary: "MCP server (stdio) for an agent",
-                    group: "Integration and setup", flags: [project, indexStore, indexLib, storePolicyFlag],
+                    group: "Integration and setup", flags: [project, indexStore, indexLib, storePolicyFlag, derivedData],
                     details: ["Tools: " + MCPTools.names.joined(separator: ", ") + "."]),
         CommandSpec(name: "init", summary: "set up a project: .sextant.json, MCP registration, and a check",
                     group: "Integration and setup",
@@ -160,14 +162,14 @@ public enum CommandCatalog {
                               "Only clients verified against the running application are listed: a config written",
                               "from documentation and never launched fails silently, and the user blames the tool."]),
         CommandSpec(name: "serve", summary: "daemon with a warm index: removes the cold CLI start",
-                    group: "Integration and setup", flags: [project, indexStore, indexLib, storePolicyFlag],
+                    group: "Integration and setup", flags: [project, indexStore, indexLib, storePolicyFlag, derivedData],
                     details: ["Clients use it automatically; with no daemon they take the normal path.",
                               "SEXTANT_NO_DAEMON=1 disables any use of the daemon.",
                               "The daemon never builds or sets up (index/init/doctor) — queries only."]),
         CommandSpec(name: "store", argument: "[show | use <policy>]",
                     summary: "index stores in reach, and the policy that decides between them",
                     group: "Integration and setup",
-                    flags: [project, indexStore, indexLib, storePolicyFlag],
+                    flags: [project, indexStore, indexLib, storePolicyFlag, derivedData],
                     details: ["With several usable stores the answer depends on which is read, so the",
                               "choice is a person's: `store use recency` or `store use union`, recorded",
                               "in .sextant.json. Until it is made, semantic commands refuse rather than guess.",
@@ -176,15 +178,15 @@ public enum CommandCatalog {
                     group: "Integration and setup",
                     flags: [project, FlagSpec("--fix", "build the index if missing or stale"),
                             FlagSpec("--app", "with --fix: build the app target"),
-                            FlagSpec("--scheme", takesValue: true, "Xcode scheme for --fix"), indexStore, indexLib, storePolicyFlag]),
+                            FlagSpec("--scheme", takesValue: true, "Xcode scheme for --fix"), indexStore, indexLib, storePolicyFlag, derivedData]),
 
         CommandSpec(name: "golden", summary: "semantic regression check against a spec",
                     group: "Trust and measurability",
-                    flags: [project, FlagSpec("--spec", takesValue: true, "JSON spec of assertions"), indexStore, indexLib, storePolicyFlag, json]),
+                    flags: [project, FlagSpec("--spec", takesValue: true, "JSON spec of assertions"), indexStore, indexLib, storePolicyFlag, derivedData, json]),
         CommandSpec(name: "bench", summary: "latency (p50/p95), payload proxy, peak RSS",
                     group: "Trust and measurability",
                     flags: [project, FlagSpec("--symbols", takesValue: true, "symbols, comma separated"),
-                            FlagSpec("--iterations", takesValue: true, "number of iterations (default 20)"), indexStore, indexLib, storePolicyFlag, json],
+                            FlagSpec("--iterations", takesValue: true, "number of iterations (default 20)"), indexStore, indexLib, storePolicyFlag, derivedData, json],
                     details: ["payload is compact JSON as a RELATIVE proxy for volume, NOT tokens."]),
         CommandSpec(name: "adoption", summary: "how much code navigation went through sextant, not grep",
                     group: "Trust and measurability",

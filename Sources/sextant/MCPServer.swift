@@ -53,7 +53,13 @@ func runMCP(arguments: [String]) -> Int32 {
             let (paths, source) = resolveIndex(in: arguments)
             guard !paths.isEmpty else { return nil }
             let freshness = IndexFreshness.state(storePaths: paths, projectRoot: projectRoot(in: arguments))
-            return IndexProvenance(source: source, storeCount: paths.count, freshness: freshness).summary
+            let coverage = paths.count == 1
+                ? StoreCoverage.measure(store: paths[0],
+                                        projectRoot: URL(fileURLWithPath: projectRoot(in: arguments), isDirectory: true),
+                                        libraryPath: optionValue("--index-lib", in: arguments))
+                : nil
+            return IndexProvenance(source: source, storeCount: paths.count, freshness: freshness,
+                                   coverage: coverage).summary
         }, indexProblem: { indexUnavailableReason(arguments) }, warnedInvalidConfig: &configWarned)
         handleMCP(method: method, id: id, params: message["params"] as? [String: Any] ?? [:], context: context)
     }

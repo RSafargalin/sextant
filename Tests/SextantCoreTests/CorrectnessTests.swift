@@ -97,6 +97,54 @@ struct WorkspaceMatchTests {
     func rejectsDifferentRoot() {
         #expect(!DerivedDataLocator.workspace("/Users/x/other/A.xcodeproj", isInProjectRoot: "/Users/x/myapp"))
     }
+
+    /// A path prefix is not a project boundary. Pointed at a home directory, the prefix test alone
+    /// accepted every project the user had ever built: `--project ~` offered the store of an
+    /// unrelated app from `Downloads`, covering 6% of what it called "this project". The boundary
+    /// that means something is the checkout.
+    @Test("a workspace in another checkout under the same path is not this project")
+    func rejectsForeignRepositoryBeneathTheRoot() throws {
+        let manager = FileManager.default
+        let container = manager.temporaryDirectory.appendingPathComponent("sextant-boundary-\(UUID().uuidString)")
+        let mine = container.appendingPathComponent("mine")
+        let stranger = container.appendingPathComponent("downloads/stranger")
+        for directory in [mine, stranger] {
+            try manager.createDirectory(at: directory, withIntermediateDirectories: true)
+            let git = Process()
+            git.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            git.arguments = ["git", "-C", directory.path, "init", "-q"]
+            git.standardOutput = FileHandle.nullDevice
+            git.standardError = FileHandle.nullDevice
+            try git.run()
+            git.waitUntilExit()
+        }
+        defer { try? manager.removeItem(at: container) }
+
+        // Its own checkout: the workspace belongs to the project.
+        #expect(DerivedDataLocator.belongsToSameProject(
+            workspace: mine.appendingPathComponent("App.xcodeproj").path, root: mine.path))
+        // Another checkout that merely sits under the same path: it does not.
+        #expect(!DerivedDataLocator.belongsToSameProject(
+            workspace: stranger.appendingPathComponent("App.xcodeproj").path, root: container.path))
+        #expect(!DerivedDataLocator.belongsToSameProject(
+            workspace: stranger.appendingPathComponent("App.xcodeproj").path, root: mine.path))
+    }
+
+    /// Outside version control there is no checkout to compare, so the fallback is the layout a
+    /// project without git has: the workspace sits in the root itself.
+    @Test("without git, only a workspace in the root itself belongs to it")
+    func fallsBackToDirectContainment() throws {
+        let manager = FileManager.default
+        let root = manager.temporaryDirectory.appendingPathComponent("sextant-nogit-\(UUID().uuidString)")
+        let nested = root.appendingPathComponent("vendor/other")
+        try manager.createDirectory(at: nested, withIntermediateDirectories: true)
+        defer { try? manager.removeItem(at: root) }
+
+        #expect(DerivedDataLocator.belongsToSameProject(
+            workspace: root.appendingPathComponent("App.xcodeproj").path, root: root.path))
+        #expect(!DerivedDataLocator.belongsToSameProject(
+            workspace: nested.appendingPathComponent("App.xcodeproj").path, root: root.path))
+    }
 }
 
 @Suite("MCP tool contract")

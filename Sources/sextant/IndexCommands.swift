@@ -36,8 +36,7 @@ func indexCandidates(in arguments: [String]) -> (candidates: [StoreCandidate], s
     }
     let spm = IndexStoreLocator.candidates(under: URL(fileURLWithPath: rootPath, isDirectory: true))
     if spm.contains(where: \.isUsable) { return (spm, .spm) }
-    let derivedData = "\(FileManager.default.homeDirectoryForCurrentUser.path)/Library/Developer/Xcode/DerivedData"
-    let xcode = DerivedDataLocator.candidates(forProjectRoot: rootPath, derivedData: derivedData)
+    let xcode = DerivedDataLocator.candidates(forProjectRoot: rootPath, derivedData: derivedDataRoot(in: arguments))
     if xcode.contains(where: \.isUsable) { return (xcode, .derivedData) }
     return (spm + xcode, spm.isEmpty ? .derivedData : .spm)
 }
@@ -75,6 +74,18 @@ func chooseStores(from candidates: [StoreCandidate], arguments: [String]) -> [St
 }
 
 func resolveStorePaths(in arguments: [String]) -> [String] { resolveIndex(in: arguments).paths }
+
+/// Where Xcode keeps its build products. The default location is a default, not a rule: a project
+/// built with `xcodebuild -derivedDataPath ./build` — which every CI does, and many people do
+/// locally — puts its index somewhere the default never looks, and the tool would report no index
+/// for a project that has one.
+func derivedDataRoot(in arguments: [String]) -> String {
+    if let explicit = optionValue("--derived-data", in: arguments) { return explicit }
+    if let environment = ProcessInfo.processInfo.environment["SEXTANT_DERIVED_DATA"], !environment.isEmpty {
+        return (environment as NSString).standardizingPath
+    }
+    return "\(FileManager.default.homeDirectoryForCurrentUser.path)/Library/Developer/Xcode/DerivedData"
+}
 
 /// Index freshness: whether any source is newer than the freshest store.
 func indexIsStale(paths: [String], root: String) -> Bool {
@@ -253,8 +264,8 @@ func runXcodeIndex(root: URL, arguments: [String]) -> Int32 {
         }
         return 1
     }
-    let derivedData = "\(FileManager.default.homeDirectoryForCurrentUser.path)/Library/Developer/Xcode/DerivedData"
-    if let store = DerivedDataLocator.dataStore(forProjectRoot: root.path, derivedData: derivedData) {
+    if let store = DerivedDataLocator.dataStore(forProjectRoot: root.path,
+                                                derivedData: derivedDataRoot(in: arguments)) {
         print("\nindex ready (app, DerivedData): \(store)")
         // Xcode writes no build graph with arguments in it, so the flags are read from the log
         // the build just produced — the one place they are stated in full.
@@ -397,7 +408,16 @@ func openIndex(_ arguments: [String], label: String, listen: Bool = false, quiet
     // Provenance on stderr — the single place that marks source and freshness, which is what
     // keeps the tool from being quietly wrong.
     let freshness = IndexFreshness.state(storePaths: storePaths, projectRoot: projectRoot(in: arguments))
-    reportError(IndexProvenance(source: source, storeCount: storePaths.count, freshness: freshness).summary)
+    // Coverage of the single opened store: cached against the store's own state, so this is a
+    // lookup on every run but the first after a build. With several stores the number would be a
+    // sum of overlapping sets, which is not a fact about anything.
+    let coverage = storePaths.count == 1
+        ? StoreCoverage.measure(store: storePaths[0],
+                                projectRoot: URL(fileURLWithPath: projectRoot(in: arguments), isDirectory: true),
+                                libraryPath: optionValue("--index-lib", in: arguments))
+        : nil
+    reportError(IndexProvenance(source: source, storeCount: storePaths.count, freshness: freshness,
+                                coverage: coverage).summary)
     // The decision itself, whenever there was one to make: how many stores were in reach, which
     // are being read, and what the others were left out for.
     if let policy = storePolicy(in: arguments)?.policy {
