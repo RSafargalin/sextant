@@ -85,9 +85,25 @@ func crossCheck(symbol: String, query: SymbolQuery, hits: [SymbolHit], arguments
         ? hits.filter { $0.definition != nil }.count
         : hits.reduce(0) { $0 + $1.references.count }
     let root = URL(fileURLWithPath: projectRoot(in: arguments), isDirectory: true)
-    let scan = IdentifierScan.occurrences(of: symbol, underRoot: root, includeTests: true)
+    let scan = IdentifierScan.occurrences(of: symbol, underRoot: root, includeTests: true,
+                                          fileLimit: scaleLimit(in: arguments))
     let truncatedNote = scan.truncated ? " (scan truncated)" : ""
-    let skew = scan.count > semanticCount * 3 ? "  (results may be incomplete)" : ""
+    // Two skews, and the check used to name only one of them. More textual than semantic is
+    // ordinary — comments and strings count. More SEMANTIC than textual is not: every reference
+    // the index holds is a place the name is written, so the textual side should never be the
+    // smaller one. When it is, the cross-check itself is standing on something it did not read,
+    // and printing the pair without saying so hands the reader an impossible fact.
+    let skew: String
+    if semanticCount > scan.count {
+        skew = "  ⚠ more semantic than textual, which cannot be true of a name that is written where "
+             + "it is used: the textual scan is bounded (--max-files \(scaleLimit(in: arguments))"
+             + "\(scan.truncated ? ", and it stopped there" : "")), it skips whatever `exclude` removes, "
+             + "and it cannot see code a macro generates. Treat the textual number as a floor, not as truth."
+    } else if scan.count > semanticCount * 3 {
+        skew = "  (results may be incomplete)"
+    } else {
+        skew = ""
+    }
     reportError("[cross-check: semantic \(semanticCount), textual \(scan.count)\(truncatedNote)]\(skew)")
 }
 
