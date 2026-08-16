@@ -181,7 +181,39 @@ public enum CompilationDatabase {
     public static func load(forRoot root: String) -> [CompileCommand] {
         guard let data = try? Data(contentsOf: path(forRoot: root)),
               let commands = try? JSONDecoder().decode([CompileCommand].self, from: data) else { return [] }
-        return commands
+        // Entries for files that are gone are dropped on the way in, not only when a new capture
+        // merges over them: a database is pruned when it is next built, and a project that is not
+        // rebuilt keeps them for as long as it is not. Measured on this machine: two databases
+        // held 75 of 75 and 72 of 73 entries for files deleted weeks earlier.
+        return commands.filter { FileManager.default.fileExists(atPath: $0.file) }
+    }
+
+    /// When the flags were captured — the file's own write time, so the stored JSON keeps the
+    /// `compile_commands.json` shape that clangd and libclang can read.
+    public static func capturedAt(forRoot root: String) -> Date? {
+        (try? path(forRoot: root).resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+    }
+
+    /// What to say when the flags are older than the build they claim to describe.
+    ///
+    /// Flags are captured by `sextant index`; a build made any other way — Xcode, `swift build`,
+    /// CI — moves the index forward and leaves them behind. Nothing in a structural answer shows
+    /// it, and the answer is not merely incomplete: a `-DFEATURE=1` that has since become `0`
+    /// yields a structural match inside code the current build does not contain. That is the
+    /// highest level of confidence this tool offers, standing on a stale fact.
+    public static func stalenessNote(forRoot root: String, storePaths: [String]) -> [String] {
+        guard let captured = capturedAt(forRoot: root), !load(forRoot: root).isEmpty else { return [] }
+        guard let built = IndexFreshness.timestamp(ofStores: storePaths), built > captured else { return [] }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        let gap = built.timeIntervalSince(captured)
+        let later = gap < 90 ? "\(Int(gap.rounded()))s later"
+            : gap < 5400 ? "\(Int((gap / 60).rounded())) minutes later"
+            : "\(Int((gap / 3600).rounded())) hours later"
+        return ["⚠ compile flags captured \(formatter.string(from: captured)); the project was built "
+                + "\(later) (\(formatter.string(from: built))) — the C-family answers below stand on the "
+                + "older flags. A macro that changed in between makes them describe code this build does "
+                + "not contain. Refresh with `sextant index`."]
     }
 
     /// Merges a fresh capture into what is already known.

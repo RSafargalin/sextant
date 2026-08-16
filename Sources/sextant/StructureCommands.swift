@@ -247,6 +247,8 @@ func runSearch(arguments: [String]) -> Int32 {
             reportError("sextant search: invalid pattern (\(swiftRejection)). "
                         + "Supported: an expression using $X and $$$.\(alsoUnscanned)")
             StructuralCoverage.report(cFamily.unscanned).forEach(reportError)
+    CompilationDatabase.stalenessNote(forRoot: projectRoot(in: arguments),
+                                      storePaths: resolveStorePaths(in: arguments)).forEach(reportError)
             return 2
         }
         reportError("⚠ the pattern does not parse as Swift (\(swiftRejection)) — \(cFamily.scannedCount) "
@@ -274,6 +276,8 @@ func runSearch(arguments: [String]) -> Int32 {
         StructuralCoverage.configurationNote(targets: cFamily.targets).forEach(reportError)
     }
     StructuralCoverage.report(cFamily.unscanned).forEach(reportError)
+    CompilationDatabase.stalenessNote(forRoot: projectRoot(in: arguments),
+                                      storePaths: resolveStorePaths(in: arguments)).forEach(reportError)
     StructuralCoverage.exclusionNote().forEach(reportError)
     scaleNote(root: rootPath, includeTests: includeTests, arguments: arguments).forEach(reportError)
     return 0
@@ -318,6 +322,8 @@ func runLint(arguments: [String]) -> Int32 {
         inactive.forEach(reportError)
         RuleEngine.brokenReport(outcome.broken).forEach(reportError)
         StructuralCoverage.report(unscanned).forEach(reportError)
+    CompilationDatabase.stalenessNote(forRoot: projectRoot(in: arguments),
+                                      storePaths: resolveStorePaths(in: arguments)).forEach(reportError)
         StructuralCoverage.exclusionNote().forEach(reportError)
     scaleNote(root: root, includeTests: includeTests, arguments: arguments).forEach(reportError)
         return 0
@@ -329,6 +335,8 @@ func runLint(arguments: [String]) -> Int32 {
     inactive.forEach(reportError)
     RuleEngine.brokenReport(outcome.broken).forEach(reportError)
     StructuralCoverage.report(unscanned).forEach(reportError)
+    CompilationDatabase.stalenessNote(forRoot: projectRoot(in: arguments),
+                                      storePaths: resolveStorePaths(in: arguments)).forEach(reportError)
     StructuralCoverage.exclusionNote().forEach(reportError)
     scaleNote(root: root, includeTests: includeTests, arguments: arguments).forEach(reportError)
     return 1
