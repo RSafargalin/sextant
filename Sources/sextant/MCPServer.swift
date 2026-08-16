@@ -10,7 +10,7 @@ private let indexUnavailable =
 /// not a missing index — it is a decision nobody has made — and telling an agent to run
 /// `sextant index` there sends it to build a third store instead of surfacing the choice.
 private func indexUnavailableReason(_ arguments: [String]) -> String {
-    let (candidates, _) = indexCandidates(in: arguments)
+    let (candidates, _) = indexCandidatesWithCoverage(in: arguments)
     guard candidates.filter(\.isUsable).count > 1, storePolicy(in: arguments) == nil else { return indexUnavailable }
     return StoreSelection.unsetPolicyRefusal(candidates: candidates, shorten: shorten).joined(separator: "\n")
 }

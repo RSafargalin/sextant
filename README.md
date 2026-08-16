@@ -133,7 +133,14 @@ asked. As soon as a second one is usable, semantic commands refuse until a polic
 sextant store                 # what is in reach, what each policy gives, what it costs
 sextant store use recency     # one store — the one built last
 sextant store use union       # all of them, merged; freshness taken from the oldest
+sextant store use coverage    # the one built from most of this project's files
 ```
+
+`coverage` measures rather than guesses: it reads the units of each store and counts how many of
+the files on disk it was actually built from. On this repository that is 132 of 143 files for the
+store `swift build` wrote and 69 of 143 for the editor's own — which has *more* units. It costs a
+full read of the units the first time (4.8s on a 22 725-unit store, ~0.5s cached against the
+store's timestamp) and is measured only when there is more than one usable store.
 
 The choice is written to `.sextant.json` (`storePolicy`). Override it for one command with
 `--store-policy`, for one machine with `SEXTANT_STORE_POLICY`, or bypass it entirely with

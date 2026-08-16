@@ -17,10 +17,14 @@ let package = Package(
         // run time — the binary keeps working on a machine without a toolchain, where the Swift
         // commands do not need clang at all.
         .target(name: "CClangShim"),
+        // The same arrangement for libIndexStore: IndexStoreDB answers about symbols, this reads
+        // the units themselves — which file each was compiled from, and for which build.
+        .target(name: "CIndexStoreShim"),
         .target(
             name: "SextantCore",
             dependencies: [
                 "CClangShim",
+                "CIndexStoreShim",
                 .product(name: "IndexStoreDB", package: "indexstore-db"),
                 .product(name: "SwiftSyntax", package: "swift-syntax"),
                 .product(name: "SwiftParser", package: "swift-syntax")

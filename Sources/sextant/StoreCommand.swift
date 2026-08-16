@@ -25,8 +25,14 @@ func runStore(arguments: [String]) -> Int32 {
 }
 
 private func showStores(arguments: [String]) -> Int32 {
-    let (candidates, source) = indexCandidates(in: arguments)
+    // Here coverage is measured even for a single store: this is the screen a person reads to
+    // decide, and "what does it actually cover" is the question they came with.
+    let (found, source) = indexCandidates(in: arguments)
     let root = projectRoot(in: arguments)
+    let candidates = found.map {
+        $0.measuringCoverage(projectRoot: URL(fileURLWithPath: root, isDirectory: true),
+                             libraryPath: optionValue("--index-lib", in: arguments))
+    }
     print("── index stores — \(shorten(root))")
 
     guard !candidates.isEmpty else {
@@ -38,6 +44,13 @@ private func showStores(arguments: [String]) -> Int32 {
         let stamp = candidate.modified.map { StoreSelection.stamp($0) } ?? "no units"
         print("\n   \(shorten(candidate.path))")
         print("     units: \(candidate.unitCount)   ·   last written: \(stamp)")
+        if let coverage = candidate.coverage {
+            print("     covers: \(coverage.summary) of this project"
+                  + (coverage.foreign > 0 ? "   ·   \(coverage.foreign) unit(s) from outside it" : ""))
+        } else if candidate.isUsable {
+            print("     covers: not measurable (libIndexStore unavailable) — ranking by coverage would")
+            print("             fall back to recency")
+        }
         if let origin = candidate.origin { print("     built from: \(shorten(origin))") }
         if let rejection = candidate.rejection { print("     NOT usable: \(rejection)") }
     }
