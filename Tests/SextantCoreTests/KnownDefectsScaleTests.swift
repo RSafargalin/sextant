@@ -154,6 +154,12 @@ struct KnownDefectsScaleTests {
         let union = try sextant(["refs", "Widget", "--project", fixture.root.path, "--store-policy", "union"])
         #expect(union.stdout.contains("usages: 1"))
 
+        // `coverage` reads the units and picks the store built from more of the project — here the
+        // older one, which still holds the file the reference lives in.
+        let coverage = try sextant(["refs", "Widget", "--project", fixture.root.path, "--store-policy", "coverage"])
+        #expect(coverage.stdout.contains("usages: 1"))
+        #expect(coverage.all.contains("covers less of the project") || coverage.all.contains("covers "))
+
         // `recency` reads the newer store, which here is the emptier one — the documented cost of
         // that policy. What it must not do is stay quiet about the store it did not read.
         let recency = try sextant(["refs", "Widget", "--project", fixture.root.path, "--store-policy", "recency"])

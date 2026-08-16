@@ -10,6 +10,18 @@ import Foundation
 /// SPM and DerivedData are deliberately NOT merged: different roots and configurations would
 /// double-count. An app target (xcodeproj) is covered through DerivedData.
 /// Freshness and its warning live in `openIndex` via provenance — one place, not duplicated.
+/// The candidates with their coverage of this project filled in — but only when there is more than
+/// one, because reading every unit costs seconds on a large store and buys nothing where there is
+/// no decision to make.
+func indexCandidatesWithCoverage(in arguments: [String])
+    -> (candidates: [StoreCandidate], source: IndexProvenance.Source) {
+    let (candidates, source) = indexCandidates(in: arguments)
+    guard candidates.filter(\.isUsable).count > 1 else { return (candidates, source) }
+    let root = URL(fileURLWithPath: projectRoot(in: arguments), isDirectory: true)
+    let library = optionValue("--index-lib", in: arguments)
+    return (candidates.map { $0.measuringCoverage(projectRoot: root, libraryPath: library) }, source)
+}
+
 /// Every store the tool could use, in the order sources take precedence, together with where they
 /// came from. The policy is applied afterwards — this only finds them.
 func indexCandidates(in arguments: [String]) -> (candidates: [StoreCandidate], source: IndexProvenance.Source) {
@@ -49,7 +61,7 @@ func storePolicy(in arguments: [String]) -> (policy: StorePolicy, origin: String
 /// do, and with none set nothing is picked: the two policies give different answers to the same
 /// question, so guessing here would be the confident wrongness the tool exists to prevent.
 func resolveIndex(in arguments: [String]) -> (paths: [String], source: IndexProvenance.Source) {
-    let (candidates, source) = indexCandidates(in: arguments)
+    let (candidates, source) = indexCandidatesWithCoverage(in: arguments)
     return (chooseStores(from: candidates, arguments: arguments).map(\.path), source)
 }
 
@@ -146,7 +158,7 @@ func runDoctor(arguments: [String]) -> Int32 {
     }
 
     let stores = resolveStorePaths(in: arguments)
-    let (allCandidates, _) = indexCandidates(in: arguments)
+    let (allCandidates, _) = indexCandidatesWithCoverage(in: arguments)
     let usableCandidates = allCandidates.filter(\.isUsable)
     if stores.isEmpty, usableCandidates.count > 1, storePolicy(in: arguments) == nil {
         // The state a check-up exists to name: there IS an index, in fact more than one, and the
@@ -367,7 +379,7 @@ private let indexMemo = IndexMemo()
 /// потеряно. Две строки об одном и том же читаются как две разные проблемы.
 func openIndex(_ arguments: [String], label: String, listen: Bool = false, quiet: Bool = false) -> IndexStoreSet? {
     ensureFreshIndex(arguments)
-    let (candidates, source) = indexCandidates(in: arguments)
+    let (candidates, source) = indexCandidatesWithCoverage(in: arguments)
     let storePaths = chooseStores(from: candidates, arguments: arguments).map(\.path)
     guard !storePaths.isEmpty,
           let libraryPath = optionValue("--index-lib", in: arguments) ?? discoverIndexStoreLibrary() else {
