@@ -239,26 +239,34 @@ public final class IndexStore {
     /// breadth budget twice over.
     public func calls(ofUSR usr: String, direction: CallDirection) -> [RelatedSymbol] {
         var sites: [RelatedSymbol] = []
-        func add(_ symbol: Symbol, _ location: SourceLocation) {
-            sites.append(RelatedSymbol(name: symbol.name, usr: symbol.usr, kind: "\(symbol.kind)", location: location))
+        // The occurrence is where the call was written; the symbol it names lives somewhere else.
+        // Asking the database for the definition by USR is the same route `lookup` takes, and it
+        // is what keeps a hierarchy from pointing at a call site and calling it a definition.
+        func add(_ symbol: Symbol, callSite: SourceLocation) {
+            let definition = database.occurrences(ofUSR: symbol.usr, roles: .definition)
+                .first { isInScope($0.location) }
+                .map(SourceLocation.init)
+            sites.append(RelatedSymbol(name: symbol.name, usr: symbol.usr, kind: "\(symbol.kind)",
+                                       location: definition ?? callSite, callSite: callSite,
+                                       definitionKnown: definition != nil))
         }
         switch direction {
         case .callees:
             for occurrence in database.occurrences(relatedToUSR: usr, roles: .calledBy) where isInScope(occurrence.location) {
-                add(occurrence.symbol, SourceLocation(occurrence))
+                add(occurrence.symbol, callSite: SourceLocation(occurrence))
             }
         case .callers:
             for occurrence in database.occurrences(ofUSR: usr, roles: .call) where isInScope(occurrence.location) {
                 for relation in occurrence.relations where relation.roles.contains(.calledBy) {
-                    add(relation.symbol, SourceLocation(occurrence))
+                    add(relation.symbol, callSite: SourceLocation(occurrence))
                 }
             }
         }
-        // Sorted before deduplication so the location kept for a symbol is its first call site
-        // rather than whichever one the store happened to return first.
+        // Sorted by call site before deduplication, so the entry kept for a symbol is its first
+        // call rather than whichever one the store happened to return first.
         var seen = Set<String>()
         return sites
-            .sorted { SourceLocation.isOrderedBefore($0.location, $1.location) }
+            .sorted { SourceLocation.isOrderedBefore($0.callSite ?? $0.location, $1.callSite ?? $1.location) }
             .filter { seen.insert($0.usr).inserted }
     }
 
