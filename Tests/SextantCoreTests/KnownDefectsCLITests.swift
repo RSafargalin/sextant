@@ -224,6 +224,35 @@ struct KnownDefectsCLITests {
         #expect(!result.stdout.contains("InternalWithPublicMembers"))
     }
 
+    /// Found on Alamofire: the top level was filtered and the members were not, so `--json` served
+    /// internal initialisers and helpers of public types as public surface while the text answer
+    /// left them out. One question, two answers — the failure the filter exists to prevent.
+    @Test("api --json filters members by the same rule as the text answer")
+    func apiJSONFiltersMembers() throws {
+        let source = """
+            public struct Surface {
+                public let shown: Int
+                let hidden: Int
+                private let alsoHidden: Int
+                public func shownMethod() {}
+                func hiddenMethod() {}
+                public struct Nested { public let deep: Int; let deepHidden: Int }
+                struct HiddenNested { public let unreachable: Int }
+            }
+            """
+        let package = try makePackage(name: "mem", files: ["Sources/mem/a.swift": source])
+        let text = try sextant(["api", "--project", package.path, "--scope", "Sources"])
+        let json = try sextant(["api", "--project", package.path, "--scope", "Sources", "--json"])
+
+        for hidden in ["hidden", "alsoHidden", "hiddenMethod", "HiddenNested", "deepHidden"] {
+            #expect(!json.stdout.contains(hidden), "\(hidden) is not part of the public surface")
+            #expect(!text.stdout.contains(hidden))
+        }
+        for shown in ["shown", "shownMethod", "Nested", "deep"] {
+            #expect(json.stdout.contains(shown))
+        }
+    }
+
     /// A package filter that matches nothing is answered with "there is nothing".
     @Test("api distinguishes an unknown package from an empty one")
     func apiUnknownPackageIsNamed() throws {

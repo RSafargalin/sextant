@@ -227,11 +227,16 @@ func runSearch(arguments: [String]) -> Int32 {
     hits.sort { ($0.file, $0.line, $0.column) < ($1.file, $1.line, $1.column) }
 
     if let swiftRejection {
-        // "Had files to try" rather than "scanned some": a C-family file that could not be read is
-        // reported by its own channel, and calling the pattern invalid because of it would name
-        // the wrong cause.
-        guard cFamily.scannedCount > 0 || !cFamily.unscanned.isEmpty else {
-            reportError("sextant search: invalid pattern (\(swiftRejection)). Supported: an expression using $X and $$$.")
+        // A file that was NOT scanned is not evidence that the pattern reached anything: counting
+        // the unscanned list here answered `print(` on a project whose only C file had no compile
+        // flags with "No matches." and exit 0. Only a file actually searched proves the pattern
+        // was usable somewhere — and when none was, both causes are named rather than one.
+        guard cFamily.scannedCount > 0 else {
+            let alsoUnscanned = cFamily.unscanned.isEmpty ? "" :
+                " \(cFamily.unscanned.count) C-family file(s) could not be searched either — see below."
+            reportError("sextant search: invalid pattern (\(swiftRejection)). "
+                        + "Supported: an expression using $X and $$$.\(alsoUnscanned)")
+            StructuralCoverage.report(cFamily.unscanned).forEach(reportError)
             return 2
         }
         reportError("⚠ the pattern does not parse as Swift (\(swiftRejection)) — \(cFamily.scannedCount) "

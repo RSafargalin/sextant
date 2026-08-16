@@ -30,7 +30,7 @@ public enum PublicAPI {
                 // Filter here rather than only when rendering: `--json` serialises these summaries
                 // straight through, and a surface that differs between the text and the machine
                 // contract is two answers to one question.
-                declarations = declarations.filter(isVisible)
+                declarations = declarations.filter(isVisible).map(visibleMembers(of:))
                 if declarations.isEmpty { return nil }
                 if let type {
                     declarations = declarations.filter { $0.name == type }
@@ -107,5 +107,28 @@ public enum PublicAPI {
     static func isVisible(_ declaration: Declaration) -> Bool {
         if declaration.access == .public { return true }
         return declaration.kind == .extensionKind && declaration.members.contains { $0.access == .public }
+    }
+
+    /// The same rule applied inside a declaration. Without it the text answer and `--json` state
+    /// two different surfaces: the renderer drops an internal method of a public type, and the
+    /// machine contract carried it through — measured on Alamofire, where `--json` listed internal
+    /// initialisers and helpers as public API.
+    ///
+    /// A member is part of the surface only if it is public itself: a nested type declared
+    /// internal inside a public one is unreachable from another module whatever its own members
+    /// say, which is why the extension exception does not apply here.
+    static func visibleMembers(of declaration: Declaration) -> Declaration {
+        guard !declaration.members.isEmpty else { return declaration }
+        let kept = declaration.members
+            .filter { $0.access == .public }
+            .map(visibleMembers(of:))
+        guard kept.count != declaration.members.count else {
+            return Declaration(kind: declaration.kind, header: declaration.header, access: declaration.access,
+                               attributes: declaration.attributes, docSummary: declaration.docSummary,
+                               members: kept, condition: declaration.condition)
+        }
+        return Declaration(kind: declaration.kind, header: declaration.header, access: declaration.access,
+                           attributes: declaration.attributes, docSummary: declaration.docSummary,
+                           members: kept, condition: declaration.condition)
     }
 }
