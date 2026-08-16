@@ -88,6 +88,14 @@ func crossCheck(symbol: String, query: SymbolQuery, hits: [SymbolHit], arguments
     let scan = IdentifierScan.occurrences(of: symbol, underRoot: root, includeTests: true,
                                           fileLimit: scaleLimit(in: arguments))
     let truncatedNote = scan.truncated ? " (scan truncated)" : ""
+    // An index holds one configuration. A symbol used inside `#if` branches that configuration
+    // does not contain is textually there and semantically absent — a knowable reason for a gap,
+    // and the one the ×3 threshold was too coarse to catch: the measured case was semantic 1
+    // against textual 3, which the threshold read as ordinary noise.
+    let conditional = semanticCount < scan.count
+        ? IdentifierScan.matches(of: symbol, underRoot: root, includeTests: true, limit: 500,
+                                 fileLimit: scaleLimit(in: arguments)).matches.filter(\.conditional).count
+        : 0
     // Two skews, and the check used to name only one of them. More textual than semantic is
     // ordinary — comments and strings count. More SEMANTIC than textual is not: every reference
     // the index holds is a place the name is written, so the textual side should never be the
@@ -99,6 +107,11 @@ func crossCheck(symbol: String, query: SymbolQuery, hits: [SymbolHit], arguments
              + "it is used: the textual scan is bounded (--max-files \(scaleLimit(in: arguments))"
              + "\(scan.truncated ? ", and it stopped there" : "")), it skips whatever `exclude` removes, "
              + "and it cannot see code a macro generates. Treat the textual number as a floor, not as truth."
+    } else if conditional > 0 {
+        // Counted in lines, because that is what the scan returns — one entry per source line.
+        skew = "  ⚠ the name appears on \(conditional) line(s) inside `#if` branches this build does not "
+             + "contain — the index covers one configuration, so those are absent from the semantic count "
+             + "for a reason, not by mistake."
     } else if scan.count > semanticCount * 3 {
         skew = "  (results may be incomplete)"
     } else {

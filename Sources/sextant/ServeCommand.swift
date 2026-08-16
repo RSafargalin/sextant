@@ -49,6 +49,7 @@ func runServe(arguments: [String]) -> Int32 {
             // the daemon. Without this a file created after start-up is invisible, and the daemon
             // is what answers on a real project.
             SwiftSources.clearFileListMemo()
+            clearConfigMemo()
             let captured = OutputCapture.capture { dispatch(request.arguments) }
             response = DaemonResponse(exitCode: captured.value, output: captured.output, errorOutput: captured.errorOutput)
         } else {
