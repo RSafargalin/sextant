@@ -97,16 +97,25 @@ func scopedRoot(in arguments: [String]) -> String? {
     }
 }
 
-/// Scale guard: returns false and reports when there are more Swift files than the limit
-/// (`--max-files`, default 4000). It keeps map/api/search/lint from hanging on huge repositories.
-func withinScale(_ root: String, includeTests: Bool, arguments: [String]) -> Bool {
-    let maxFiles = optionValue("--max-files", in: arguments).flatMap(Int.init) ?? loadConfig(arguments)?.maxFiles ?? 4000
-    let url = URL(fileURLWithPath: root, isDirectory: true)
-    guard !SwiftSources.exceedsLimit(under: url, includeTests: includeTests, limit: maxFiles) else {
-        reportError("sextant: more Swift files than the limit of \(maxFiles). Narrow the area with --scope <subdirectory>, or raise --max-files <N>.")
-        return false
-    }
-    return true
+/// How many files the file-walking commands (map, api, search, lint) may read: `--max-files`, the
+/// config, else 4000.
+///
+/// The limit exists because those four are minutes of work on a large project — measured on a
+/// 12 351-file project: `search` 335s, `api` 139s and 3.75 MB of output, `lint` over six minutes.
+/// It used to be a refusal, which answered a question about the first four thousand files with
+/// nothing at all. Now it bounds the walk and the answer says what it did not look at, which is
+/// the same contract every other partial answer here carries.
+func scaleLimit(in arguments: [String]) -> Int {
+    max(1, optionValue("--max-files", in: arguments).flatMap(Int.init) ?? loadConfig(arguments)?.maxFiles ?? 4000)
+}
+
+/// The line that keeps a bounded walk from reading as a complete one. Empty when everything was read.
+func scaleNote(root: String, includeTests: Bool, arguments: [String]) -> [String] {
+    let limit = scaleLimit(in: arguments)
+    let total = SwiftSources.count(under: URL(fileURLWithPath: root, isDirectory: true), includeTests: includeTests)
+    guard total > limit else { return [] }
+    return ["⚠ covered \(limit) of \(total) file(s): the walk stops at --max-files \(limit). "
+            + "The rest were not looked at — narrow with --scope <subdirectory>, or raise --max-files."]
 }
 
 func reportError(_ message: String) {

@@ -46,7 +46,9 @@ public enum CommandCatalog {
     static let project = FlagSpec("--project", takesValue: true, "project root (otherwise CLAUDE_PROJECT_DIR or the current directory)")
     static let json = FlagSpec("--json", "structured output instead of text")
     static let scope = FlagSpec("--scope", takesValue: true, "narrow the area to a subdirectory")
-    static let maxFiles = FlagSpec("--max-files", takesValue: true, "limit on Swift files (default 4000)")
+    static let maxFiles = FlagSpec("--max-files", takesValue: true,
+                                   "how many files to read (default 4000); the answer names what it left out")
+    static let apiBudget = FlagSpec("--budget", takesValue: true, "token budget for the surface (unbounded by default)")
     static let exclude = FlagSpec("--exclude", takesValue: true, "glob to leave out; repeatable, replaces the config list")
     static let includeTests = FlagSpec("--include-tests", "include test files")
     static let limit = FlagSpec("--limit", takesValue: true, "how many entries to show")
@@ -81,8 +83,10 @@ public enum CommandCatalog {
             group: "Navigation (syntax, no build required)",
             flags: [project, FlagSpec("--package", takesValue: true, "package name"),
                     FlagSpec("--type", takesValue: true, "type name — only that type"),
-                    scope, maxFiles, exclude, json],
-            details: ["A replacement for reading sources: signatures and doc summaries in one call."]
+                    apiBudget, scope, maxFiles, exclude, json],
+            details: ["A replacement for reading sources: signatures and doc summaries in one call.",
+                      "The surface is unbounded by default — a contract cut in silence is not one.",
+                      "`--budget <tokens>` bounds it, and the header then says what was left out."]
         ),
         CommandSpec(
             name: "search", argument: "<pattern>", summary: "structural search over the AST (a grep replacement)",

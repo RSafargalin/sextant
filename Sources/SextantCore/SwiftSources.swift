@@ -135,7 +135,7 @@ public enum SwiftSources {
         return String(data: data, encoding: .utf8)
     }
 
-    /// Per-process memo of the file list (root|includeTests → files), so withinScale and the
+    /// Per-process memo of the file list (root|includeTests → files), so the scale note and the
     /// command itself do not call git twice. In a long-lived MCP server it is cleared per tool call.
     /// Thread-safe (NSLock) — Swift Testing runs tests concurrently.
     private final class FileListMemo: @unchecked Sendable {
@@ -203,7 +203,22 @@ public enum SwiftSources {
     }
 
     /// Every `.swift` file under the root: the git list in a repository, otherwise a FileManager walk. Memoised.
-    public static func files(under root: URL, includeTests: Bool, extensions: [String] = ["swift"]) -> [URL] {
+    /// `limit` bounds how many files the caller will look at. The walk itself is not cut — the
+    /// full list is what says how much was left out — so the limit is applied to the returned
+    /// prefix and the total stays available through `count(under:)`.
+    public static func files(under root: URL, includeTests: Bool, extensions: [String] = ["swift"],
+                             limit: Int? = nil) -> [URL] {
+        let all = allFiles(under: root, includeTests: includeTests, extensions: extensions)
+        guard let limit, all.count > limit else { return all }
+        return Array(all.prefix(limit))
+    }
+
+    /// How many files a walk finds, whatever a caller intends to read of them.
+    public static func count(under root: URL, includeTests: Bool, extensions: [String] = ["swift"]) -> Int {
+        allFiles(under: root, includeTests: includeTests, extensions: extensions).count
+    }
+
+    private static func allFiles(under root: URL, includeTests: Bool, extensions: [String] = ["swift"]) -> [URL] {
         let (patterns, exclusionKey) = exclusions.current
         // The exclusions are part of the key: changing them must not be answered from the memo.
         let key = "\(root.path)|\(includeTests)|\(extensions.joined(separator: ","))|\(exclusionKey)"
@@ -213,9 +228,13 @@ public enum SwiftSources {
         let discovered = gitSwiftFiles(under: root, includeTests: includeTests, extensions: extensions)
             ?? borrowedGitFiles(under: root, includeTests: includeTests, extensions: extensions)
             ?? enumeratedFiles(under: root, includeTests: includeTests, extensions: extensions)
-        let result = patterns.isEmpty
+        // Sorted: when a walk is bounded by `--max-files`, the answer covers a prefix of this list,
+        // and a prefix is only meaningful if the order is the same on every run. git already
+        // returns its list sorted; the FileManager walk does not.
+        let result = (patterns.isEmpty
             ? discovered
-            : discovered.filter { !patterns.exclude(relativePath: relativePath(of: $0, root: root)) }
+            : discovered.filter { !patterns.exclude(relativePath: relativePath(of: $0, root: root)) })
+            .sorted { $0.path < $1.path }
         exclusionEffect.record(discovered.count - result.count, forKey: key)
         fileListMemo.set(key, result)
         return result
@@ -292,36 +311,6 @@ public enum SwiftSources {
     }
 
     /// Whether the Swift file count exceeds a limit. Under git this is an exact count, memoised so
-    /// a later `files` call reuses it; under FileManager it exits early, for huge non-git repositories.
-    public static func exceedsLimit(under root: URL, includeTests: Bool, limit: Int) -> Bool {
-        let key = "\(root.path)|\(includeTests)"
-        if let cached = fileListMemo.value(key) { return cached.count > limit }
-        if let git = gitSwiftFiles(under: root, includeTests: includeTests) {
-            fileListMemo.set(key, git)
-            return git.count > limit
-        }
-
-        guard let enumerator = FileManager.default.enumerator(
-            at: root,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: []
-        ) else { return false }
-
-        let ignored = ignoredDirectoryNames(under: root)
-        var count = 0
-        for case let url as URL in enumerator {
-            let isDirectory = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
-            if isDirectory {
-                if shouldSkip(directory: url.lastPathComponent, ignored: ignored) { enumerator.skipDescendants() }
-                continue
-            }
-            guard url.pathExtension == "swift", !url.lastPathComponent.hasPrefix(".") else { continue }
-            if !includeTests, url.lastPathComponent.hasSuffix("Tests.swift") { continue }
-            count += 1
-            if count > limit { return true }
-        }
-        return false
-    }
 
     /// Whether any source is newer than a date (early exit) — used to check index freshness.
     ///

@@ -5,11 +5,14 @@ import Foundation
 public enum RepoMap {
     public struct Options: Sendable {
         public var tokenBudget: Int
+        /// How many files the map may read. Beyond it the answer is a prefix, and the header says so.
+        public var fileLimit: Int?
         public var includeTests: Bool
 
-        public init(tokenBudget: Int = 6000, includeTests: Bool = false) {
+        public init(tokenBudget: Int = 6000, includeTests: Bool = false, fileLimit: Int? = nil) {
             self.tokenBudget = tokenBudget
             self.includeTests = includeTests
+            self.fileLimit = fileLimit
         }
     }
 
@@ -21,11 +24,12 @@ public enum RepoMap {
         projectRoot: String,
         includeTests: Bool,
         cache: SourceParseCache = SourceParseCache(),
-        index: FileSymbolIndex? = nil
+        index: FileSymbolIndex? = nil,
+        fileLimit: Int? = nil
     ) -> [FileSummary] {
         let root = URL(fileURLWithPath: projectRoot, isDirectory: true)
         let store = DeclarationCache.makeStore()
-        let swift = SwiftSources.files(under: root, includeTests: includeTests)
+        let swift = SwiftSources.files(under: root, includeTests: includeTests, limit: fileLimit)
             .filter { $0.lastPathComponent != "Package.swift" }
             .compactMap { url -> FileSummary? in
                 guard let declarations = DeclarationCache.declarations(for: url, parseCache: cache, store: store),
@@ -44,7 +48,8 @@ public enum RepoMap {
         index: FileSymbolIndex? = nil
     ) -> String {
         let root = URL(fileURLWithPath: projectRoot, isDirectory: true)
-        let files = summaries(projectRoot: projectRoot, includeTests: options.includeTests, cache: cache, index: index)
+        let files = summaries(projectRoot: projectRoot, includeTests: options.includeTests, cache: cache,
+                              index: index, fileLimit: options.fileLimit)
         return render(files, projectName: root.lastPathComponent, budget: options.tokenBudget)
     }
 
