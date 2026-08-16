@@ -20,7 +20,7 @@ struct ClangTranslationUnitTests {
     }
 
     private func commands() -> [CompileCommand] {
-        CompilationDatabase.capture(fromStores: IndexStoreLocator.stores(under: Self.fixture))
+        CompilationDatabase.capture(fromStores: IndexStoreLocator.usableStorePaths(under: Self.fixture))
     }
 
     @Test("Every C-family source parses without an error, on the flags from the build",

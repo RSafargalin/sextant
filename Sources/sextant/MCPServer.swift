@@ -6,6 +6,15 @@ import SextantCore
 private let indexUnavailable =
     "Index unavailable. Run `sextant index` (or `index --app`) — the semantic tools need an index store."
 
+/// Why the index is unavailable, in the answer itself. Several usable stores with no policy set is
+/// not a missing index — it is a decision nobody has made — and telling an agent to run
+/// `sextant index` there sends it to build a third store instead of surfacing the choice.
+private func indexUnavailableReason(_ arguments: [String]) -> String {
+    let (candidates, _) = indexCandidates(in: arguments)
+    guard candidates.filter(\.isUsable).count > 1, storePolicy(in: arguments) == nil else { return indexUnavailable }
+    return StoreSelection.unsetPolicyRefusal(candidates: candidates, shorten: shorten).joined(separator: "\n")
+}
+
 /// Runs the MCP server over stdio. A single client (Claude Code) means a sequential loop with
 /// no concurrency hazards: the index is opened once and reused, keeping the cache warm.
 /// stdout carries only JSON-RPC messages (newline-delimited); logs go to stderr.
@@ -45,7 +54,7 @@ func runMCP(arguments: [String]) -> Int32 {
             guard !paths.isEmpty else { return nil }
             let freshness = IndexFreshness.state(storePaths: paths, projectRoot: projectRoot(in: arguments))
             return IndexProvenance(source: source, storeCount: paths.count, freshness: freshness).summary
-        }, warnedInvalidConfig: &configWarned)
+        }, indexProblem: { indexUnavailableReason(arguments) }, warnedInvalidConfig: &configWarned)
         handleMCP(method: method, id: id, params: message["params"] as? [String: Any] ?? [:], context: context)
     }
     return 0
@@ -66,9 +75,15 @@ private struct ToolContext {
     /// this the agent — the main consumer — never sees where the answer came from or that the
     /// index is stale. Computed on demand: freshness walks the sources.
     let provenance: () -> String?
+    /// What to say when there is no index to answer from — computed per call, because "several
+    /// usable stores and no policy" is a different problem from "no store at all", and telling an
+    /// agent to run `sextant index` there sends it to build a third store instead of surfacing
+    /// the choice nobody has made.
+    let indexProblem: () -> String
 }
 
 private func makeToolContext(project: String, index: IndexStoreSet?, provenance: @escaping () -> String?,
+                             indexProblem: @escaping () -> String,
                              warnedInvalidConfig: inout Bool) -> ToolContext {
     var config: ProjectConfig?
     var configProblem: String?
@@ -103,7 +118,8 @@ private func makeToolContext(project: String, index: IndexStoreSet?, provenance:
     SwiftSources.setExclusions(config?.exclude ?? [])
 
     return ToolContext(project: scoped, projectRoot: project, scopeProblem: scopeProblem,
-                       config: config, index: index, reader: SourceLineReader(), provenance: provenance)
+                       config: config, index: index, reader: SourceLineReader(), provenance: provenance,
+                       indexProblem: indexProblem)
 }
 
 /// Store signature — detects an index appearing or being rebuilt without retry spam.
@@ -242,11 +258,11 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
     switch name {
     case "context":
         guard let symbol = symbol() else { return ("the symbol parameter is required", true) }
-        return contextText(symbol, index, reader: context.reader)
+        return contextText(symbol, index, reader: context.reader, problem: context.indexProblem)
 
     case "body":
         guard let symbol = symbol() else { return ("the symbol parameter is required", true) }
-        guard let set = index else { return (indexUnavailable, true) }
+        guard let set = index else { return (context.indexProblem(), true) }
         let definitions = set.lookup(name: symbol, query: .definitions).compactMap { $0.definition }
         guard !definitions.isEmpty else { return ("definition not found: \(symbol) (symbol outside the index? try find_references)", true) }
         let blocks = definitions.compactMap { definition -> String? in
@@ -256,7 +272,7 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
 
     case "blast_radius":
         guard let symbol = symbol() else { return ("the symbol parameter is required", true) }
-        guard let set = index else { return (indexUnavailable, true) }
+        guard let set = index else { return (context.indexProblem(), true) }
         guard let radius = set.blastRadius(forName: symbol) else { return ("symbol not found: \(symbol)", true) }
         var lines = ["blast radius: \(radius.symbol) [\(radius.kind)]",
                      "touches: \(radius.affectedFiles.count) files · \(radius.referenceCount) usages · \(radius.callerCount) calls"]
@@ -265,15 +281,15 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
         return (lines.joined(separator: "\n"), false)
 
     case "who_defines":
-        return lookupText(symbol(), index, query: .definitions, project: context.project, reader: context.reader)
+        return lookupText(symbol(), index, query: .definitions, project: context.project, reader: context.reader, problem: context.indexProblem)
     case "find_references":
-        return lookupText(symbol(), index, query: .references, project: context.project, reader: context.reader)
+        return lookupText(symbol(), index, query: .references, project: context.project, reader: context.reader, problem: context.indexProblem)
     case "find_callers":
-        return lookupText(symbol(), index, query: .callers, project: context.project, reader: context.reader)
+        return lookupText(symbol(), index, query: .callers, project: context.project, reader: context.reader, problem: context.indexProblem)
 
     case "list_implementations":
         guard let symbol = symbol() else { return ("the symbol parameter is required", true) }
-        guard let set = index else { return (indexUnavailable, true) }
+        guard let set = index else { return (context.indexProblem(), true) }
         // "No implementations" is a statement about a symbol that exists. For one the index has
         // never heard of, it is a made-up answer — the other six symbol tools say so.
         guard !set.resolveSymbols(forName: symbol).isEmpty else { return ("symbol not found: \(symbol)", true) }
@@ -283,7 +299,7 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
 
     case "call_hierarchy":
         guard let symbol = symbol() else { return ("the symbol parameter is required", true) }
-        guard let set = index else { return (indexUnavailable, true) }
+        guard let set = index else { return (context.indexProblem(), true) }
         let direction: CallDirection = (args["direction"] as? String) == "callers" ? .callers : .callees
         let depth = max(1, (args["depth"] as? Int) ?? 3)
         let roots = set.resolveSymbols(forName: symbol)
@@ -449,8 +465,9 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
 }
 
 /// Symbol summary text (for the `context` tool and the `sextant://symbol/{name}` resource).
-private func contextText(_ symbol: String, _ index: IndexStoreSet?, reader: SourceLineReader) -> (String, Bool) {
-    guard let set = index else { return (indexUnavailable, true) }
+private func contextText(_ symbol: String, _ index: IndexStoreSet?, reader: SourceLineReader,
+                         problem: () -> String) -> (String, Bool) {
+    guard let set = index else { return (problem(), true) }
     guard let context = set.context(forName: symbol) else { return ("symbol not found: \(symbol)", true) }
     let lines = SymbolReport.context(
         context,
@@ -475,7 +492,7 @@ private func readResource(uri: String, context: ToolContext) -> (text: String, o
         let raw = String(uri.dropFirst(prefix.count))
         let name = raw.removingPercentEncoding ?? raw
         guard !name.isEmpty else { return ("empty symbol name", false) }
-        let (text, isError) = contextText(name, context.index, reader: context.reader)
+        let (text, isError) = contextText(name, context.index, reader: context.reader, problem: context.indexProblem)
         return (text, !isError)
     }
     return ("unknown resource: \(uri)", false)
@@ -492,9 +509,10 @@ private func textualFallback(_ symbol: String, project: String) -> (String, Bool
     return (lines.joined(separator: "\n"), false)
 }
 
-private func lookupText(_ symbol: String?, _ index: IndexStoreSet?, query: SymbolQuery, project: String, reader: SourceLineReader) -> (String, Bool) {
+private func lookupText(_ symbol: String?, _ index: IndexStoreSet?, query: SymbolQuery, project: String,
+                        reader: SourceLineReader, problem: () -> String) -> (String, Bool) {
     guard let symbol, !symbol.isEmpty else { return ("the symbol parameter is required", true) }
-    guard let set = index else { return (indexUnavailable, true) }
+    guard let set = index else { return (problem(), true) }
     let hits = set.lookup(name: symbol, query: query)
     guard !hits.isEmpty else { return textualFallback(symbol, project: project) }
 

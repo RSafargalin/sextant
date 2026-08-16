@@ -110,6 +110,7 @@ Working CLI and MCP server, version 0.8.x. 25 commands:
 | `mcp` | MCP server (stdio) for Claude Code — the semantic layer as tools | integration |
 | `init` | set up a project: `.sextant.json`, registration in `.mcp.json`, and a check | integration |
 | `serve` | daemon with a warm index: cold CLI start 2.6s → 0.27s (measured on sextant itself) | integration |
+| `store` | index stores in reach, and the policy that decides between them (`store use <policy>`) | diagnostics |
 | `doctor` | self-check of the setup (sources, libIndexStore, index store, freshness) | diagnostics |
 | `index` | build an index store and capture the C-family compile flags: SPM (`swift build`) or an app target (`--app`, xcodebuild) | build |
 
@@ -117,6 +118,29 @@ Shared flags, each on the commands it makes sense for: `--project <path>` (every
 `--json` (structured output, on every command that answers a query), `--reindex` (rebuild the
 index before the query), `--scope <subdirectory>` and `--max-files <N>` (`map`, `api`, `search`,
 `lint`). Run `sextant <command> --help` for the exact set. Defaults come from `.sextant.json`.
+### Which index store answers
+
+A project routinely has more than one index store: `swift build` writes one, an editor's own
+indexer writes another, a second checkout brings its own. They answer the same question
+differently — measured on this repository, `refs SwiftSources` gives **83** usages in 22 files
+from the store built last and **34** in 12 files from a store seven days older, while merging
+both gives **91** — and nothing in the answer shows which was read.
+
+So the tool does not choose. While one store is usable there is nothing to decide and nothing is
+asked. As soon as a second one is usable, semantic commands refuse until a policy is set:
+
+```
+sextant store                 # what is in reach, what each policy gives, what it costs
+sextant store use recency     # one store — the one built last
+sextant store use union       # all of them, merged; freshness taken from the oldest
+```
+
+The choice is written to `.sextant.json` (`storePolicy`). Override it for one command with
+`--store-policy`, for one machine with `SEXTANT_STORE_POLICY`, or bypass it entirely with
+`--index-store <path>`. Whenever there was a choice, every answer carries the line that says how
+many candidates there were, which are being read, and why the others were not. See
+[ADR-0006](docs/adr/0006-store-policy-is-a-persons-decision.md).
+
 `.gitignore` is respected in full — under git directly, and outside it by handing the directory
 to git as a work tree whose git dir lives in the cache, so nothing is written into the project. To leave
 out files that *are* tracked on purpose — generated code, vendored sources, snapshot fixtures —

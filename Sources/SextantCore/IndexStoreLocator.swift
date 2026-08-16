@@ -18,33 +18,62 @@ public enum IndexStoreLocator {
         return directories
     }
 
-    /// Every existing index store under the project's SPM packages.
-    public static func stores(under root: URL) -> [String] {
-        swiftPackages(under: root).flatMap(storePaths(inPackage:))
+    /// Every store under the project's SPM packages that could be used, with the facts needed to
+    /// choose between them. Several stores of one package are a normal state — `swift build` writes
+    /// one and an editor's own indexer writes another — and which of them answers a question is a
+    /// decision, not a detail.
+    public static func candidates(under root: URL) -> [StoreCandidate] {
+        swiftPackages(under: root).flatMap(candidates(inPackage:))
+    }
+
+    /// Paths of the usable candidates, for callers that only need somewhere to read units from
+    /// (capturing compile flags, for instance) and have no choice to make.
+    public static func usableStorePaths(under root: URL) -> [String] {
+        candidates(under: root).filter(\.isUsable).map(\.path)
+    }
+
+    private static func candidates(inPackage directory: URL) -> [StoreCandidate] {
+        let build = directory.appendingPathComponent(".build")
+        guard let triples = try? FileManager.default.contentsOfDirectory(atPath: build.path) else { return [] }
+        var found: [StoreCandidate] = []
+        for triple in triples.sorted() {
+            for configuration in ["debug", "release"] {
+                let path = build.appendingPathComponent("\(triple)/\(configuration)/index/store").path
+                guard FileManager.default.fileExists(atPath: path) else { continue }
+                // A store with no units is not a candidate — there is nothing in it to open.
+                let modified = IndexFreshness.timestamp(ofStore: path)
+                found.append(StoreCandidate(
+                    path: path,
+                    origin: directory.path,
+                    unitCount: StoreCandidate.unitCount(ofStore: path),
+                    modified: modified,
+                    rejection: modified == nil ? "no units — nothing to read" : nil
+                ))
+            }
+        }
+        // Debug and release of one package are different builds of different code; mixing them
+        // would answer about a configuration nobody asked for. Only the configuration that was
+        // built last takes part, and the other is named as left out.
+        let usable = found.filter(\.isUsable)
+        guard usable.count > 1, let newest = usable.max(by: { ($0.modified ?? .distantPast) < ($1.modified ?? .distantPast) })
+        else { return found }
+        let winning = configuration(ofStorePath: newest.path)
+        return found.map { candidate in
+            guard candidate.isUsable, configuration(ofStorePath: candidate.path) != winning else { return candidate }
+            return StoreCandidate(path: candidate.path, origin: candidate.origin, unitCount: candidate.unitCount,
+                                  modified: candidate.modified,
+                                  rejection: "another configuration than the one built last (\(winning))")
+        }
+    }
+
+    /// `debug` or `release` from `.build/<triple>/<configuration>/index/store`.
+    private static func configuration(ofStorePath path: String) -> String {
+        URL(fileURLWithPath: path).deletingLastPathComponent().deletingLastPathComponent()
+            .lastPathComponent
     }
 
     private static func hasManifest(_ directory: URL) -> Bool {
         FileManager.default.fileExists(atPath: directory.appendingPathComponent("Package.swift").path)
     }
 
-    /// The freshest store for a package (one per package, never debug and release at once — that
-    /// would open two and become non-deterministic when one configuration is stale). Freshness is
-    /// measured by unit update time (`IndexFreshness`): a build rewrites units inside the store
-    /// without touching its directory mtime, so by directory a one-off release store looks forever
-    /// "newer" than a debug store that is rebuilt regularly.
-    /// A store with no units is not a candidate — there is nothing to open.
-    private static func storePaths(inPackage directory: URL) -> [String] {
-        let build = directory.appendingPathComponent(".build")
-        guard let triples = try? FileManager.default.contentsOfDirectory(atPath: build.path) else { return [] }
-        var candidates: [(path: String, modified: Date)] = []
-        for triple in triples.sorted() {
-            for configuration in ["debug", "release"] {
-                let candidate = build.appendingPathComponent("\(triple)/\(configuration)/index/store").path
-                if let modified = IndexFreshness.timestamp(ofStore: candidate) {
-                    candidates.append((candidate, modified))
-                }
-            }
-        }
-        return DerivedDataLocator.freshest(from: candidates).map { [$0] } ?? []
-    }
 }

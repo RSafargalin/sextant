@@ -8,14 +8,19 @@ public struct ProjectConfig: Codable, Sendable {
     public var rules: String?
     /// Files to leave out of every walk, as glob patterns relative to the project root.
     public var exclude: [String]?
+    /// What to do when the project has more than one usable index store (`StorePolicy`). There is
+    /// no safe default: the policies answer the same question differently, so the choice is the
+    /// reader's and is recorded here by `sextant store use`.
+    public var storePolicy: String?
 
     public init(budget: Int? = nil, maxFiles: Int? = nil, scope: String? = nil, rules: String? = nil,
-                exclude: [String]? = nil) {
+                exclude: [String]? = nil, storePolicy: String? = nil) {
         self.budget = budget
         self.maxFiles = maxFiles
         self.scope = scope
         self.rules = rules
         self.exclude = exclude
+        self.storePolicy = storePolicy
     }
 
     /// Result of reading the config. It distinguishes "no file" (normal) from "a file that does
@@ -36,6 +41,9 @@ public struct ProjectConfig: Codable, Sendable {
             // A misspelled key decodes cleanly and does nothing, so a whole configuration can be
             // inert while `doctor` reports the file as read. An unknown flag is a hard error here;
             // an unknown key was silence.
+            if let raw = config.storePolicy, StorePolicy.named(raw) == nil {
+                return .invalid("\(StorePolicy.configKey): unknown value '\(raw)' — known values are \(StorePolicy.known)")
+            }
             let unknown = unknownKeys(in: data)
             guard unknown.isEmpty else {
                 let known = Self.knownKeys.sorted().joined(separator: ", ")
@@ -47,7 +55,7 @@ public struct ProjectConfig: Codable, Sendable {
         }
     }
 
-    static let knownKeys: Set<String> = ["budget", "maxFiles", "scope", "rules", "exclude"]
+    static let knownKeys: Set<String> = ["budget", "maxFiles", "scope", "rules", "exclude", StorePolicy.configKey]
 
     /// Top-level keys the config does not declare.
     static func unknownKeys(in data: Data) -> Set<String> {

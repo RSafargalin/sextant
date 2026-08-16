@@ -23,7 +23,7 @@ struct ClangPatternSearchTests {
     }
 
     private func command(suffix: String) throws -> CompileCommand {
-        let commands = CompilationDatabase.capture(fromStores: IndexStoreLocator.stores(under: Self.fixture))
+        let commands = CompilationDatabase.capture(fromStores: IndexStoreLocator.usableStorePaths(under: Self.fixture))
         return try #require(commands.first { $0.file.hasSuffix(suffix) })
     }
 
