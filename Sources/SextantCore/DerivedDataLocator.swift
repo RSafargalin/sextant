@@ -39,6 +39,8 @@ public enum DerivedDataLocator {
                 // Only stores that belong to this checkout are shown at all; another project's
                 // DerivedData is not a candidate anybody would want listed.
                 continue
+            } else if !belongsToSameProject(workspace: workspacePath, root: projectRoot) {
+                continue
             } else if modified == nil {
                 rejection = "no units — nothing to read"
             } else {
@@ -90,6 +92,35 @@ public enum DerivedDataLocator {
         // An app workspace (.xcodeproj/.xcworkspace) covers the whole project; the index of an
         // opened nested package (Package.swift) is partial, so it is used only when no app exists.
         return freshest(from: appWorkspaces.isEmpty ? packageWorkspaces : appWorkspaces)
+    }
+
+    /// Whether a workspace is part of the same project as the root, rather than merely somewhere
+    /// beneath it.
+    ///
+    /// A path prefix is not a project boundary. Pointed at a home directory, the prefix test
+    /// accepts every project the user has ever built — measured: `--project ~` offered the store
+    /// of an unrelated app from `Downloads`, covering 6% of what it called "this project". The
+    /// boundary that means something is the repository: a workspace belongs here when it is in the
+    /// same checkout as the root. Outside git, the fallback is direct containment — the workspace
+    /// sits in the root itself — which is the layout a project without version control has.
+    static func belongsToSameProject(workspace: String, root: String) -> Bool {
+        let workspaceDirectory = (workspace as NSString).deletingLastPathComponent
+        let rootRepository = repositoryRoot(of: root)
+        let workspaceRepository = repositoryRoot(of: workspaceDirectory)
+        if let rootRepository, let workspaceRepository { return rootRepository == workspaceRepository }
+        if rootRepository == nil, workspaceRepository == nil {
+            let root = URL(fileURLWithPath: root).resolvingSymlinksInPath().standardizedFileURL.path
+            return URL(fileURLWithPath: workspaceDirectory).resolvingSymlinksInPath().standardizedFileURL.path == root
+        }
+        // One of them is under version control and the other is not: they are not one project.
+        return false
+    }
+
+    private static func repositoryRoot(of directory: String) -> String? {
+        guard let output = Command.output("/usr/bin/env", ["git", "-C", directory, "rev-parse", "--show-toplevel"]),
+              case let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty
+        else { return nil }
+        return URL(fileURLWithPath: trimmed).resolvingSymlinksInPath().standardizedFileURL.path
     }
 
     /// Whether WorkspacePath points at an Xcode project or workspace, rather than a nested Package.swift.
