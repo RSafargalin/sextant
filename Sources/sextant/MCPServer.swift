@@ -26,7 +26,12 @@ func runMCP(arguments: [String]) -> Int32 {
     if index == nil {
         logMCP("index unavailable at start-up — will try again once a store appears (build one with `sextant index`).")
     }
-    var lastOpenSignature: String?   // store state of the last attempt — avoids spamming on a broken store
+    // The state the open index stands on: which stores were chosen and when their units were last
+    // written. Both can change while a session runs — a rebuild into another configuration, a
+    // second checkout appearing, a policy written to `.sextant.json` — and a server that only ever
+    // looked once keeps answering from the store it happened to pick at start-up.
+    var openedSignature: String? = index == nil ? nil : storeSignature(in: arguments)
+    var lastOpenSignature: String? = openedSignature   // avoids retrying a broken store every call
     var configWarned = false         // a broken .sextant.json is reported once per session
 
     while let line = readLine(strippingNewline: true) {
@@ -37,14 +42,22 @@ func runMCP(arguments: [String]) -> Int32 {
         var id = message["id"]
         if id is NSNull { id = nil }
 
-        // The index may have been built DURING the session (the server started before
-        // `sextant index`). Re-open when a store appears or is rebuilt — the signature changes.
-        // No spamming when the store is broken and openIndex keeps returning nil.
-        if index == nil, indexNeedingMethods.contains(method),
-           let signature = storeSignature(in: arguments), signature != lastOpenSignature {
-            lastOpenSignature = signature
-            index = openIndex(arguments, label: "mcp", listen: true)
-            if index != nil { logMCP("index appeared — opened, semantics available.") }
+        // Checked on every call that needs the index, not only while there is none. The signature
+        // covers the chosen store paths and their unit times, so it moves when the project is
+        // rebuilt, when the policy changes which store is read, and when a store appears.
+        if indexNeedingMethods.contains(method) {
+            let signature = storeSignature(in: arguments)
+            if index == nil, let signature, signature != lastOpenSignature {
+                lastOpenSignature = signature
+                index = openIndex(arguments, label: "mcp", listen: true)
+                openedSignature = index == nil ? nil : signature
+                if index != nil { logMCP("index appeared — opened, semantics available.") }
+            } else if index != nil, signature != openedSignature {
+                logMCP("the index changed (rebuilt, or another store is in force) — reopening.")
+                index = openIndex(arguments, label: "mcp", listen: true)
+                openedSignature = index == nil ? nil : signature
+                lastOpenSignature = signature
+            }
         }
 
         let opened = index
@@ -209,6 +222,7 @@ private func handleMCP(method: String, id: Any?, params: [String: Any], context:
     case "tools/call":
         index?.pollForChanges()              // pick up reindexing on a hot store
         SwiftSources.clearFileListMemo()     // fresh file list per call, so new files are seen
+        clearConfigMemo()                    // and a `.sextant.json` edited mid-session takes effect
         let name = params["name"] as? String ?? ""
         let toolArgs = params["arguments"] as? [String: Any] ?? [:]
         let started = DispatchTime.now()

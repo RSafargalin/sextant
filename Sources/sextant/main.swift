@@ -51,12 +51,20 @@ func loadConfig(_ arguments: [String]) -> ProjectConfig? {
     configMemo.value(forRoot: projectRoot(in: arguments))
 }
 
+/// Forgets the config, so the next read sees the file as it is now. A command runs once and can
+/// keep its answer; a long-lived server cannot — `.sextant.json` is edited while it runs, and a
+/// store policy or a scope written into it must take effect on the next call rather than on the
+/// next restart.
+func clearConfigMemo() { configMemo.clear() }
+
 /// The config is read once per run (several helpers ask for it in a row), and a broken
 /// `.sextant.json` is reported once: ignoring it silently used to hide the user's typos.
 /// Thread-safe (NSLock) — Swift Testing runs tests concurrently.
 private final class ConfigMemo: @unchecked Sendable {
     private let lock = NSLock()
     private var map: [String: ProjectConfig?] = [:]
+
+    func clear() { lock.withLock { map.removeAll() } }
 
     func value(forRoot root: String) -> ProjectConfig? {
         lock.withLock {
