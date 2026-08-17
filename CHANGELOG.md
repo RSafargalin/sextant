@@ -38,6 +38,10 @@ Human-readable text output is not covered — parse `--json`, not prose.
 
 ### Fixed
 
+- **A capped answer no longer reports a file count that reads as the whole set.**
+  `usages: 1000 of 2518 (internal cap) in 59 file(s)` counted the files among the thousand collected,
+  while the references to that symbol touch 116 — measured on swift-syntax against sourcekit-lsp,
+  which settles at the same 2518. It now says `in 59 file(s) of those shown`.
 - **`sextant index` says when the store it just built holds none of the project's tests.** The
   SwiftPM path builds them; the Xcode path cannot be fixed the same way, and this is measured rather
   than assumed: `xcodebuild build-for-testing` builds the test targets and writes **no index store at
