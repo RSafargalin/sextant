@@ -62,18 +62,17 @@ struct PluginManifestTests {
                 "the plugin starts \(command), which is not an executable file")
     }
 
-    @Test("the adoption hook names an executable script")
-    func hookScriptExists() throws {
-        let hooks = try json(at: Self.pluginRoot.appendingPathComponent("hooks/hooks.json"))
-        let events = try #require((hooks["hooks"] as? [String: Any])?["PreToolUse"] as? [[String: Any]])
-        let entries = events.flatMap { ($0["hooks"] as? [[String: Any]]) ?? [] }
-        #expect(!entries.isEmpty, "the hook file declares no command")
+    /// The adoption hook runs before every tool call and starts writing the moment it is
+    /// registered, so it stays a decision the user makes with `hook --install` rather than one an
+    /// install makes for them. A plugin that ships it would be making it.
+    @Test("the plugin registers no hooks")
+    func pluginShipsNoHooks() throws {
+        let hooks = Self.pluginRoot.appendingPathComponent("hooks")
+        #expect(!FileManager.default.fileExists(atPath: hooks.path),
+                "the plugin must not register hooks — \(hooks.path) exists")
 
-        for entry in entries {
-            let command = resolve(command: try #require(entry["command"] as? String))
-            #expect(FileManager.default.isExecutableFile(atPath: command),
-                    "the hook runs \(command), which is not an executable file")
-        }
+        let manifest = try json(at: Self.pluginRoot.appendingPathComponent(".claude-plugin/plugin.json"))
+        #expect(manifest["hooks"] == nil, "the manifest must declare no hooks")
     }
 
     /// A skill without front matter is not loaded, and the failure is silent — the agent simply

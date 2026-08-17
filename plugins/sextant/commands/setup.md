@@ -38,4 +38,7 @@ build without asking.
    project and show the result. If the server is not connected, say so — the plugin registers it
    at startup, so a client started before the install needs a restart.
 
-Close with one line: what works now, and what is left for the user to decide.
+Close with one line: what works now, and what is left for the user to decide. If they ask how much
+of their navigation actually goes through sextant, `sextant adoption` reads it from the session
+transcripts, and `sextant hook --install` prints the snippet that records it live — the plugin
+installs no hook of its own.

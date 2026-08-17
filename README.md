@@ -330,11 +330,10 @@ It does **not** install the binary: that is Homebrew's job, above. Installed wit
 server exits with a message naming the missing binary rather than failing silently. The server is
 started for every project, Swift or not; in a repository with no sources the tools say so.
 
-The plugin also registers a `PreToolUse` hook that runs `sextant hook` — the live half of the
-adoption metric, ~30 ms per tool call. It appends a timestamp, a hash of the project root, the
-kind of act and the shape of the query to `~/Library/Caches/sextant/adoption.jsonl`: never the
-query, the command, the path or the project, and nothing is sent anywhere. Uninstall the plugin
-to stop it; delete the file to erase it.
+It registers **no hooks**. The adoption hook — the live half of the metric — runs before every
+tool call and starts writing the moment it is registered, so installing it stays a decision you
+make rather than one an install makes for you: `sextant hook --install` prints the snippet and
+says what it writes.
 
 Both manifests live in this repository —
 [.claude-plugin/marketplace.json](.claude-plugin/marketplace.json) and

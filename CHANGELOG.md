@@ -17,10 +17,12 @@ Human-readable text output is not covered — parse `--json`, not prose.
 
 - **A Claude Code plugin, distributed from this repository.** `/plugin marketplace add
   RSafargalin/sextant` then `/plugin install sextant@sextant` registers the MCP server for every
-  project opened, a skill that says when to ask the index instead of grepping, a `/sextant:setup`
-  command that runs `doctor` and offers to build an index, and the `PreToolUse` adoption hook —
-  which had shipped as a snippet nobody pasted. The wiring drops from four manual steps to one; the
-  binary is still Homebrew's job, and the launcher says so by name instead of failing silently.
+  project opened, a skill that says when to ask the index instead of grepping, and a
+  `/sextant:setup` command that runs `doctor` and offers to build an index. The wiring drops from
+  four manual steps to one; the binary is still Homebrew's job, and the launcher says so by name
+  instead of failing silently. It registers no hooks: the adoption hook writes from the moment it
+  is installed, which keeps it a decision for `hook --install` rather than a side effect of an
+  install.
 - **`body --context-lines N`** — N lines on each side of the declaration, numbered, with the
   declaration itself marked apart from its surroundings. Measured on another tool of the same shape:
   18.4 % of symbol queries were followed by a plain read of the same file, and in four fifths of
@@ -36,11 +38,6 @@ Human-readable text output is not covered — parse `--json`, not prose.
 
 ### Fixed
 
-- **`doctor` no longer reports the adoption hook as absent when the plugin registers it.** The check
-  reads the three settings files a client keeps hooks in, and a plugin's hook is in none of them —
-  so the one check written to catch wiring that only looks installed was about to claim the reverse.
-  When no settings file names the hook and the log has been written anyway, that is now what it
-  says.
 - **`ugrep` and `bfs` are counted as the searches they are.** A client that routes `Grep` and `Glob`
   through the shell as those binaries was invisible to the adoption denominator. One list now serves
   both the hook and the transcript reader, and the test walks the whole list.
