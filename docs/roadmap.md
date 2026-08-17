@@ -548,10 +548,14 @@ change break"). None of these notions exist in LSP. The prerequisite is a spike:
 reference Xcode project and compare the answers. Without it, "we are stronger on `.xcodeproj`" stays
 at L1.
 
-**Axis 3. Distribution and trust in the install.** A one-step Claude Code plugin — the MCP server,
-the hook and the slash commands in a single install (this closes #30 and removes three manual steps;
+**Axis 3. Distribution and trust in the install.** The Claude Code plugin **shipped** (#25): the MCP
+server, a skill and `/sextant:setup` in one install, served by a marketplace in this repository. It
+registers no hook — a hook that writes from the moment it is installed stays the user's decision.
 Serena has a heavily upvoted request for exactly this,
-[#802](https://github.com/oraios/serena/issues/802)). An HTTP transport: today it is stdio only, so
+[#802](https://github.com/oraios/serena/issues/802). Left on this axis: submitting to the community
+marketplace, and **recognising sourcekit-lsp's own `index-build` store**, which now exists in every
+project where `swift-lsp` is installed and currently makes sextant ask which store to read. An HTTP
+transport: today it is stdio only, so
 cloud and remote sessions cannot reach sextant at all. `make verify-public` — the bench of five public
 repositories plus `tea` as a repeatable artefact rather than one-off scripts: in the last run half the
 false findings were bugs in the harness itself.
@@ -659,6 +663,129 @@ at once would need a further control that has not been run.
 Not tested: more than four processes, a store being rewritten by Xcode *during* the queries, and
 any platform other than this one. The item is closed as unconfirmed rather than fixed — there is
 nothing to fix until one of those shows harm.
+
+### sourcekit-lsp and Serena on the same questions — spike (2026-08-17)
+
+Claude Code's official plugin marketplace ships `swift-lsp`, which wires sourcekit-lsp into the
+client's own LSP tool: definitions, references, implementations, call hierarchies, plus diagnostics
+after every edit. Serena's Swift backend is the same server
+([`solidlsp/language_servers/sourcekit_lsp.py`](https://github.com/oraios/serena)). So "ask the
+index instead of grepping" is no longer ours to say alone, and the pitch had to be checked rather
+than defended.
+
+Stand: macOS 26.5.2, x86_64, sourcekit-lsp from the Xcode 26 toolchain, sextant 0.9.0, Serena
+1.7.1.dev0. Corpora: `Tests/Fixtures/IndexFixture` (Swift + Objective-C + C, four files) and
+Alamofire at `0455bfb`, the commit the benchmarks pin. Scripts:
+[docs/measurements](measurements/).
+
+**1. It does not read the index your build wrote — it builds its own.** On a copy built with
+`swift build --enable-index-store`, sourcekit-lsp still created `.build/index-build` and indexed
+from scratch (`Indexing 0/4 … 3/4`): first non-empty answer after **16.3 s** on four files. On
+Alamofire the first answer came after **36.8 s**, and `.build` went from 140 MB to 504 MB — the
+extra 365 MB is its index build. sextant answered the same question off the store the ordinary
+build had already written: **1.3 s** for a cold process, 0.9 s warm.
+
+**2. On the question both can answer, they agree — once they are reading the same code.** This
+point was first written as "25 usages in 7 files from both", and that was wrong: the two agreed
+because both were partial at the moment of asking. sourcekit-lsp had been indexing for 37 seconds
+and had reached the library; sextant was reading a store built without the test targets. Asked again
+when the background index had finished, sourcekit-lsp answers **504 in 33 files**, most of it tests.
+sextant answers the same 504 in the same 33 once `index` builds the tests — which it now does; see
+[the tests missing from our own index](#the-xcode-project-and-the-unbuilt-edit--spike-2026-08-18)
+below. Serena, asked for the same symbol, returned **23 in 7** and 8017 bytes with surrounding
+source against sextant's 587; its answer groups by referencing *symbol* rather than by location,
+which is why two entries collapse (that reading is inference, not measured).
+
+**3. LSP is addressed by position; an agent has a name.** The same Objective-C method, asked from
+its declaration in the header, returns **empty** — references and `prepareCallHierarchy` both.
+Asked from the `@implementation` in the `.m`, it returns the two locations sextant reports,
+*including* the Swift call site written `ocGreet(withName:)`. Asked as `definition` from that Swift
+call site, empty again. So the language boundary is crossed in one direction and not the other, and
+a missed position produces an empty list rather than an error — indistinguishable from "there are
+none". To ask at all, the agent must first have a file and an offset, which is the grep it was
+trying to avoid; `workspace/symbol` bridges that only for the cases where one name is one symbol.
+
+**4. One name, several symbols.** `greet` in the fixture is a protocol requirement and two
+implementations. sextant answers with three blocks and their call sites — the whole dispatch
+picture in one answer. sourcekit-lsp answers about the symbol under the cursor: one reference,
+correct, and you must know to ask three times from three positions.
+
+**5. Ambiguity fails in opposite directions, and neither is good.** Serena refuses:
+`find_referencing_symbols Session` errors with nine candidates and demands the disambiguated
+`Session[0]`, which costs an extra round trip. sextant does not refuse: `callers request` on
+Alamofire prints **337 symbol blocks**. An answer that large is a context bill, not an answer.
+
+**6. Installing `swift-lsp` gives every project a second index store — and sextant stops
+answering.** After sourcekit-lsp had run once, sextant found two usable stores
+(`.build/index-build/…/index/store` and `.build/…/debug/index/store`) and refused the query until a
+policy was given, exactly as designed. Correct, and about to be everyone's first experience of the
+tool if both are installed. This is the one finding with an obvious action: recognise
+`index-build` as sourcekit-lsp's own and pick sensibly by default, saying which and why.
+
+**7. What has no LSP request at all** (LSP 3.17, by specification): the public surface of a package
+or type, the impact of a change, a symbol-level diff between two revisions, a structural pattern
+search, a lint rule set. Those are `api`, `blast`, `changed`, `structural_search` and `lint` — five
+of thirteen tools, and the ones the benchmarks measure a saving on.
+
+**What this changes.** "A replacement for grep" is no longer a differentiator; it describes a
+first-party plugin that installs in one step and needs no Homebrew. What the measurement supports
+instead: LSP answers *where*, and does it well once it has spent minutes building its own index;
+sextant answers *what a change would touch* and *what a module promises*, by name, off the index
+the build already produced. Axis 2 (the Xcode reality) is untouched by this spike and is now the
+more important half of the moat — none of it was tested here.
+
+Not tested, and each would move the conclusion: an `.xcodeproj` or workspace rather than a SwiftPM
+package; a repository large enough for the index build to take tens of minutes; C and C++;
+diagnostics after an edit, which sextant does not do at all; Serena's memories and onboarding, which
+are not navigation; and token counts rather than bytes.
+
+### The Xcode project and the unbuilt edit — spike (2026-08-18)
+
+The two questions the first spike left open, and the one it got wrong. Same stand as above; the
+Xcode case is a checkout of Alamofire at `0455bfb` with `Package.swift` removed, so the SwiftPM path
+cannot stand in for the Xcode one. `Alamofire.xcodeproj` has ten targets across five platforms and
+no shared schemes.
+
+**1. On a bare `.xcodeproj`, sourcekit-lsp answers nothing.** No references within 180 s and none
+when asked again warm; `implementation`, `prepareCallHierarchy` and `workspace/symbol` all empty; no
+`index-build` directory created at all. The only non-empty reply was `definition`, which returned the
+position the cursor was already on. The reason is not a defect: without a package manifest there are
+no compile arguments, and the build server that would supply them — `xcode-build-server` — is a
+separate install that the `swift-lsp` plugin neither ships nor configures. It was not installed here,
+and **that is the untested half**: with it configured the answer would probably be different, and
+"probably" is not a measurement.
+
+sextant on the same checkout: `sextant index --app` picked the scheme itself, built with
+`COMPILER_INDEX_STORE_ENABLE` in **25.6 s**, and `refs Session` then answered in **1.8 s** — the same
+25 in 7 files the SwiftPM checkout gave at that time. Before that, `doctor` said `no index store
+found` and named the command. This is the axis where the difference is not a matter of degree.
+
+**2. After an edit that has not been built, we are the ones who are wrong.** A new function using
+`Session` was appended to a built package and the file saved, with no rebuild. sourcekit-lsp, in one
+run, reflected it immediately: 27 references instead of 25, the new symbol found by
+`workspace/symbol` in 0.0 s. sextant answered 25, marked the answer `⚠ STALE`, and on the new symbol
+degraded to a textual match saying "the index is stale — run `sextant index`". Honest, and wrong.
+
+The same run repeated on a fresh clone behaved differently: the server did **not** see the new symbol
+within 300 s and kept answering 25. So its advantage here is real but not dependable — which is worth
+knowing before either tool's freshness is described as a property rather than a tendency.
+
+**3. What the second question uncovered instead: our own index was missing the tests.** `sextant
+index` ran `swift build --enable-index-store` without `--build-tests`, so no usage written in a test
+existed for any semantic command. On Alamofire that is 43 of 98 files covered and **25** references
+to `Session` where the package holds **504 in 33 files**. The coverage line had been printing
+`covers 43/98 files (44%)` all along; it reads as "partial", not as "every test is missing". Fixed:
+the test targets are built by default (`--no-tests` opts out, the build costs 44 s against 80 s
+there), and the coverage line now names the test files a store was not built from.
+
+The Xcode path still has the same hole — `index --app` builds the scheme, not its tests, and closing
+it needs `xcodebuild build-for-testing` and a decision about the destination.
+
+**What this changes.** The moat is where the first spike could not look: an Xcode project, which is
+what an iOS codebase is. The freshness story is the opposite — for an agent that edits and asks in
+the same breath, an editor's index is the better source and ours is stale by construction. Both are
+now measured rather than assumed, and the second one is an argument for the daemon watching the store
+and for a rebuild trigger, not for defending the current behaviour.
 
 ## Canonical queries (the system's acceptance test)
 
