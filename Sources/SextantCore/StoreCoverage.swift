@@ -16,10 +16,24 @@ public enum StoreCoverage {
         public let total: Int
         /// Units whose main file lies outside the project — another checkout, or the SDK.
         public let foreign: Int
+        /// Test files the store was NOT built from. Called out separately because this is the
+        /// systematic hole rather than a random one: a build that skips the test targets removes
+        /// every usage written in a test from every answer, and on a well-tested package that is
+        /// most of them — measured on Alamofire, 25 references against 504.
+        public let uncoveredTests: Int
+
+        public init(covered: Int, total: Int, foreign: Int, uncoveredTests: Int = 0) {
+            self.covered = covered
+            self.total = total
+            self.foreign = foreign
+            self.uncoveredTests = uncoveredTests
+        }
 
         public var fraction: Double { total == 0 ? 0 : Double(covered) / Double(total) }
         public var summary: String {
-            total == 0 ? "no sources to cover" : "\(covered)/\(total) files (\(Int((fraction * 100).rounded()))%)"
+            guard total > 0 else { return "no sources to cover" }
+            let base = "\(covered)/\(total) files (\(Int((fraction * 100).rounded()))%)"
+            return uncoveredTests > 0 ? base + ", \(uncoveredTests) test file(s) outside it" : base
         }
     }
 
@@ -45,8 +59,10 @@ public enum StoreCoverage {
         else { return nil }
 
         let covered = onDisk.intersection(mainFiles)
+        let missedTests = onDisk.subtracting(mainFiles).filter { $0.hasSuffix("Tests.swift") }
         let result = Result(covered: covered.count, total: onDisk.count,
-                            foreign: mainFiles.subtracting(onDisk).count)
+                            foreign: mainFiles.subtracting(onDisk).count,
+                            uncoveredTests: missedTests.count)
         cache.set(result, forKey: key)
         return result
     }
@@ -60,5 +76,6 @@ public enum StoreCoverage {
         return ContentHash.of("\(store)|\(stamp)|\(fileCount)")
     }
 
-    private static let cache = PersistentCache<Result>(namespace: "store-coverage-v1")
+    // v2: the result gained a field, and an entry written by v1 cannot supply it.
+    private static let cache = PersistentCache<Result>(namespace: "store-coverage-v2")
 }

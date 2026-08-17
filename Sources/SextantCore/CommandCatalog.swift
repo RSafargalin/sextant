@@ -121,8 +121,11 @@ public enum CommandCatalog {
             flags: [project, FlagSpec("--app", "app target via xcodebuild (covers an xcodeproj)"),
                     FlagSpec("--scheme", takesValue: true, "Xcode scheme (otherwise auto-detected)"),
                     FlagSpec("--destination", takesValue: true, "xcodebuild destination"),
+                    FlagSpec("--no-tests", "skip the test targets (a faster build, and their usages go missing)"),
                     FlagSpec("--no-build", "only locate an existing index, do not build")],
-            details: [BuildTrust.summary]
+            details: [BuildTrust.summary,
+                      "Test targets are built into the index. Measured on Alamofire: without them the",
+                      "store covers 43 of 98 files and `refs Session` answers 25 instead of 504."]
         ),
         CommandSpec(name: "refs", argument: "<symbol>", summary: "every usage of a symbol",
                     group: "Semantics (index store)", flags: semanticFlags,

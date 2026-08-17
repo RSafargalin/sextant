@@ -4,6 +4,15 @@ import Foundation
 /// choosing the platform and the umbrella paths. The decisions are separated from running the
 /// build so tests can cover them, while the build itself executes foreign code and runs only on an explicit user command.
 public enum IndexBuild {
+    /// What `swift build` is run with. Test targets are in by default because leaving them out
+    /// removes their usages from every answer without removing them from the code: measured on
+    /// Alamofire, the store then covered 43 of 98 files and `refs Session` answered 25 where the
+    /// whole package holds 504. The build costs roughly twice as long (44s against 80s there),
+    /// which is a price paid once per build against an undercount paid on every query.
+    public static func swiftBuildArguments(buildTests: Bool = true) -> [String] {
+        ["build", "--enable-index-store"] + (buildTests ? ["--build-tests"] : [])
+    }
+
     public struct Package: Sendable, Equatable {
         public let reference: UmbrellaManifest.PackageReference
         public let macOSVersion: String?
