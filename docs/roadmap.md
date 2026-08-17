@@ -409,6 +409,41 @@ happen in the world first, so it stays here instead of being raised at every pla
   (portable in principle, but the path search is written for Xcode). The open question is not
   "how hard" but "for whom" — no one has asked for it.
 
+## Closed by measurement, not by opinion
+
+### A shared IndexStoreDB directory across processes — harm NOT confirmed (2026-08-17)
+
+The database directory is derived from the store path, so every process working on one store shares
+one database. That was recorded as a defect ("two processes silently re-import it"). Measured, it is
+the opposite: sharing is what makes concurrency cheap.
+
+Stand: the reference project's Xcode store, 22 725 units, 528 MB; `refs AbsAccountsViewModel`;
+`SEXTANT_NO_DAEMON=1`; times are per process, wall clock.
+
+| processes | one shared database | one database per process |
+|---:|---:|---:|
+| 1 | 25.0s | 29.5s |
+| 2 | 25.2s | 44.6s (36.2–53.0) |
+| 4 | 34.4s | 73.8s |
+
+The control matters more than the numbers: per-process databases were built by copying the store to
+four paths, so each process had its own key. They are **worse at every level** — four separate
+256 MB databases thrash the page cache while one shared mapping is read by all four.
+
+What was checked besides speed: every run returned the same answer (`usages: 7 in 3 file(s)`) at
+1, 2 and 4 processes, on a cold database and on a warm one; a query after the whole run still
+answered correctly; the database stayed 2 files and 256 MB. Nothing indicated a re-import, a lock
+that never released, or corruption.
+
+One case does cost: a CLI query importing a cold database while a daemon holds the same store open
+took 36.5s against 24.7s for the same cold import alone. It happens once after a rebuild, the
+answer was correct, and attributing it to the shared database rather than to two processes working
+at once would need a further control that has not been run.
+
+Not tested: more than four processes, a store being rewritten by Xcode *during* the queries, and
+any platform other than this one. The item is closed as unconfirmed rather than fixed — there is
+nothing to fix until one of those shows harm.
+
 ## Canonical queries (the system's acceptance test)
 
 Each of these must be answerable without a text grep:
