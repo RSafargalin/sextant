@@ -174,6 +174,14 @@ closed.
   it for its lifetime. A package is addressed by the name in its manifest rather than by the first
   path component, so a project that keeps packages outside `Packages/` can address them at all.
 
+- **The daemon's output capture could hang, and did hang CI.** Draining ran as a block on the
+  global queue while the caller was already blocked on the write, so anything holding the pool's
+  threads — several `Process.waitUntilExit` calls, say — starved the reader that would have
+  unblocked it. Reproduced with 80 blocked tasks: the write never returned, and a watchdog on the
+  same queue never fired either. Each reader now gets a thread of its own. The test written for the
+  original defect passed locally in 0.002s and timed out at 60 seconds on the runner, twice; the
+  starvation itself is now a test.
+
 - **The clang layer counted a file nobody could open as scanned**, and a byte that is not valid
   UTF-8 shifted every offset after it, so a column and a snippet were both wrong while presented as
   structural.

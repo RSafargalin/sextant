@@ -1,3 +1,4 @@
+import Dispatch
 import Foundation
 import Testing
 @testable import SextantCore
@@ -68,6 +69,30 @@ struct DaemonSocketTests {
     /// client waited forever and the daemon stopped answering everyone else. This checks the
     /// draining itself; swapping the global stdout/stderr is left alone, since that is
     /// process-global and would disturb tests running in parallel.
+    /// The same defect, under the condition that actually triggers it. Draining used to run on the
+    /// global queue, which only promises to run a block eventually — and eventually is too late when
+    /// the caller is already blocked on the write. Anything holding the pool's threads starves the
+    /// reader: several `Process.waitUntilExit` calls do it, which is why this passed locally in
+    /// 0.002s and timed out at 60 seconds on CI, twice, while the suite grew package-building tests.
+    ///
+    /// The pool is deliberately saturated here and released immediately after; with a reader on its
+    /// own thread the write returns at once.
+    @Test("Draining survives a starved thread pool", .timeLimit(.minutes(1)))
+    func drainSurvivesStarvedPool() throws {
+        let hold = DispatchSemaphore(value: 0)
+        let occupied = 80
+        for _ in 0..<occupied { DispatchQueue.global().async { hold.wait() } }
+        defer { for _ in 0..<occupied { hold.signal() } }
+        Thread.sleep(forTimeInterval: 0.3)   // let the pool actually fill
+
+        let pipe = Pipe()
+        let payload = Data(String(repeating: "a line of command output\n", count: 20_000).utf8)
+        let collected = OutputCapture.collect(from: [pipe]) {
+            try? pipe.fileHandleForWriting.write(contentsOf: payload)
+        }
+        #expect(collected[0].utf8.count == payload.count)
+    }
+
     @Test("Draining does not block the writer on more than a pipe buffer", .timeLimit(.minutes(1)))
     func drainSurvivesLargeOutput() throws {
         let pipe = Pipe()
