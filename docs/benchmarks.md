@@ -5,7 +5,7 @@
 Every number here was measured on public open-source Swift packages at a pinned commit, with
 commands you can run yourself. Nothing depends on a private codebase.
 
-**Environment:** macOS 26.5.2, x86_64, sextant 0.7.0 (the numbers are a record of that measurement and were not re-run for 0.8.0).
+**Environment:** macOS 26.5.2, x86_64, sextant 0.9.0. Scenarios A and B were re-measured for 0.9.0 at the commits named below; scenario C is a record of the 0.7.0 measurement and was not re-run.
 
 **Repositories** (shallow clones, pinned):
 
@@ -39,15 +39,23 @@ an unfamiliar dependency.
 
 | Repository | Declarations | `api` bytes | Source bytes | Saving |
 |---|---:|---:|---:|---:|
-| Alamofire | 973 | 125 043 | 803 997 | **84.5%** |
-| swift-argument-parser | 374 | 46 503 | 461 564 | **90.0%** |
-| swift-numerics | 328 | 24 899 | 181 937 | **86.4%** |
-| swift-nio | 3 672 | 414 162 | 4 464 792 | **90.8%** |
-| swift-syntax | 13 961 | 1 372 591 | 6 673 159 | **79.5%** |
+| Alamofire | 1 226 | 170 753 | 803 997 | **78.8%** |
+| swift-argument-parser | 376 | 46 724 | 461 564 | **89.9%** |
+| swift-numerics | 497 | 31 911 | 181 937 | **82.5%** |
+| swift-nio | 5 055 | 518 860 | 4 464 792 | **88.4%** |
+| swift-syntax | 13 989 | 1 374 492 | 6 673 159 | **79.4%** |
 
-Saving is stable in the **79–91%** band across a 9× spread in repository size. The largest
-repository shows the *smallest* saving: swift-syntax is largely generated code with a very
-high declaration-to-body ratio, so its source is already close to being pure surface.
+Saving is stable in the **79–90%** band across a 9× spread in repository size. The two ends of
+the band are the two kinds of code that are already close to pure surface: swift-syntax is largely
+generated, with a very high declaration-to-body ratio, and Alamofire carries doc comments on almost
+every declaration — `api` keeps their summaries, which is most of what it prints.
+
+Compared with the same measurement at 0.7.0, every surface is larger: Alamofire 973 → 1 226
+declarations, swift-nio 3 672 → 5 055. Nothing about the packages changed — the commits are the
+same — the surface did. Declarations behind `#if` are now listed with the condition they are
+guarded by, and an internal `extension` that carries public members is now part of the surface it
+carries. Both were missing before, so the old numbers were a saving measured against an answer
+that was too small.
 
 ## Scenario B — learn one type
 
@@ -61,11 +69,11 @@ step in practice.
 
 | Repository | Type | Files holding the surface | `api` bytes | Source bytes | Saving |
 |---|---|---:|---:|---:|---:|
-| Alamofire | `Session` | 1 | 11 744 | 85 330 | **86.3%** |
-| swift-argument-parser | `ParsableCommand` | 1 | 1 728 | 10 088 | **82.9%** |
-| swift-numerics | `Complex` | 11 | 6 983 | 48 287 | **85.6%** |
-| swift-nio | `ByteBuffer` | 22 | 60 885 | 596 934 | **89.9%** |
-| swift-syntax | `TokenSyntax` | 13 | 13 894 | 249 302 | **94.5%** |
+| Alamofire | `Session` | 1 | 13 110 | 85 330 | **84.6%** |
+| swift-argument-parser | `ParsableCommand` | 1 | 1 720 | 10 088 | **83.0%** |
+| swift-numerics | `Complex` | 11 | 6 975 | 48 287 | **85.6%** |
+| swift-nio | `ByteBuffer` | 22 | 64 385 | 596 934 | **89.2%** |
+| swift-syntax | `TokenSyntax` | 13 | 13 886 | 249 302 | **94.4%** |
 
 The saving grows with how widely a type is extended, which is also when finding the surface
 by hand is hardest.

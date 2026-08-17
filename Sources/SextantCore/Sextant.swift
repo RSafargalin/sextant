@@ -3,7 +3,7 @@ import Foundation
 /// Tool metadata: version and description.
 public enum Sextant {
     /// Tool version.
-    public static let version = "0.8.1"
+    public static let version = "0.9.0"
 
     /// Short description, used by the CLI and its help.
     public static let about =

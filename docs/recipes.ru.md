@@ -38,7 +38,7 @@ $ sextant blast Session
 ```console
 $ sextant api --type Session
 # Public API  •  declarations: 51
-## Source
+## Alamofire
 Source/Core/Session.swift
   class Session: @unchecked Sendable  — `Session` creates and manages Alamofire's `Request` types …
     static let `default`  — Shared singleton instance used by all `AF.request` APIs …
@@ -108,9 +108,9 @@ $ sextant supertypes DataRequest
 $ sextant hierarchy validate --callers --depth 2
 # call hierarchy (← callers, depth 2)
 validate(policy:errorProducer:) [instanceMethod]  Source/Features/ServerTrustEvaluation.swift:521
-  evaluate(_:forHost:) [instanceMethod]  Source/Features/ServerTrustEvaluation.swift:190
-  performDefaultValidation(forHost:) [instanceMethod]  Source/Features/ServerTrustEvaluation.swift:624
-    evaluate(_:forHost:) [instanceMethod]  Source/Features/ServerTrustEvaluation.swift:116
+  evaluate(_:forHost:) [instanceMethod]  Source/Features/ServerTrustEvaluation.swift:178  · called at Source/Features/ServerTrustEvaluation.swift:190
+  performDefaultValidation(forHost:) [instanceMethod]  Source/Features/ServerTrustEvaluation.swift:620  · called at Source/Features/ServerTrustEvaluation.swift:624
+    evaluate(_:forHost:) [instanceMethod]  Source/Features/ServerTrustEvaluation.swift:111  · called at Source/Features/ServerTrustEvaluation.swift:116
     …
 ```
 
@@ -137,12 +137,12 @@ public func cURLDescription() -> String {
 ```console
 $ sextant changed --from HEAD~5 --to HEAD
 Source/Core/Request.swift
-  − Request.func withState(perform: (State) -> Void)
+  − internal Request.func withState(perform: (State) -> Void)
 
 Source/Core/Session.swift
-  + Session.struct MutableState
-  + Session.let mutableState
-  − Session.var activeRequests: Set<Request>
+  + internal Session.struct MutableState
+  + internal Session.let mutableState
+  − internal Session.var activeRequests: Set<Request>
 ```
 
 Это не построчный дифф: объявления добавленные, удалённые и сменившие сигнатуру, с указанием
