@@ -68,6 +68,22 @@ named, rather than passed over in silence. `changed` reads the same four languag
 parsed against the flags the file is built with today. `construct` is a heuristic and knows the
 shape each language builds an object with.
 
+### What it does not read: Interface Builder
+
+`.storyboard` and `.xib` files are **not** read — not now and not later. A class, an outlet or an
+action named only from a nib is invisible: `refs` and `blast` count the references written in
+code, and a binding made in Interface Builder is not one of them.
+
+Concretely, on the reference project: 56 storyboards, 270 xibs and 376 classes bound from them —
+and **zero** classes that exist only there. So the cost is an undercount when weighing the impact
+of a change, never a confident "nobody uses this" about a class a nib instantiates. Where a nib is
+the only user, the tool will say a symbol has no references and be wrong about it; if that is your
+layout, `grep` the nibs.
+
+The reason is scope, not difficulty: in 2026 bare Interface Builder is a rare way to build an Apple
+app, and reading it would mean a second parser, a second notion of a reference and a second thing
+to keep honest ([ADR-0007](docs/adr/0007-no-interface-builder.md)).
+
 ## What it saves
 
 Measured on five public Swift packages (Alamofire, swift-argument-parser, swift-numerics,
