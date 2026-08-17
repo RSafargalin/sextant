@@ -12,7 +12,14 @@ public enum SymbolReport {
         public var showsColumns: Bool
         public var compact: Bool
         public var referenceLimit: Int
+        /// How many symbols sharing the queried name are printed. A bare name is not a symbol:
+        /// `request` on Alamofire resolves to 337 of them, and printing all 337 answers "which one
+        /// did you mean" with a bill for the context window. The rest are counted, never dropped
+        /// in silence.
+        public var symbolLimit: Int
         public var fullHint: String?
+        /// How to get the symbols that were not printed, phrased for this surface.
+        public var moreSymbolsHint: String?
         public var separatesHits: Bool
         /// Command and tool names used by the "a type has no callers" hint.
         public var referencesCommand: String
@@ -25,7 +32,9 @@ public enum SymbolReport {
             showsColumns: Bool,
             compact: Bool,
             referenceLimit: Int,
+            symbolLimit: Int = .max,
             fullHint: String?,
+            moreSymbolsHint: String? = nil,
             separatesHits: Bool,
             referencesCommand: String,
             contextCommand: String
@@ -36,17 +45,21 @@ public enum SymbolReport {
             self.showsColumns = showsColumns
             self.compact = compact
             self.referenceLimit = referenceLimit
+            self.symbolLimit = symbolLimit
             self.fullHint = fullHint
+            self.moreSymbolsHint = moreSymbolsHint
             self.separatesHits = separatesHits
             self.referencesCommand = referencesCommand
             self.contextCommand = contextCommand
         }
 
-        public static func cli(compact: Bool, referenceLimit: Int) -> Style {
+        public static func cli(compact: Bool, referenceLimit: Int, symbolLimit: Int = 10) -> Style {
             Style(
                 headerPrefix: "── ", level1: "   ", level2: "     ",
                 showsColumns: true, compact: compact, referenceLimit: referenceLimit,
+                symbolLimit: symbolLimit,
                 fullHint: compact ? "(--full — line by line, with snippets)" : nil,
+                moreSymbolsHint: "`--symbols N` shows more of them, `--json` prints them all",
                 separatesHits: true, referencesCommand: "refs", contextCommand: "context"
             )
         }
@@ -54,7 +67,12 @@ public enum SymbolReport {
         public static let mcp = Style(
             headerPrefix: "", level1: "  ", level2: "    ",
             showsColumns: false, compact: true, referenceLimit: .max,
-            fullHint: nil, separatesHits: false,
+            symbolLimit: 10,
+            fullHint: nil,
+            // No hint about narrowing: there is no way to name one of several symbols that share a
+            // name, so a suggestion here would be an instruction the tool cannot carry out.
+            moreSymbolsHint: nil,
+            separatesHits: false,
             referencesCommand: "find_references", contextCommand: "context"
         )
     }
@@ -113,7 +131,11 @@ public enum SymbolReport {
         }
 
         var lines: [String] = []
-        for hit in hits {
+        // The hits arrive sorted by how many usages each has, so a cut keeps the ones a reader is
+        // most likely to have meant. What is cut is stated with its count: an answer that shows
+        // ten of 337 symbols and says nothing is a wrong answer, not a short one.
+        let shown = style.symbolLimit >= hits.count ? hits : Array(hits.prefix(max(1, style.symbolLimit)))
+        for hit in shown {
             lines.append("\(style.headerPrefix)\(hit.name)  [\(hit.kind)]")
             if query == .definitions {
                 let locations = hit.references.isEmpty ? [hit.definition].compactMap { $0 } : hit.references
@@ -143,6 +165,15 @@ public enum SymbolReport {
                 }
             }
             if style.separatesHits { lines.append("") }
+        }
+
+        if shown.count < hits.count {
+            let hidden = hits.count - shown.count
+            let usages = hits.dropFirst(shown.count).reduce(0) { $0 + $1.references.count }
+            var line = "\(style.headerPrefix)… \(hidden) more symbol(s) named '\(symbol)', "
+                + "\(usages) usage(s) between them — shown: the \(shown.count) most used"
+            if let hint = style.moreSymbolsHint { line += " (\(hint))" }
+            lines.append(line)
         }
 
         // Types have no callers — point at usages, or an empty answer reads as "nobody uses this".
