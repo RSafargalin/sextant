@@ -103,7 +103,7 @@ bodies there is `body`.
 
 ## Status
 
-Working CLI and MCP server, version 0.8.x. 27 commands:
+Working CLI and MCP server, version 0.9.x. 27 commands:
 
 | Command | What it does | Layer |
 |---|---|---|
@@ -227,7 +227,7 @@ tap rather than homebrew-core.
 **2. Prebuilt binary from a release** — macOS universal (arm64 + x86_64), no Homebrew:
 
 ```bash
-V=0.8.1
+V=0.9.0
 curl -fsSL -O "https://github.com/RSafargalin/sextant/releases/download/v$V/sextant-$V-macos-universal.tar.gz"
 shasum -a 256 "sextant-$V-macos-universal.tar.gz"   # compare with the sha256 in the release notes
 tar -xzf "sextant-$V-macos-universal.tar.gz"

@@ -13,7 +13,51 @@ Human-readable text output is not covered — parse `--json`, not prose.
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-08-17
+
+An answer now says what it stands on. Which index store it came from and how much of the project
+that store covers; whether a number is the whole count or the part that fit; where a symbol is
+defined as opposed to where it is called. The work started as one bug — the wrong store was chosen
+on a project with agent worktrees, so every semantic answer was empty under a `fresh` label — and
+turned into a pass over every place the tool answered confidently without being able to. Forty
+defects were reproduced by running the tool, written down as tests that fail when they are fixed,
+and closed. Six public repositories and the reference project were used to check that they stay
+closed.
+
 ### Added
+
+- **`sextant store` and an explicit store policy.** A project routinely has more than one index
+  store — `swift build` writes one, an editor's indexer another, a second checkout its own — and
+  they answer the same question differently: measured on this repository, 83 references from one
+  and 34 from another, 91 from both merged. So the tool no longer chooses. With one usable store
+  nothing is asked; with several and no policy, semantic commands refuse and print what each policy
+  gives, what it does not and what it costs. `store use recency|union|coverage` records the choice
+  in `.sextant.json`; `--store-policy` overrides it for one command, `SEXTANT_STORE_POLICY` for one
+  machine. Whenever there was a choice, every answer carries the line that says how many candidates
+  there were, which are being read and why the others were not
+  ([ADR-0006](docs/adr/0006-store-policy-is-a-persons-decision.md)).
+
+- **Coverage of the opened store, in the trust label.** `[index: derivedData · 1 store(s) · fresh ·
+  covers 10337/12351 files (84%)]`. Freshness is about time, coverage is about extent, and a fresh
+  store can hold half a project: a release build compiles no test target, so every reference from a
+  test is missing from a store nothing else marked as partial. Measured on this repository, the same
+  query against two stores of one project: `covers 92%` → 74 usages in 23 files, `covers 55%` → 46
+  in 17. It is read from the units, cached against the store's own state, and costs nothing on every
+  run but the first after a build.
+
+- **A units reader for libIndexStore** (`CIndexStoreShim`, `dlopen` over a declared subset of the
+  ABI, as the libclang layer already does). IndexStoreDB answers about symbols and cannot tell "this
+  store does not cover the file" from "the file has no such symbol"; a unit answers directly — this
+  is the file it was built from. It is what makes the `coverage` policy and the label above possible.
+
+- **`api --budget <tokens>`** bounds the printed surface and the header then states what was left
+  out. There is no default: a public surface is a contract, and cutting one silently changes what
+  every existing answer says. Over MCP the budget does have a default — an agent reads the answer
+  into a context window.
+
+- **`--derived-data` and `SEXTANT_DERIVED_DATA`.** The DerivedData location was hard-coded, so a
+  project built with `xcodebuild -derivedDataPath ./build` — which every CI does — looked like a
+  project with no index at all.
 
 - `index` now states what it runs and what holds it back, and it says something different for each
   path, because the two are not equally protected. Measured with a hostile manifest and a hostile
@@ -54,6 +98,122 @@ Human-readable text output is not covered — parse `--json`, not prose.
   list, a flag that takes a value expects one instead of suggesting the next flag, and `--project`,
   `--scope` and `--index-store` complete directories while `--rules` and `--spec` complete files.
   Closes [#2](https://github.com/RSafargalin/sextant/issues/2).
+
+### Fixed
+
+- **The wrong index store was chosen on a project with nested worktrees, and every semantic answer
+  was empty.** An agent worktree lives inside the checkout, so its DerivedData passed the "inside
+  the project" test, and being rebuilt more recently it also won on freshness — after which the
+  record filter rejected every path in it as foreign. On the reference project `refs
+  AbsAccountsViewModel` returned nothing and explained it as "a closure, a local, or another kind of
+  symbol" about a class; it now returns the definition and 7 usages in 3 files. Selection applies the
+  same scope predicate the filter applies; where a foreign store is used anyway, the empty answer
+  names it instead of inventing a reason.
+
+- **A call hierarchy pointed at call sites and called them definitions.** `timestamp(ofStore:)` was
+  shown at line 48 — where it is called — while it is defined at line 25, and nothing said which of
+  the two it meant. The definition is now resolved by USR, the call site is a separate field, and a
+  symbol the index has no definition for is marked rather than given a made-up position.
+
+- **A reference written inside a macro was counted twice.** A macro records the reference at its own
+  position as well as at the real column, so every count over code wrapped in `#expect`/`#require`
+  came out high: 81 against 74 occurrences of the name on this repository. A position whose column
+  does not carry the symbol's name is dropped when another position on the same line does; a lone
+  unverified position is kept, because the name may be written in a form the check cannot see.
+
+- **`api --json` served internal members of public types.** The visibility filter was applied to the
+  top level only, so the text answer dropped them and the machine contract carried them — one
+  question, two answers. Found on Alamofire.
+
+- **Counts stopped presenting a part as the whole.** `construct` counted one position twice when a
+  line held two constructions; `--limit` rewrote the header count instead of shortening the list;
+  the internal cap of 1000 references was printed as the total and is now named (`1000 of 1265`).
+
+- **Structural search and lint.** A pattern the parser only recovered from (an unbalanced bracket)
+  answered `No matches.` with exit 0 and now fails with the reason — while a pattern that is not
+  Swift but is valid Objective-C still goes to clang. `search --limit` was accepted and ignored.
+  An exclusion that removed every result is now named. A `lint` rule whose pattern never compiled
+  was counted in the header as if it had run.
+
+- **`changed`** now sees a symbol leaving the public surface (the access level is part of the
+  compared signature), follows a renamed file instead of reporting a rewrite, and refuses to diff a
+  file that does not parse — a recovery tree reported the half it dropped as deleted symbols, which
+  is exactly the state an agent's half-finished edit leaves behind.
+
+- **Freshness and staleness.** The freshness signal walked `*.swift` only, so an edit to a `.m` or a
+  header left the label saying `fresh`. An answer that points at a deleted file now says so — a
+  deletion moves no timestamp, so the marker cannot see it. A snippet is withheld when the recorded
+  line no longer carries the symbol, instead of printing whatever text now sits there.
+
+- **Compile flags had no notion of time.** They are captured by `sextant index`; every other build
+  moves the index forward and leaves them behind, and a `-DFEATURE=1` that has since become `0`
+  yields a structural match inside code the current build does not contain. A build newer than the
+  capture is now named, with the gap. Entries for files that no longer exist are dropped when the
+  database is read — measured on this machine, two databases held 75 of 75 and 72 of 73 such entries.
+
+- **`--verify` was silent in the two directions that matter.** More semantic hits than textual ones
+  cannot be true of a name written where it is used, and it printed the pair without comment. Fewer
+  semantic than textual, with the difference sitting inside `#if` branches this build does not
+  contain, fell exactly on the wrong side of a ×3 threshold (the measured case was 1 against 3);
+  those lines are now counted and named.
+
+- **`--project` pointed at a directory containing several projects borrowed a foreign index.** A path
+  prefix is not a project boundary: `--project ~` offered the store of an unrelated app from
+  `Downloads`, covering 6% of what it called "this project". The boundary is the checkout.
+
+- **The MCP surface.** Answers carry the provenance line the CLI prints — a client logs stderr at
+  best, so the agent, the main consumer, never saw where an answer came from. `repo_map` gets the
+  index the CLI gets and names the non-Swift files missing without it. `list_implementations`
+  distinguishes an unknown symbol from one without implementations. Area tools are bounded by
+  `maxFiles` and say what they did not read. The store policy refusal reaches the answer instead of
+  the log. A `.sextant.json` edited while the server runs takes effect on the next call.
+
+- **Smaller refusals that used to pass silently:** an empty symbol, a single-dash flag spelling
+  (`-project`), a `--project` that does not exist, an unmatched `api --package`, a misspelled key or
+  policy value in `.sextant.json`. The daemon re-reads the file list per request instead of freezing
+  it for its lifetime. A package is addressed by the name in its manifest rather than by the first
+  path component, so a project that keeps packages outside `Packages/` can address them at all.
+
+- **The clang layer counted a file nobody could open as scanned**, and a byte that is not valid
+  UTF-8 shifted every offset after it, so a column and a snippet were both wrong while presented as
+  structural.
+
+### Changed
+
+These are the stability contract — CLI flags, JSON schemas, MCP tool names, exit codes — and this
+release breaks some of it, which is why the minor version moves.
+
+- **Exit codes.** Cases that used to answer 0 now fail: an unparsable structural pattern, an empty
+  symbol, a single-dash flag, a `--project` that does not exist, an `api --package` that matches
+  nothing. Semantic commands exit non-zero when several index stores are usable and no policy is
+  set.
+
+- **`--max-files` degrades instead of refusing.** `map`, `api`, `search` and `lint` used to answer
+  "more files than the limit" and nothing else; they now read the limit and name what they did not
+  (`⚠ covered 4000 of 12351 file(s)`), which changes their exit code on a large project from 1 to 0.
+  The bound is a prefix of the file list in a fixed order, so two runs cover the same files.
+
+- **`--json` shapes.** `refs`/`defs`/`callers` return an object rather than an empty array when the
+  semantic answer is empty and the textual degradation applies, so a consumer cannot read textual
+  matches as resolved ones. `blast`, `hierarchy` and `context` return `{"symbol": …, "found": false}`
+  for an unknown symbol where they used to print prose on stdout. `lint --json` carries
+  `brokenRules`; `map`/`api` summaries carry the package name from the manifest.
+
+- **Interface Builder is documented as out of scope.** `.storyboard` and `.xib` are not read and not
+  planned; a class named only from a nib is invisible. Measured on the reference project: 376 classes
+  are bound from nibs and none of them lives only there, so the cost is an undercount in impact
+  analysis rather than a false "nobody uses this"
+  ([ADR-0007](docs/adr/0007-no-interface-builder.md)).
+
+- **Benchmarks re-measured** for scenarios A and B at the same pinned commits. Every surface is
+  larger than at 0.7.0 (Alamofire 973 → 1 226 declarations) because declarations behind `#if` and
+  internal extensions carrying public members are now part of the surface; the saving band moves
+  from 79–91% to 79–90%.
+
+- A shared IndexStoreDB directory between processes was recorded as a defect and is not one:
+  measured, per-process databases are worse at every level of concurrency (4 processes: 34.4s shared
+  against 73.8s separate), answers never diverged, and nothing indicated a re-import or corruption.
+  The stand is in [docs/measurements](docs/measurements).
 
 ## [0.8.1] — 2026-08-07
 

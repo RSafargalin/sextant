@@ -103,7 +103,7 @@ swift-nio, swift-syntax) на закреплённых ревизиях. Пол�
 
 ## Статус
 
-Рабочий CLI и MCP-сервер, версия 0.8.x. 27 команд:
+Рабочий CLI и MCP-сервер, версия 0.9.x. 27 команд:
 
 | Команда | Что делает | Слой |
 |---|---|---|
@@ -229,7 +229,7 @@ homebrew-core.
 **2. Готовый бинарь из релиза** — macOS universal (arm64 + x86_64), без Homebrew:
 
 ```bash
-V=0.8.1
+V=0.9.0
 curl -fsSL -O "https://github.com/RSafargalin/sextant/releases/download/v$V/sextant-$V-macos-universal.tar.gz"
 shasum -a 256 "sextant-$V-macos-universal.tar.gz"   # сверьте с sha256 в теле релиза
 tar -xzf "sextant-$V-macos-universal.tar.gz"
