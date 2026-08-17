@@ -25,6 +25,14 @@ public struct AdoptionReport: Sendable {
     public let residue: [QueryShape: Int]
     /// Queries kept verbatim, when the caller asked for them; empty otherwise.
     public let queries: [String]
+    /// Answers of ours after which the very next navigation act was opening a file.
+    ///
+    /// It measures adjacency, not identity: the transcript is read for tool *calls*, so which file
+    /// was opened cannot be compared with which file we named. Read as "the answer was a step, not
+    /// an end" — and as the first place to look for what our answers leave out. On another tool
+    /// with the same shape of question, the same follow-up ran at 18.4 %, and four fifths of those
+    /// already had the declaration in hand and were reaching for the lines around it.
+    public var readAfterSextant: Int = 0
 
     /// Acts that sextant could have answered.
     public var navigation: Int { sextant + textSearch + fileRead }
@@ -103,21 +111,35 @@ public enum Adoption {
         }
     }
 
+    /// How many of our answers were followed straight away by opening a file.
+    ///
+    /// Counted inside one session and only when the read is the very next navigational act:
+    /// anything looser stops being about that answer. It cannot tell whether the file opened is the
+    /// file we named — the transcript records calls, not results — so it is an upper bound on
+    /// "the answer was not enough" and a lower bound on nothing.
+    public static func readsAfterAnswers(in session: [AdoptionSample]) -> Int {
+        zip(session, session.dropFirst()).count { $0.act == .sextant && $1.act == .fileRead }
+    }
+
     public static func report(forProjectRoot root: String, keepingQueries: Bool = false) -> AdoptionReport {
         let files = transcripts(forProjectRoot: root)
         var counts: [NavigationAct: Int] = [:]
         var residue: [QueryShape: Int] = [:]
         var queries: [String] = []
 
+        var readAfterSextant = 0
+
         for file in files {
-            for sample in samples(inTranscript: file, keepingQueries: keepingQueries) {
+            let session = samples(inTranscript: file, keepingQueries: keepingQueries)
+            readAfterSextant += readsAfterAnswers(in: session)
+            for sample in session {
                 counts[sample.act, default: 0] += 1
                 guard sample.act == .textSearch else { continue }
                 if let shape = sample.shape { residue[shape, default: 0] += 1 }
                 if let query = sample.query { queries.append(query) }
             }
         }
-        return AdoptionReport(
+        var report = AdoptionReport(
             sessions: files.count,
             sextant: counts[.sextant] ?? 0,
             textSearch: counts[.textSearch] ?? 0,
@@ -125,5 +147,7 @@ public enum Adoption {
             residue: residue,
             queries: queries
         )
+        report.readAfterSextant = readAfterSextant
+        return report
     }
 }

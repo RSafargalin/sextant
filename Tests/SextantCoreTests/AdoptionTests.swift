@@ -25,6 +25,28 @@ struct NavigationActTests {
         #expect(NavigationAct.of(tool: "Read", command: "/p/README.md") == .other)
     }
 
+    /// The denominator must not depend on how a client happens to run a search. Claude Code 2.1.117
+    /// stopped exposing `Grep` and `Glob` as tools on native macOS and Linux builds and started
+    /// routing both through `Bash` as the embedded `ugrep` and `bfs`. The classifier knew neither,
+    /// so those searches stopped being counted at all — and since they belong to the denominator,
+    /// sextant's share silently rose without a single query changing hands.
+    @Test("The same search weighs the same whichever binary the client runs")
+    func countsSubstitutedSearchTools() {
+        #expect(NavigationAct.of(tool: "Bash", command: "ugrep -n Store Sources/") == .textSearch)
+        #expect(NavigationAct.of(tool: "Bash", command: "/opt/vendor/ugrep -n Store .") == .textSearch)
+        #expect(NavigationAct.of(tool: "Bash", command: "bfs . -name '*.swift'") == .textSearch)
+        for tool in NavigationAct.contentSearchTools + NavigationAct.fileSearchTools {
+            #expect(NavigationAct.of(tool: "Bash", command: "\(tool) Store .") == .textSearch,
+                    "\(tool) is listed as a search tool but is not counted as one")
+        }
+
+        // And the pattern still has to come out of the command, not the directory it walks.
+        #expect(NavigationAct.searchPattern(inShellCommand: "ugrep -n Store Sources/") == "Store")
+        #expect(NavigationAct.searchPattern(inShellCommand: "bfs . -name '*.swift'") == "*.swift")
+        #expect(NavigationAct.searchPattern(inShellCommand: "bfs Sources -type f -name 'Store*.swift'")
+                == "Store*.swift")
+    }
+
     @Test("A shell search is classified by its pattern, not by the command line")
     func extractsPattern() {
         // Every command line has a slash in it, so classifying the line called every search a path.
@@ -74,6 +96,26 @@ struct AdoptionTests {
         let lines = try records.map { String(decoding: try JSONSerialization.data(withJSONObject: $0), as: UTF8.self) }
         try lines.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
         return file
+    }
+
+    /// A share counts how often the tool was reached for; it cannot say whether the answer was
+    /// enough. On a tool of the same shape, 18.4 % of symbol queries were followed by opening the
+    /// same file, and four fifths of those already held the declaration — the answers were stopping
+    /// one step short of what was wanted. Nothing in a share exposes that.
+    @Test("An answer followed straight away by opening a file is counted as a step, not an end")
+    func countsReadsAfterAnswers() throws {
+        let file = try transcript()
+        defer { try? FileManager.default.removeItem(at: file) }
+        // The fixture ends with a sextant call and then a Read — exactly the pattern.
+        #expect(Adoption.readsAfterAnswers(in: Adoption.samples(inTranscript: file)) == 1)
+
+        // A read that follows a text search is somebody else's business, and one that follows
+        // nothing at all is not a follow-up.
+        let unrelated = [AdoptionSample(act: .textSearch, shape: .identifier),
+                         AdoptionSample(act: .fileRead, shape: .path),
+                         AdoptionSample(act: .sextant, shape: nil)]
+        #expect(Adoption.readsAfterAnswers(in: unrelated) == 0)
+        #expect(Adoption.readsAfterAnswers(in: []) == 0)
     }
 
     @Test("Each kind of call is counted once, and the rest is ignored")

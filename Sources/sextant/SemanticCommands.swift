@@ -25,13 +25,24 @@ func degradeToTextual(symbol: String, arguments: [String], index: IndexStoreSet?
         return "the index holds \(foreign.count) record(s) for this name, all outside this project\(origin); "
              + "the chosen store was built from another checkout — pass `--index-store`, or rebuild this one"
     }()
+    let storePaths = resolveStorePaths(in: arguments)
+    // A store stripped of its records answers nothing to every question while still dating itself
+    // like a fresh one. Left unnamed, that arrives as "does not resolve semantically" — a confident
+    // diagnosis of the symbol for what is a fact about the store.
+    let brokenStores = storePaths.filter(StoreCandidate.lacksRecords(store:))
     guard !scan.matches.isEmpty else {
         if let foreignReason { reportError("⚠ \(symbol): \(foreignReason)") }
+        else if let broken = brokenStores.first {
+            reportError("⚠ \(symbol): the index store has units but no records (\(shorten(broken))) — "
+                      + "it resolves nothing at all; rebuild it with `sextant index`")
+        }
         if json { printNotFoundJSON(symbol: symbol, command: "query"); return 0 }
-        print("Symbol '\(symbol)' not found here\(foreignReason == nil ? " (neither in the index nor textually)" : " — see the warning above").")
+        let aside = foreignReason == nil && brokenStores.isEmpty
+            ? " (neither in the index nor textually)" : " — see the warning above"
+        print("Symbol '\(symbol)' not found here\(aside).")
         return 0
     }
-    let stale = indexIsStale(paths: resolveStorePaths(in: arguments), root: rootPath)
+    let stale = indexIsStale(paths: storePaths, root: rootPath)
     // Naming the real reason matters most where it is knowable: a symbol that exists only inside
     // a `#if` branch this build does not contain is absent from the index for that reason, and
     // "does not resolve semantically" would send the reader looking for a bug instead.
@@ -40,6 +51,9 @@ func degradeToTextual(symbol: String, arguments: [String], index: IndexStoreSet?
     let reason: String
     if let foreignReason {
         reason = foreignReason
+    } else if !brokenStores.isEmpty {
+        reason = "the index store has units but no records (\(shorten(brokenStores[0]))) — it cannot resolve "
+               + "anything, so this says nothing about the symbol; rebuild it with `sextant index`"
     } else if stale {
         reason = "the index is stale — run `sextant index`"
     } else if allConditional {
@@ -238,9 +252,28 @@ func runBody(arguments: [String]) -> Int32 {
         print("Could not extract the body of '\(symbol)': no declaration of that name on the recorded line — the file has changed since it was indexed. Rebuild the project or run `sextant index`.")
         return 0
     }
+    // Surrounding lines, on request. Measured on someone else's tool: 18.4 % of symbol queries were
+    // followed by a plain read of the same file, and in four fifths of those the body had already
+    // been delivered — the agent had the declaration and was reaching for what sits around it. The
+    // context is numbered and marked so that it can never be mistaken for part of the declaration.
+    let contextLines = optionValue("--context-lines", in: arguments).flatMap(Int.init).map { max(0, $0) } ?? 0
+    let reader = SourceLineReader()
     for body in bodies {
-        print("── \(shorten(body.file)):\(body.line)")
-        print(body.text)
+        guard contextLines > 0 else {
+            print("── \(shorten(body.file)):\(body.line)")
+            print(body.text)
+            print("")
+            continue
+        }
+        let span = body.text.components(separatedBy: "\n").count
+        let last = body.line + span - 1
+        let width = String(last + contextLines).count
+        print("── \(shorten(body.file)):\(body.line)  (±\(contextLines) lines)")
+        for number in (body.line - contextLines)...(last + contextLines) where number >= 1 {
+            guard let text = reader.rawLine(number, inFile: body.file) else { continue }
+            let gutter = String(number).leftPadded(to: width)
+            print("\(gutter) \(number >= body.line && number <= last ? "▸" : "│") \(text)")
+        }
         print("")
     }
     return 0

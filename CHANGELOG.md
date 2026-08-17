@@ -13,6 +13,36 @@ Human-readable text output is not covered — parse `--json`, not prose.
 
 ## [Unreleased]
 
+### Added
+
+- **`body --context-lines N`** — N lines on each side of the declaration, numbered, with the
+  declaration itself marked apart from its surroundings. Measured on another tool of the same shape:
+  18.4 % of symbol queries were followed by a plain read of the same file, and in four fifths of
+  those the body had already been delivered — the agent held the declaration and was reaching for
+  what sits around it.
+- **A follow-up count in `sextant adoption`** — how many of our answers were followed *next* by
+  opening a file. A share says how often the tool was reached for; this says whether the answer was
+  enough. It measures adjacency, not the same file, and says so.
+- **`sextant doctor` checks the wiring, not only itself** — the MCP registration and the adoption
+  hook: whether the binary each names exists, and whether the hook has ever recorded anything. Every
+  check before this was about the tool's own process, which is how a hook that was registered
+  nowhere passed a green check-up for ten days.
+
+### Fixed
+
+- **`ugrep` and `bfs` are counted as the searches they are.** A client that routes `Grep` and `Glob`
+  through the shell as those binaries was invisible to the adoption denominator. One list now serves
+  both the hook and the transcript reader, and the test walks the whole list.
+- **A store with units but no records is named, not blamed on the symbol.** Such a store resolves
+  nothing while dating itself as fresh, and the answer explained it as "does not resolve semantically
+  (a closure, a local, or another kind of symbol)" — a confident diagnosis of the wrong thing.
+- **A daemon stopped by SIGINT or SIGTERM removes its socket.** Ownership was already held by an
+  flock, so an orphan blocked nothing, but a socket file outliving its process claims a listener that
+  is not there.
+- **The MCP handshake answers with the revision this build implements**, instead of echoing whatever
+  the client asked for — which turned every client's guess, including revisions published after the
+  binary was compiled, into confirmation.
+
 ## [0.9.0] — 2026-08-17
 
 An answer now says what it stands on. Which index store it came from and how much of the project

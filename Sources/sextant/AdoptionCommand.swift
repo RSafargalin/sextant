@@ -53,6 +53,20 @@ func runAdoption(arguments: [String]) -> Int32 {
     ── share: \(Int((share * 100).rounded()))% of \(report.navigation) navigation acts
     """)
 
+    // A share says how often the tool was reached for. It does not say whether the answer was
+    // enough — and an answer that always needs a file opened after it is a question we answered
+    // badly, not a search we won.
+    if report.sextant > 0 {
+        let share = Double(report.readAfterSextant) / Double(report.sextant)
+        print("""
+
+        after \(report.readAfterSextant) of \(report.sextant) answers (\(Int((share * 100).rounded()))%) \
+        the next act was opening a file
+           — adjacency, not the same file: the transcript records calls, not answers. High means \
+        our answers stop one step short.
+        """)
+    }
+
     if !report.residue.isEmpty {
         print("\nwhat went past it, by shape of the query:")
         for shape in QueryShape.allCases {

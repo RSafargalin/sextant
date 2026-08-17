@@ -449,11 +449,18 @@ acknowledged as unreliable, so "Swift in the standard tier" promises nothing.
 
 **A defect this found in us.** [#1845](https://github.com/oraios/serena/issues/1845): Claude Code
 2.1.117+ on native macOS/Linux builds removed the `Grep` and `Glob` tools and routes them through
-`Bash` as the embedded `ugrep`/`bfs`. Our `NavigationAct` knows `grep, rg, ag, ack, ripgrep` and does
-not know `ugrep` or `bfs`. Measured on the installed binary: of three events (`ugrep`, `bfs`, `rg`)
-one was recorded. The **denominator** goes missing, so sextant's share looks higher than it is — and
-#39 and #40 rest on that number. One fix covers both paths: the hook and the transcript reader share
-the classifier.
+`Bash` as the embedded `ugrep`/`bfs`. Our `NavigationAct` knew `grep, rg, ag, ack, ripgrep` and did
+not know `ugrep` or `bfs`: of three events (`ugrep`, `bfs`, `rg`) fed to the installed binary, one
+was recorded. Fixed on 2026-08-17 — one list for both paths (the hook and the transcript reader),
+with a test over the whole list.
+
+> **What that measurement did NOT show, and was claimed anyway.** It was first stated that our share
+> is inflated. Checking did not bear that out: this project's transcripts contain no invocation of
+> `ugrep` or `bfs` by name, and a `grep` typed on the command line already resolves to ugrep on this
+> machine — the word in the command text stays `grep`, which the classifier always counted. So the
+> hole in the classifier was real (L4, on synthetic events) while the data loss here was not. The
+> fix stands as a guard against documented client behaviour (L2), not as a repair of a measured
+> skew.
 
 **Detectors we do not have** — each from someone else's mistake:
 
@@ -478,20 +485,32 @@ cannot do the second; our command can, because it reads whole transcripts.
 revision the client claims (defaulting to `2025-06-18`), which confirms support for something it may
 not implement.
 
-## Next up — fixes, not bets
+## Next up — done on 2026-08-17
 
-The order is strict: the first item blocks everything that rests on adoption.
+Five fixes, not bets. All five are in `main` with CI green (330 tests).
 
-1. **`ugrep` and `bfs` in the classifier**, plus a test per search-tool name. Without it the adoption
-   share is biased in our favour, and #39/#40 would be built on an inflated number.
-2. **The three detectors above**: a signal to the daemon, an odd file, the semantic layer dying
-   mid-query.
-3. **`--context-lines N` on `body`/`context`** and **a fallback metric in `adoption`** — both out of
-   the #1491 data.
-4. **An honest MCP revision** instead of echoing the client's.
-5. **`doctor` checks the whole chain** — today it prints "✅ ready — sextant mcp will work" without
-   checking either the MCP registration in the client or the hook: exactly the class of defect that
-   left the hook unnoticed for ten days.
+1. **`ugrep` and `bfs` in the classifier** — one list of search tools for both paths instead of two
+   copies drifting apart in silence; the test iterates the whole list, so a new name cannot be added
+   without one.
+2. **Three detectors** (`SurvivalTests`): a daemon killed by SIGINT or SIGTERM leaves no socket —
+   there was no handler at all before; an unreadable, huge or oddly named file does not bring the
+   walk down; a store with no records is named as broken. The third found a real defect: the
+   degradation was loud, but **the reason given was false** — "does not resolve semantically (a
+   closure, a local…)" about a store whose records had been deleted, which was meanwhile reported as
+   `fresh`. Such a store is now recognised and named.
+3. **`--context-lines N` on `body`** and **a fallback metric in `adoption`**. The flag went to `body`
+   only, not to `context` as promised: in the #1491 data the follow-up is about the surroundings of
+   the **declaration** (in 80.8 % of cases the body was already in the answer), while the same ±N
+   lines around every reference would multiply the largest answer by (2N+1) on an unverified hunch.
+   The metric counts how many of our answers were followed **next** by opening a file, and says
+   plainly that this is adjacency rather than the same file: a transcript records calls, not answers.
+4. **An honest MCP revision** — the server answers with its own (`MCPProtocol.revision`) rather than
+   the client's, and logs the difference. A client naming a revision published after this build used
+   to be told it was supported.
+5. **`doctor` checks the chain** — the MCP registration and the hook: whether the binary named exists
+   and whether the hook has ever written. Exactly the class that left the hook unnoticed for ten
+   days. The logic lives in `ClientWiring`, with the settings-file list as a parameter, or the test
+   would depend on the machine it runs on.
 
 ## Candidates after 0.9.0 — by axis, not by number
 

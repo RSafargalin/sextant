@@ -62,7 +62,7 @@ struct MCPProtocolTests {
 
         let initialize = (responses[0]["result"] as? [String: Any]) ?? [:]
         #expect((initialize["serverInfo"] as? [String: Any])?["name"] as? String == "sextant")
-        #expect(initialize["protocolVersion"] as? String == "2025-06-18")
+        #expect(initialize["protocolVersion"] as? String == MCPProtocol.revision)
         let instructions = initialize["instructions"] as? String ?? ""
         for name in MCPTools.names { #expect(instructions.contains(name), "initialize does not mention \(name)") }
 
@@ -71,6 +71,22 @@ struct MCPProtocolTests {
 
         #expect(responses[2]["result"] != nil)
         #expect((responses[3]["error"] as? [String: Any])?["code"] as? Int == -32601)
+    }
+
+    /// The handshake is a claim about what this build speaks. Echoing the client's request turned
+    /// every guess into a confirmation — a client naming a revision published after this binary was
+    /// compiled would be told it was supported, and would then be free to use it.
+    @Test("The revision answered is the one this build implements, not the one asked for")
+    func answersItsOwnRevision() throws {
+        #expect(FileManager.default.fileExists(atPath: binary.path), "binary not built — run `swift build`")
+
+        let responses = try session([
+            ["jsonrpc": "2.0", "id": 1, "method": "initialize",
+             "params": ["protocolVersion": "2099-01-01", "capabilities": [String: Any]()]]
+        ])
+        let initialize = (responses.first?["result"] as? [String: Any]) ?? [:]
+        #expect(initialize["protocolVersion"] as? String == MCPProtocol.revision,
+                "the server confirmed a revision it was merely told about")
     }
 
     @Test("Every declared tool is handled by the dispatcher")

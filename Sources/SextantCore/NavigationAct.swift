@@ -28,14 +28,24 @@ public enum NavigationAct: String, Sendable, Codable {
         }
     }
 
-    /// A shell command counts as a text search when it runs a search tool over the tree. `find`
-    /// and `ls` are navigation of the file system, not of code, and stay out of the denominator:
-    /// sextant does not replace them, so counting them would invent a gap it cannot close.
+    /// Shell tools that search file *contents* — what the `Grep` tool becomes when a client routes
+    /// it through `Bash`.
+    static let contentSearchTools = ["grep", "rg", "ag", "ack", "ripgrep", "ugrep"]
+
+    /// The shell tool that finds files *by name*. It is here for one reason: it is what the `Glob`
+    /// tool becomes on native macOS and Linux builds, and `Glob` is counted above. The same act has
+    /// to weigh the same whichever way the client delivers it, or the metric moves on its own every
+    /// time a client changes how it runs a search — which is how this list came to be wrong.
+    ///
+    /// Bare `find` and `ls` stay out, as they always have: typed by hand they are as often about
+    /// build output as about code, and sextant does not replace them.
+    static let fileSearchTools = ["bfs"]
+
+    /// A shell command counts as a text search when it runs one of those tools over the tree.
     private static func ofShell(_ command: String) -> NavigationAct {
-        let searchTools = ["grep", "rg", "ag", "ack", "ripgrep"]
         for piece in command.split(whereSeparator: { " |;&\n".contains($0) }) {
             let word = piece.split(separator: "/").last.map(String.init) ?? String(piece)
-            if searchTools.contains(word) { return .textSearch }
+            if contentSearchTools.contains(word) || fileSearchTools.contains(word) { return .textSearch }
             if word == "sextant" { return .sextant }
         }
         return .other
@@ -48,10 +58,22 @@ public enum NavigationAct: String, Sendable, Codable {
     /// every search a path and the metric said nothing about what was being looked for.
     public static func searchPattern(inShellCommand command: String) -> String? {
         let words = ShellWords.split(command)
-        guard let start = words.firstIndex(where: { word in
-            let name = word.split(separator: "/").last.map(String.init) ?? word
-            return ["grep", "rg", "ag", "ack", "ripgrep"].contains(name)
-        }) else { return nil }
+        let name = { (word: String) in word.split(separator: "/").last.map(String.init) ?? word }
+        guard let start = words.firstIndex(where: { contentSearchTools.contains(name($0))
+                                                    || fileSearchTools.contains(name($0)) }) else { return nil }
+
+        // A file search names its pattern in `-name`; its first bare word is the directory to walk,
+        // which would otherwise be reported as the thing being looked for.
+        if fileSearchTools.contains(name(words[start])) {
+            var index = words.index(after: start)
+            while index < words.endIndex {
+                if ["-name", "-iname", "-path", "-ipath", "-wholename"].contains(words[index]) {
+                    return index + 1 < words.endIndex ? words[index + 1] : nil
+                }
+                index += 1
+            }
+            return nil
+        }
 
         var index = words.index(after: start)
         while index < words.endIndex {

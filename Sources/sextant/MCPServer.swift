@@ -170,9 +170,16 @@ private func handleMCP(method: String, id: Any?, params: [String: Any], context:
     let index = context.index
     switch method {
     case "initialize":
-        let version = (params["protocolVersion"] as? String) ?? "2025-06-18"
+        // The revision this server actually implements — not the one the client hoped for. Echoing
+        // the request confirmed support for anything a client cared to name, including revisions
+        // written after this build; the protocol expects the server's own version back when it
+        // cannot meet the request, and the client decides whether to go on.
+        let requested = params["protocolVersion"] as? String
+        if let requested, requested != MCPProtocol.revision {
+            logMCP("client asked for protocol \(requested); answering with \(MCPProtocol.revision), which is what this build implements.")
+        }
         resultMCP(id: id, [
-            "protocolVersion": version,
+            "protocolVersion": MCPProtocol.revision,
             "capabilities": ["tools": [String: Any](), "resources": [String: Any](), "completions": [String: Any]()],
             "serverInfo": ["name": "sextant", "version": Sextant.version],
             "instructions": MCPTools.instructions()

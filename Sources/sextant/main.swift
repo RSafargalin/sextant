@@ -177,6 +177,14 @@ final class SourceLineReader {
     private var cache: [String: [String]] = [:]
 
     func line(_ number: Int, inFile path: String) -> String? {
+        guard let raw = rawLine(number, inFile: path) else { return nil }
+        let trimmed = raw.trimmingCharacters(in: .whitespaces)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// The line as it is written, indentation included. A snippet is trimmed because it is quoted
+    /// inside a sentence; an excerpt is not, because its shape is part of what is being read.
+    func rawLine(_ number: Int, inFile path: String) -> String? {
         let lines: [String]
         if let cached = cache[path] {
             lines = cached
@@ -186,8 +194,13 @@ final class SourceLineReader {
             cache[path] = lines
         }
         guard number >= 1, number <= lines.count else { return nil }
-        let trimmed = lines[number - 1].trimmingCharacters(in: .whitespaces)
-        return trimmed.isEmpty ? nil : trimmed
+        return lines[number - 1]
+    }
+}
+
+extension String {
+    func leftPadded(to width: Int) -> String {
+        count >= width ? self : String(repeating: " ", count: width - count) + self
     }
 }
 

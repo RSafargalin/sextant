@@ -24,6 +24,24 @@ func runServe(arguments: [String]) -> Int32 {
     }
     defer { DaemonSocket.stop(listener) }
 
+    // Ctrl-C and `kill` are how a daemon actually ends, and neither runs the `defer` above. The
+    // socket file left behind is not fatal — ownership is held by an flock, so the next daemon
+    // takes over and a client meeting the orphan is refused at once and runs the command itself —
+    // but a file that outlives its process is a lie about what is listening. The handler runs on a
+    // dispatch queue rather than in signal context, so it may touch the file system; the default
+    // action has to be ignored first, or the process dies before the source ever fires.
+    let interrupts = [SIGINT, SIGTERM].map { number -> DispatchSourceSignal in
+        signal(number, SIG_IGN)
+        let source = DispatchSource.makeSignalSource(signal: number)
+        source.setEventHandler {
+            DaemonSocket.stop(listener)
+            exit(0)
+        }
+        source.resume()
+        return source
+    }
+    defer { interrupts.forEach { $0.cancel() } }
+
     // The index is opened once — that is the entire reason the daemon exists.
     let warm = openIndex(arguments, label: "serve") != nil
     reportError("sextant serve: listening on \(socketPath) · project \(project) · index \(warm ? "warm" : "unavailable (build it later with `sextant index`)")")

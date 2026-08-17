@@ -46,6 +46,19 @@ public enum AdoptionLog {
         close(descriptor)
     }
 
+    /// When the hook last wrote anything, for any project. A hook that is registered and silent is
+    /// the failure this answers: it looks installed and records nothing.
+    public static func lastRecordedAt() -> Date? {
+        guard let contents = try? String(contentsOf: path(), encoding: .utf8) else { return nil }
+        for line in contents.split(separator: "\n").reversed() {
+            guard let data = line.data(using: .utf8),
+                  let entry = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let stamp = entry["ts"] as? Int else { continue }
+            return Date(timeIntervalSince1970: TimeInterval(stamp))
+        }
+        return nil
+    }
+
     /// Reads back what was logged for one project.
     public static func report(forProjectRoot root: String) -> AdoptionReport {
         guard let contents = try? String(contentsOf: path(), encoding: .utf8) else {

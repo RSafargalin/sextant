@@ -46,6 +46,29 @@ public struct StoreCandidate: Sendable, Equatable {
             return total + ((try? FileManager.default.contentsOfDirectory(atPath: units))?.count ?? 0)
         }
     }
+
+    /// Whether the store is structurally incapable of answering: it has units, so it looks built
+    /// and dates itself like a fresh one, but the records those units point at are gone.
+    ///
+    /// This is not a hypothetical shape. A build interrupted mid-write, a cache pruner that walks
+    /// `records` because it is the larger directory, a partially copied store — each leaves exactly
+    /// this. What makes it worth naming is the answer it produces: every lookup resolves to nothing,
+    /// which reads as "this symbol is unused" unless the tool says otherwise.
+    public static func lacksRecords(store path: String) -> Bool {
+        let store = URL(fileURLWithPath: path, isDirectory: true)
+        guard let versions = try? FileManager.default.contentsOfDirectory(atPath: store.path) else { return false }
+        var sawUnits = false
+        for version in versions where version.hasPrefix("v") {
+            let units = store.appendingPathComponent("\(version)/units").path
+            let records = store.appendingPathComponent("\(version)/records").path
+            let unitCount = (try? FileManager.default.contentsOfDirectory(atPath: units))?.count ?? 0
+            guard unitCount > 0 else { continue }
+            sawUnits = true
+            // A record directory is a tree of two-character shards; anything inside it counts.
+            if ((try? FileManager.default.contentsOfDirectory(atPath: records))?.count ?? 0) > 0 { return false }
+        }
+        return sawUnits
+    }
 }
 
 /// What to do when a project has more than one usable index store.

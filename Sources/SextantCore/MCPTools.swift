@@ -1,5 +1,14 @@
 import Foundation
 
+/// The one revision of the Model Context Protocol this build implements.
+///
+/// It is a claim, so it is written down in one place and answered with as it stands. The server
+/// used to reply with whatever revision the client asked for, which made every client's guess come
+/// back as confirmation — including a revision published after this binary was compiled.
+public enum MCPProtocol {
+    public static let revision = "2025-06-18"
+}
+
 /// The MCP tool contract: names, descriptions, and input JSON Schema. It lives in Core because
 /// this is the stable surface the agent sees; it is covered by a test.
 public enum MCPTools {

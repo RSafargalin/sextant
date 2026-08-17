@@ -227,6 +227,36 @@ func runDoctor(arguments: [String]) -> Int32 {
     InstallationCheck.report(binaries: InstallationCheck.binaries(inPath: path),
                              running: launchURL().path).forEach { print($0) }
 
+    // The half of the setup that lives outside this process. Everything above can be perfect while
+    // no client is wired to any of it — which is exactly how the hook shipped, sat in no settings
+    // file for ten days, and was never missed by a check-up that only ever asked about itself.
+    if let mcp = ClientWiring.mcpRegistration(projectRoot: root) {
+        if mcp.binaryExists {
+            print("✅ MCP registered in \(mcp.source) → \(shorten(mcp.binary))")
+        } else {
+            print("❌ MCP registered in \(mcp.source) → \(mcp.binary), which is not an executable file")
+            print("   the client starts nothing and says nothing — re-register: `sextant init --force`")
+            ok = false
+        }
+    } else {
+        print("· MCP not registered for this project — `sextant init` adds it to .mcp.json")
+    }
+
+    if let hook = ClientWiring.hookRegistration(projectRoot: root) {
+        if !hook.binaryExists {
+            print("❌ adoption hook in \(hook.source) → \(hook.binary), which is not an executable file")
+            print("   it records nothing while looking installed — `sextant hook --install` prints the right snippet")
+            ok = false
+        } else if let last = AdoptionLog.lastRecordedAt() {
+            print("✅ adoption hook in \(hook.source) → \(shorten(hook.binary)), last wrote \(StoreSelection.stamp(last))")
+        } else {
+            print("⚠ adoption hook in \(hook.source) → \(shorten(hook.binary)), but nothing has ever been recorded")
+            print("   the entry may sit in a file this client does not read — check with `sextant adoption`")
+        }
+    } else {
+        print("· adoption hook not installed (optional) — `sextant hook --install` prints the snippet")
+    }
+
     print(ok ? "\n✅ ready — `sextant mcp` will work (semantics and structure)" : "\n❌ there are problems — see above")
     return ok ? 0 : 1
 }

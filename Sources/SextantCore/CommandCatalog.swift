@@ -52,6 +52,8 @@ public enum CommandCatalog {
     static let exclude = FlagSpec("--exclude", takesValue: true, "glob to leave out; repeatable, replaces the config list")
     static let includeTests = FlagSpec("--include-tests", "include test files")
     static let limit = FlagSpec("--limit", takesValue: true, "how many entries to show")
+    static let contextLines = FlagSpec("--context-lines", takesValue: true,
+                                       "lines of surrounding source around the declaration (default 0)")
     static let fullPaths = FlagSpec("--full-paths", "full paths instead of shortened ones")
     static let full = FlagSpec("--full", "line by line, with snippets")
     static let compact = FlagSpec("--compact", "compact: a histogram by file")
@@ -146,7 +148,9 @@ public enum CommandCatalog {
         CommandSpec(name: "blast", argument: "<symbol>", summary: "impact analysis: what a change would touch",
                     group: "Semantics (index store)", flags: [project, indexStore, indexLib, storePolicyFlag, derivedData, reindex, json]),
         CommandSpec(name: "body", argument: "<symbol>", summary: "full text of a declaration (signature and body)",
-                    group: "Semantics (index store)", flags: [project, indexStore, indexLib, storePolicyFlag, derivedData, reindex, limit, json]),
+                    group: "Semantics (index store)",
+                    flags: [project, indexStore, indexLib, storePolicyFlag, derivedData, reindex, limit, contextLines, json],
+                    details: ["`--context-lines N` adds N lines on each side, marked apart from the declaration."]),
         CommandSpec(name: "construct", argument: "<type>", summary: "construction and injection sites of a type",
                     group: "Semantics (index store)", flags: [project, indexStore, indexLib, storePolicyFlag, derivedData, reindex, limit, json],
                     details: ["A `Type(` heuristic over usages — not exact semantics."]),
