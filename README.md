@@ -103,7 +103,7 @@ bodies there is `body`.
 
 ## Status
 
-Working CLI and MCP server, version 0.8.x. 25 commands:
+Working CLI and MCP server, version 0.8.x. 27 commands:
 
 | Command | What it does | Layer |
 |---|---|---|
@@ -155,6 +155,7 @@ nothing at all.
 is. `--budget <tokens>` bounds it when you want that, and the header then states what was left out
 (`⚠ truncated: 1384 file(s) with 13778 declaration(s) left out by --budget 6000 tok`). Over MCP the
 budget does have a default — an agent reads the answer into a context window.
+
 ### Which index store answers
 
 A project routinely has more than one index store: `swift build` writes one, an editor's own
