@@ -11,7 +11,7 @@ import Foundation
 /// Cellar/sextant/<version>/…`, and the versioned path breaks on `brew upgrade`. The stable
 /// symlink in bin survives the upgrade, so that is what gets written; only a relative launch
 /// path is resolved.
-private func executablePath() -> String {
+func executablePath() -> String {
     let standardized = launchURL().standardizedFileURL
     // Resolve symlinks only outside a bin directory (for example a launch through .build or a
     // personal symlink); a stable bin symlink is left as it is.

@@ -33,7 +33,11 @@ func runHook(arguments: [String]) -> Int32 {
 }
 
 private func printHookInstallation() -> Int32 {
-    let binary = CommandLine.arguments.first.map { URL(fileURLWithPath: $0).standardizedFileURL.path } ?? "sextant"
+    // The same resolver `init` uses for the MCP registration. argv[0] is not it: launched through
+    // PATH it is the bare name `sextant`, which resolves against the current directory — so the
+    // snippet named a file that does not exist (`/Users/…/tea/sextant hook` when run in tea), and
+    // a hook that names a missing binary records nothing while looking installed.
+    let binary = executablePath()
     print("""
     Add this to .claude/settings.json (or the user-level settings) to record navigation live:
 
