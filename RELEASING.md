@@ -16,6 +16,12 @@ they are easy to forget between releases.
     Sources/SextantCore/Sextant.swift README.md README.ru.md docs/benchmarks.md docs/benchmarks.ru.md
   ```
 
+- The Claude Code plugin in [plugins/sextant](plugins/sextant) is **not** in that list, on
+  purpose. It registers the server and installs no binary, so a version equal to the tool's would
+  claim a correspondence that does not exist — a user on plugin 1.2.0 may be running any sextant
+  Homebrew gave them. Bump `plugins/sextant/.claude-plugin/plugin.json` when the plugin directory
+  changes, and leave it alone in a release that does not touch it.
+
 - `main` must be green in CI. The release workflow runs the tests again, but discovering a
   failure after tagging means burning a tag.
 

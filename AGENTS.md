@@ -46,6 +46,10 @@ difference from bypassing it by habit.
   `main.swift` were untestable.
 - `Tests/SextantCoreTests` — behavioural tests, plus a fixture package under
   `Tests/Fixtures/IndexFixture` used to exercise a real IndexStoreDB.
+- `plugins/sextant` — the Claude Code plugin: MCP registration, the adoption hook, a skill and a
+  command. It ships no code of its own beyond two launcher scripts, and it must not restate the
+  MCP tool list — `MCPTools.definitions()` is that list, and the skill describes when to ask
+  rather than what exists. `.claude-plugin/marketplace.json` at the root is what serves it.
 
 ## The stability contract
 

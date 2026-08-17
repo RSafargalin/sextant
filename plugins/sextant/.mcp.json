@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "sextant": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/scripts/mcp-server.sh",
+      "args": ["${CLAUDE_PROJECT_DIR}"]
+    }
+  }
+}

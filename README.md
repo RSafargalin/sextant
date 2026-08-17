@@ -314,9 +314,37 @@ files) and `changed` (symbol-level git diff).
 Tools honour `.sextant.json` (budget, scope, rules) exactly as the CLI does. The tool list in
 `initialize` is generated from the contract, so it cannot drift from the actual set.
 
-The easiest way in is one command at the project root. It creates `.sextant.json`, registers
-the server in `.mcp.json` (any servers already there are preserved) and tells you what to do
-next:
+### As a Claude Code plugin
+
+Two commands inside Claude Code, and the wiring is done for every project you open:
+
+```
+/plugin marketplace add RSafargalin/sextant
+/plugin install sextant@sextant
+```
+
+The plugin registers the MCP server, a skill that says when to ask the index instead of grepping,
+and `/sextant:setup` — a command that runs `doctor` and offers to build an index if there is none.
+
+It does **not** install the binary: that is Homebrew's job, above. Installed without it, the
+server exits with a message naming the missing binary rather than failing silently. The server is
+started for every project, Swift or not; in a repository with no sources the tools say so.
+
+The plugin also registers a `PreToolUse` hook that runs `sextant hook` — the live half of the
+adoption metric, ~30 ms per tool call. It appends a timestamp, a hash of the project root, the
+kind of act and the shape of the query to `~/Library/Caches/sextant/adoption.jsonl`: never the
+query, the command, the path or the project, and nothing is sent anywhere. Uninstall the plugin
+to stop it; delete the file to erase it.
+
+Both manifests live in this repository —
+[.claude-plugin/marketplace.json](.claude-plugin/marketplace.json) and
+[plugins/sextant](plugins/sextant) — so `/plugin marketplace update` picks up changes.
+
+### By hand
+
+Without the plugin, or for another client, one command at the project root does the same wiring
+and a little more: it creates `.sextant.json`, registers the server in `.mcp.json` (any servers
+already there are preserved) and tells you what to do next:
 
 ```bash
 sextant init

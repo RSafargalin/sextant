@@ -1,0 +1,14 @@
+{
+  "name": "sextant",
+  "displayName": "sextant",
+  "version": "0.1.0",
+  "description": "Structured access to a Swift, Objective-C, C or C++ codebase instead of grep: definitions, references, callers, impact of a change — read out of the compiler's index store.",
+  "author": {
+    "name": "Ruslan Safargalin",
+    "url": "https://github.com/RSafargalin"
+  },
+  "homepage": "https://github.com/RSafargalin/sextant",
+  "repository": "https://github.com/RSafargalin/sextant",
+  "license": "Apache-2.0",
+  "keywords": ["swift", "objective-c", "c", "c++", "code-navigation", "index-store", "macos"]
+}

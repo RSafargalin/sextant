@@ -253,6 +253,12 @@ func runDoctor(arguments: [String]) -> Int32 {
             print("⚠ adoption hook in \(hook.source) → \(shorten(hook.binary)), but nothing has ever been recorded")
             print("   the entry may sit in a file this client does not read — check with `sextant adoption`")
         }
+    } else if let last = AdoptionLog.lastRecordedAt() {
+        // The search covers settings files, and the Claude Code plugin registers the hook outside
+        // them. Reporting "not installed" there would be the same silent wrongness the check exists
+        // to catch, so the log itself is the fallback witness: it is written by nothing else.
+        print("· adoption hook not in a settings file, but the log was written \(StoreSelection.stamp(last))")
+        print("   the plugin registers one of its own — `sextant adoption` reads what it recorded")
     } else {
         print("· adoption hook not installed (optional) — `sextant hook --install` prints the snippet")
     }
