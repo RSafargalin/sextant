@@ -507,6 +507,22 @@ injection graph (`@Environment`/`@EnvironmentObject` — a symbol reachable only
 environment); `@available` and the deployment target (what is freed or broken by raising the minimum
 iOS); a symbol's test coverage (which public symbols no test target mentions).
 
+Four more answers belong here, each assembled from parts we already have:
+
+- **`api --from <ref> --to <ref>` — a diff of the public surface with a semver verdict.** `changed`
+  can compare revisions but reports every symbol rather than the contract; `api` cannot compare at
+  all. For a library author, "what am I breaking with this release" is the question before a
+  release. LSP has no notion of "a module's contract between two revisions".
+- **`review <range>` — the impact of a whole PR rather than one symbol:** how many symbols are
+  touched, the combined blast, how many of them are public, which have no tests, which targets are
+  affected. A composition of `changed` + `blast` + `api` + target boundaries — and exactly the
+  artefact a human reviewer wants. This is axis 4 in concrete form, without the product-frame
+  conversation.
+- **An import graph and cycles between targets** — the architectural check that feeds module
+  extraction.
+- **Owners inside the blast radius** — `git blame` over the use sites: "these two people should see
+  this change". `git` is already at hand; `blame` is used nowhere.
+
 **Axis 2. The reality of Xcode — the only real moat.** A workspace of several projects, several
 schemes and configurations at once, the target as a first-class notion ("which targets does this
 change break"). None of these notions exist in LSP. The prerequisite is a spike: run Serena on the
@@ -526,6 +542,47 @@ dead public surface, forbidden imports and module boundaries as a PR check. Half
 exists: `golden` (semantic regressions against a spec) and `bench`. It makes the tool useful to a
 team rather than only to an agent — and that is a conversation about the product frame, not an
 evening's task.
+
+**Axis 5. Optimisation — by measurement, not by feel.**
+
+- **Warming the daemon on a build event.** Re-importing after a rebuild costs ~2.6s, and it is
+  "masked by the daemon" only when the daemon is already alive *and* the query arrives afterwards.
+  The daemon could watch the store and re-import ahead of time, so freshness comes free rather than
+  at the expense of the first query.
+- **An in-memory `name→[USR]` index (#6)** — the one unstarted item of Iter 5. It was moved into the
+  daemon and forgotten there; the daemon now exists.
+- **A verdict instead of a dump.** The last line of an impact answer should be a conclusion, not a
+  list: "12 sites in 2 targets, 1 test covers it, the public contract does not change". Cheaper than
+  the context compiler (#16) and aimed at the same spend — the first delivery, which the measurement
+  named as the real one.
+
+**Axis 6. Detectors for our own mistakes.** We add a detector for every defect that escaped; these
+are the classes that still have none:
+
+- **Property tests for reference counting.** There have been at least four counting bugs: double
+  counting through macro expansion, `#if` branches, a position not carrying the name, and an
+  internal cap presented as the total. It is our worst class, and it is guarded only by pointed
+  tests. What it needs are invariants over randomly generated sources: the number of positions
+  equals the number of references, no position falls outside the file, dedup is idempotent.
+- **A load test for the daemon** — twenty concurrent clients. We have just fixed thread-pool
+  starvation; the class is live and the test is missing.
+- **Golden on a real repository**, not only on a fixture: a spec over one of the public projects
+  catches silent semantic regressions on live code, which a fixture cannot.
+- **Name ambiguity** — what we do when a name belongs to several USRs, and how an agent picks
+  stably. No handling was found in the report (L1, needs a read of the code).
+
+**Axis 7. Small honesty and process.**
+
+- **Every refusal names the next command** — in places this is already true ("build the index:
+  `sextant index`"), but not as a rule with a test behind it.
+- **`--explain`** — the decision trail: which store, why, what coverage, what was left out.
+  Provenance is one line today; the full trail serves both trust and debugging.
+- **Byte-stable output on a repeat** — dedup and deterministic order (#13) were built for the
+  model's prompt cache, but nothing locks in that they stay that way.
+- **The ledger mechanism in AGENTS.md** — `withKnownIssue` (green while the defect lives, failing
+  the moment it is fixed) closed 24 defects and is documented nowhere as the standard practice.
+- **`adoption` closes the loop on #39** — it can propose which tool description to change, based on
+  the shapes of the queries that went past us.
 
 ## Backlog — waiting on circumstances, not on work
 
