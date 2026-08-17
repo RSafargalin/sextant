@@ -13,6 +13,23 @@ public enum IndexBuild {
         ["build", "--enable-index-store"] + (buildTests ? ["--build-tests"] : [])
     }
 
+    /// What to say when the store a build just produced holds none of the project's tests.
+    ///
+    /// On the SwiftPM path this is a flag the user passed. On the Xcode path it is a property of
+    /// the scheme, and the obvious remedy does not work: `xcodebuild build-for-testing` builds the
+    /// test targets and writes **no index store at all** — measured on Xcode 26 against
+    /// Alamofire's own project, twice, where a plain `build` of the same scheme wrote one. What
+    /// does work is the scheme's Build action: with the test target in it, a plain build indexes
+    /// 87 of 98 files and answers 504 references where the scheme's default 43 files answer 25.
+    public static func missingTestsNote(uncoveredTests: Int, isXcode: Bool) -> String? {
+        guard uncoveredTests > 0 else { return nil }
+        let remedy = isXcode
+            ? "Xcode indexes what the scheme's BUILD action builds — `build-for-testing` writes no index store at all. Add the test targets to the scheme's Build action, or pass `--scheme <one that builds them>`."
+            : "Build them in: drop `--no-tests`."
+        return "⚠ \(uncoveredTests) test file(s) are outside this index — a reference written in a test "
+            + "is missing from every answer.\n   " + remedy
+    }
+
     public struct Package: Sendable, Equatable {
         public let reference: UmbrellaManifest.PackageReference
         public let macOSVersion: String?

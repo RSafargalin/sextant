@@ -778,8 +778,20 @@ to `Session` where the package holds **504 in 33 files**. The coverage line had 
 the test targets are built by default (`--no-tests` opts out, the build costs 44 s against 80 s
 there), and the coverage line now names the test files a store was not built from.
 
-The Xcode path still has the same hole — `index --app` builds the scheme, not its tests, and closing
-it needs `xcodebuild build-for-testing` and a decision about the destination.
+The Xcode path has the same hole, and the obvious way to close it does not exist. Measured on
+`Alamofire.xcodeproj` under Xcode 26, twice: `xcodebuild build-for-testing` builds the test targets
+and writes **no index store at all**, while a plain `build` of the same scheme writes one. Passing
+`-enableThreadSanitizer NO` changes nothing (the scheme still builds its `Variant-TSan`), and
+building a test target directly with `-target` fails. What does work is the scheme's Build action:
+with the test target in it, a plain build covers 87 of 98 files and answers **504** references where
+the scheme's default covers 43 and answers 25 — the same number sourcekit-lsp and SwiftPM-with-tests
+give. So `index` now measures the store it just produced and says when the tests are not in it,
+naming that remedy; it cannot supply the tests itself.
+
+One measurement error worth recording, since it nearly became a conclusion: a build through
+`-project` writes to a *different* DerivedData directory than the same build through `-workspace`,
+and the first "no index store" reading was taken from the wrong one. The finding above survived the
+correction; the habit of checking `WorkspacePath` before believing an absence is what saved it.
 
 **What this changes.** The moat is where the first spike could not look: an Xcode project, which is
 what an iOS codebase is. The freshness story is the opposite — for an agent that edits and asks in

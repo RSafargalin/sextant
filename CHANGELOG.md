@@ -38,6 +38,17 @@ Human-readable text output is not covered — parse `--json`, not prose.
 
 ### Fixed
 
+- **`sextant index` says when the store it just built holds none of the project's tests.** The
+  SwiftPM path builds them; the Xcode path cannot be fixed the same way, and this is measured rather
+  than assumed: `xcodebuild build-for-testing` builds the test targets and writes **no index store at
+  all** — twice on Alamofire's own project under Xcode 26, where a plain `build` of the same scheme
+  wrote one. What works is the scheme: with a test target in its Build action, a plain build covers
+  87 of 98 files and answers 504 references where the scheme's default covers 43 and answers 25. So
+  the build now measures its own result and names the remedy instead of leaving a partial index to be
+  discovered in an answer. The same check on the SwiftPM path points at `--no-tests`.
+- **A build that indexed nothing says why.** An incremental Xcode build compiles nothing, so it
+  writes no index units, and `index --app` reported `build succeeded, but no DerivedData index was
+  found` with nothing about the cause. It now names it: `xcodebuild clean`, then build again.
 - **`sextant index` builds the test targets, and an answer that misses them says so.** The build ran
   `swift build --enable-index-store` without `--build-tests`, so no usage written in a test existed
   for any semantic command. Measured on Alamofire at `0455bfb`: the store covered 43 of 98 files and

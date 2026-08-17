@@ -27,6 +27,26 @@ struct IndexBuildTests {
         #expect(IndexBuild.swiftBuildArguments(buildTests: false) == ["build", "--enable-index-store"])
     }
 
+    /// The Xcode path cannot be fixed the way the SwiftPM one was: `xcodebuild build-for-testing`
+    /// builds the test targets and writes no index store at all — measured twice on Alamofire's own
+    /// project under Xcode 26, where a plain `build` of the same scheme wrote one. So the remedy
+    /// named here is the scheme's Build action, which was measured to work: 87 of 98 files covered
+    /// and 504 references where the scheme's default gives 43 files and 25.
+    @Test("A build that indexed no tests says so, and the remedy differs per build system")
+    func missingTestsAreNamedWithTheRemedy() throws {
+        let xcode = try #require(IndexBuild.missingTestsNote(uncoveredTests: 44, isXcode: true))
+        #expect(xcode.contains("44 test file(s)"))
+        #expect(xcode.contains("Build action"))
+        #expect(xcode.contains("build-for-testing writes no index store") || xcode.contains("writes no index store"))
+
+        let package = try #require(IndexBuild.missingTestsNote(uncoveredTests: 3, isXcode: false))
+        #expect(package.contains("--no-tests"))
+        #expect(!package.contains("scheme"))
+
+        // Nothing missing, nothing said.
+        #expect(IndexBuild.missingTestsNote(uncoveredTests: 0, isXcode: true) == nil)
+    }
+
     @Test("Test files the store was not built from are named in the coverage line")
     func coverageNamesMissingTests() {
         let partial = StoreCoverage.Result(covered: 43, total: 98, foreign: 0, uncoveredTests: 44)
