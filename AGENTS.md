@@ -8,13 +8,35 @@ breaking something invisible.
 ## Build and verify
 
 ```bash
-swift build && swift test          # 131 tests
+swift build && swift test          # 330 tests
 make ci                            # build + test + self-lint — run this before committing
 swift test --filter "<suite name>" # one suite
 ```
 
 `make lint` runs sextant on its own sources with `sextant-rules.json`. The tool is dogfooded:
 if a change makes `lint` noisy on this repository, that is a finding about the change.
+
+## How a change lands
+
+Every change goes through a branch and a pull request — maintainer changes included. `main` is
+protected: it takes no direct pushes, and a pull request merges only once CI is green on it.
+
+```bash
+git switch -c fix/what-it-fixes
+# … work, `make ci` …
+git push -u origin HEAD && gh pr create
+```
+
+The rule is written here because it was broken here. Five commits were pushed straight to `main`
+in one session, the last of them a change across twenty-one files, on the strength of a "commit
+straight to main" that had been said once about a one-line release chore. Nothing broke, and that
+is not the point: a green local `make ci` is a predictor, while CI on a pull request is a gate, and
+a twenty-one-file change with no reviewable unit is not reviewable in principle.
+
+The protection is what makes this a rule rather than a resolution. It applies to administrators
+too — otherwise it would guard against everyone except the account that actually pushes here. An
+emergency turns it off in the repository settings, deliberately and visibly, which is the whole
+difference from bypassing it by habit.
 
 ## Layout
 

@@ -21,6 +21,18 @@ The semantic layer additionally needs `libIndexStore.dylib`, which sextant locat
 what to do about it. The syntactic commands (`map`, `api`, `search`, `lint`, `changed`) work
 without any of it.
 
+## Every change goes through a pull request
+
+Including the maintainer's. `main` is protected: it accepts no direct pushes, and a pull request
+merges only once CI is green on it. Administrators are not exempt — a gate that the account doing
+the pushing can walk around is a note, not a gate.
+
+```bash
+git switch -c fix/what-it-fixes
+# … work …
+git push -u origin HEAD && gh pr create
+```
+
 ## Before you open a pull request
 
 ```bash
