@@ -451,6 +451,11 @@ from "later" to "not us":
 - **"Negative space"** (#43) stays listed but is **not taken** without an answer to "how are we
   better than [Periphery](https://swiftpackageindex.com/peripheryapp/periphery)" — seven years old,
   on the same index store.
+- **Interface Builder** (`.storyboard`, `.xib`) — not read, and not planned. A class named only from
+  a nib is invisible to the tool, which the documentation states outright rather than leaving to be
+  discovered. Measured on the reference project: 56 storyboards, 270 xibs, 376 classes bound from
+  them — and **zero** classes that live only there, so the loss is an undercount in impact analysis,
+  never a false "nobody uses this". See [ADR-0007](adr/0007-no-interface-builder.md).
 
 What replaces them is depth: an index has an identity (platform, configuration, targets, coverage),
 a store is chosen by coverage rather than mtime, `#if` is reported alongside semantic results
