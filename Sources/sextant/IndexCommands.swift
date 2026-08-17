@@ -125,6 +125,18 @@ func saveCompileDatabase(_ captured: [CompileCommand], forRoot root: String, emp
     print("compile database: \(merged.count) file(s)" + (missing.isEmpty ? "" : ", \(missing.count) without flags"))
 }
 
+/// What the build just produced, measured rather than assumed: a store that holds none of the
+/// project's tests answers every question about them with silence, and the build is the last moment
+/// at which that can still be said out loud.
+func reportTestCoverage(ofStore store: String, root: String, arguments: [String], isXcode: Bool) {
+    let coverage = StoreCoverage.measure(store: store,
+                                         projectRoot: URL(fileURLWithPath: root, isDirectory: true),
+                                         libraryPath: optionValue("--index-lib", in: arguments))
+    guard let note = IndexBuild.missingTestsNote(uncoveredTests: coverage?.uncoveredTests ?? 0,
+                                                 isXcode: isXcode) else { return }
+    reportError(note)
+}
+
 // MARK: - doctor (setup self-check)
 
 func runDoctor(arguments: [String]) -> Int32 {
@@ -297,6 +309,7 @@ func runXcodeIndex(root: URL, arguments: [String]) -> Int32 {
     if let store = DerivedDataLocator.dataStore(forProjectRoot: root.path,
                                                 derivedData: derivedDataRoot(in: arguments)) {
         print("\nindex ready (app, DerivedData): \(store)")
+        reportTestCoverage(ofStore: store, root: root.path, arguments: arguments, isXcode: true)
         // Xcode writes no build graph with arguments in it, so the flags are read from the log
         // the build just produced — the one place they are stated in full.
         let log = (try? String(contentsOf: logFile, encoding: .utf8)) ?? ""
@@ -304,7 +317,14 @@ func runXcodeIndex(root: URL, arguments: [String]) -> Int32 {
                             emptyReason: "no compile commands in the xcodebuild log (an incremental build compiles nothing — try `xcodebuild clean` first)")
         return 0
     }
-    print("\nbuild succeeded, but no DerivedData index was found (check WorkspacePath).")
+    // An incremental build compiles nothing, and a build that compiles nothing writes no index
+    // units — so a deleted or never-written store stays absent while the build reports success.
+    // Observed on an Xcode project whose products were already built: `build succeeded` and no
+    // store, twice in a row, with nothing in the output to say why.
+    print("\nbuild succeeded, but no DerivedData index was found.")
+    print("An incremental build compiles nothing and therefore indexes nothing: `xcodebuild clean`,")
+    print("then run this again. If it is not that, the store is elsewhere — check WorkspacePath in")
+    print("DerivedData, or pass --derived-data / --index-store.")
     return 1
 }
 
@@ -343,6 +363,7 @@ func runIndex(arguments: [String]) -> Int32 {
             return 1
         }
         print("\nindex ready: \(store)")
+        reportTestCoverage(ofStore: store, root: rootPath, arguments: arguments, isXcode: false)
         captureCompileDatabase(root: rootPath, stores: [store])
         return 0
     }
@@ -386,6 +407,7 @@ func runIndex(arguments: [String]) -> Int32 {
         return 1
     }
     print("\nindex ready (single store): \(store)")
+    reportTestCoverage(ofStore: store, root: rootPath, arguments: arguments, isXcode: false)
     captureCompileDatabase(root: rootPath, stores: [store])
     return 0
 }
