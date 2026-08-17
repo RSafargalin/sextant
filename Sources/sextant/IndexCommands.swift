@@ -334,8 +334,9 @@ func runIndex(arguments: [String]) -> Int32 {
     // A single package is built directly — IndexStoreLocator will find its .build store.
     if packageDirs.count == 1 {
         let package = packageDirs[0]
-        print("▶ swift build --enable-index-store: \(package.lastPathComponent)")
-        let status = Command.status("/usr/bin/env", ["swift", "build", "--enable-index-store"], in: package)
+        let build = IndexBuild.swiftBuildArguments(buildTests: !arguments.contains("--no-tests"))
+        print("▶ swift \(build.joined(separator: " ")): \(package.lastPathComponent)")
+        let status = Command.status("/usr/bin/env", ["swift"] + build, in: package)
         guard status == 0,
               let store = IndexStoreLocator.candidates(under: root).first(where: \.isUsable)?.path else {
             reportError("sextant index: build failed (code \(status)).")
@@ -377,8 +378,9 @@ func runIndex(arguments: [String]) -> Int32 {
         return 1
     }
 
-    print("▶ umbrella build (\(packages.count) packages, one pass): swift build --enable-index-store")
-    let status = Command.status("/usr/bin/env", ["swift", "build", "--enable-index-store"], in: umbrella)
+    let build = IndexBuild.swiftBuildArguments(buildTests: !arguments.contains("--no-tests"))
+    print("▶ umbrella build (\(packages.count) packages, one pass): swift \(build.joined(separator: " "))")
+    let status = Command.status("/usr/bin/env", ["swift"] + build, in: umbrella)
     guard status == 0, let store = IndexBuild.umbrellaStorePath(forRoot: rootPath) else {
         reportError("sextant index: umbrella build failed (code \(status)).")
         return 1

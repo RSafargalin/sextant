@@ -18,6 +18,25 @@ struct IndexBuildTests {
         #expect(IndexBuild.umbrellaPlan(packages: []).outcome == .noManifests)
     }
 
+    /// A build without the test targets writes a store that answers about the library alone.
+    /// Measured on Alamofire: 43 of 98 files covered, `refs Session` 25 against the 504 the whole
+    /// package holds. The usages are in the code either way — only the index forgets them.
+    @Test("The index build takes the test targets in by default")
+    func swiftBuildIncludesTests() {
+        #expect(IndexBuild.swiftBuildArguments() == ["build", "--enable-index-store", "--build-tests"])
+        #expect(IndexBuild.swiftBuildArguments(buildTests: false) == ["build", "--enable-index-store"])
+    }
+
+    @Test("Test files the store was not built from are named in the coverage line")
+    func coverageNamesMissingTests() {
+        let partial = StoreCoverage.Result(covered: 43, total: 98, foreign: 0, uncoveredTests: 44)
+        #expect(partial.summary == "43/98 files (44%), 44 test file(s) outside it")
+
+        // Nothing missing, nothing said: a line that always warns is a line nobody reads.
+        let whole = StoreCoverage.Result(covered: 98, total: 98, foreign: 0, uncoveredTests: 0)
+        #expect(whole.summary == "98/98 files (100%)")
+    }
+
     @Test("Skipped manifests are reported even on a REFUSAL — the verdict came from an incomplete set")
     func skippedReportedOnRefusals() {
         let duplicates = IndexBuild.umbrellaPlan(

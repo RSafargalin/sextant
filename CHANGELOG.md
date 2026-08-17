@@ -38,6 +38,15 @@ Human-readable text output is not covered — parse `--json`, not prose.
 
 ### Fixed
 
+- **`sextant index` builds the test targets, and an answer that misses them says so.** The build ran
+  `swift build --enable-index-store` without `--build-tests`, so no usage written in a test existed
+  for any semantic command. Measured on Alamofire at `0455bfb`: the store covered 43 of 98 files and
+  `refs Session` answered **25**; with the test targets built it covers 87 of 98 and answers **504 in
+  33 files** — the same 504 sourcekit-lsp reports once its own index has caught up. An earlier
+  measurement recorded the two tools as agreeing at 25; they agreed because both were partial at that
+  moment. The build costs about twice as long (44s against 80s there), paid once per build against an
+  undercount paid on every query; `--no-tests` opts out, and the coverage line now names the test
+  files a store was not built from.
 - **A name shared by hundreds of symbols is answered, not dumped.** `callers request` on Alamofire
   printed 337 symbol blocks — an answer whose size is the reason this tool exists. The ten most used
   are printed now, and the rest are stated: how many symbols were left out and how many usages they
