@@ -400,10 +400,15 @@ happen in the world first, so it stays here instead of being raised at every pla
 - **The second half of the П3 gate: `brew install` on a machine with no Xcode toolchain.** The
   first half (a machine with one) is done. This half needs a machine that does not exist yet in
   reach; without it, the claim "installs without a toolchain" stays at L1.
-- **Adoption data.** `sextant adoption` and the `PreToolUse` hook are shipped and recording. The
-  signal only means anything after roughly a week of ordinary sessions — until then #39 (tool
-  descriptions) and #40 (intercepting grep) have no ground to stand on, because both are changes
-  aimed at a behaviour that has not been measured yet.
+- **Adoption data.** `sextant adoption` reads transcripts and works. The `PreToolUse` hook was
+  written and released but **never connected**: it sat in no `settings.json` for ten days, and the
+  snippet `hook --install` printed named a binary that does not exist (built from `argv[0]`, which
+  is the bare name under `PATH`), so pasting it would have installed a hook that silently records
+  nothing. Both are fixed as of 2026-08-17 — the snippet resolves the running binary, and the hook
+  is registered at user level, verified by a record appearing in the log. The clock therefore starts
+  now: the signal only means anything after roughly a week of ordinary sessions, and until then #39
+  (tool descriptions) and #40 (intercepting grep) have no ground to stand on, because both are
+  changes aimed at a behaviour that has not been measured yet.
 - **Linux.** Never planned either way. The semantic layer is IndexStoreDB (portable), the Swift
   structural layer is SwiftSyntax (portable), the C-family layer is libclang loaded by `dlopen`
   (portable in principle, but the path search is written for Xcode). The open question is not
