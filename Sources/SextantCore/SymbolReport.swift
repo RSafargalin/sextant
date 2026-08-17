@@ -149,7 +149,12 @@ public enum SymbolReport {
                 if style.compact {
                     // A histogram by file without snippets — exact, every occurrence is grouped.
                     let histogram = ReferenceHistogram.byFile(hit.references) { path($0.path) }
-                    lines.append("\(style.level1)\(label): \(counted(hit)) in \(histogram.count) file(s)")
+                    // The file count is over the occurrences in hand, and the index layer caps
+                    // those. Measured on swift-syntax: `TokenSyntax` has 2518 references, of which
+                    // 1000 are collected and fall in 59 files, while the whole set touches 116 —
+                    // so "in 59 file(s)" beside a capped count reads as a total it is not.
+                    let scope = hit.totalReferences > hit.references.count ? " of those shown" : ""
+                    lines.append("\(style.level1)\(label): \(counted(hit)) in \(histogram.count) file(s)\(scope)")
                     for entry in histogram {
                         lines.append("\(style.level2)\(entry.file): \(entry.lines.map(String.init).joined(separator: ", "))")
                     }

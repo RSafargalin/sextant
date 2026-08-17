@@ -799,6 +799,63 @@ the same breath, an editor's index is the better source and ours is stale by con
 now measured rather than assumed, and the second one is an argument for the daemon watching the store
 and for a rebuild trigger, not for defending the current behaviour.
 
+### Four more measurements against the same two tools (2026-08-18)
+
+The spike answered "which of us is right" on one symbol. These four ask it at a size where a
+coincidence cannot survive, and price what each side costs. Same stand; corpora are Alamofire at
+`0455bfb` and swift-syntax at `60e8eb8`, both built with their tests. Scripts:
+[docs/measurements](measurements/).
+
+**1. Agreement on a sample, not on an anecdote — 100%.** Fifty names taken mechanically from the
+repository map (sorted, thinned), asked of both. Thirty-three were comparable and **all thirty-three
+matched exactly**, reference for reference. The seventeen skipped are names behind which sextant
+finds more than one symbol: pitting "which of the seven `request`s" against a single LSP position
+would have been a comparison rigged in our favour. sourcekit-lsp was asked at the definition sextant
+reports — the position handed to it for free, which is the bias that runs against us, since an agent
+has to find that position first.
+
+**2. Scale, and what an early answer is worth.** On swift-syntax (758 files), references to
+`TokenSyntax` settled at **2518** — the same number sextant gives — but only after 107 s, through
+0 → 852 → 2337 → 2362 → 2366 → 2428 → 2518. Every reading before that is partial and looks
+finished. This is the second time in two days that an early LSP answer nearly became a fact; the
+probe now polls until the count stops moving.
+
+The price of the two indexes on that package:
+
+| | sextant | sourcekit-lsp |
+|---|---|---|
+| Preparing it | `swift build --build-tests` 4 min 09 s | background index 107 s |
+| Disk | **43 MB** | **551 MB** |
+| Second time round | 1.27 s (the build is a no-op) | the index-build stays |
+| Warm answer | ~2.4 s, a CLI process | 0.02 s, a live server |
+
+The build time is not ours to charge: a developer runs it anyway, and the index is its by-product.
+The 551 MB is not theirs to avoid — it is a second compilation of the same package, for indexing
+alone.
+
+**3. The same answer, in bytes.** 2518 references to `TokenSyntax`:
+
+| | bytes |
+|---|---:|
+| sourcekit-lsp, raw JSON | **873 371** |
+| sextant `--full --limit 3000` (all 2518, line by line) | 114 589 |
+| sextant `--json` (the machine contract) | 359 655 |
+| sextant grouped by file (the default when piped) | **8 792** |
+
+Line for line it is 7.6× less, because LSP repeats an absolute `file://` URI and a full range object
+per location. Against the default answer it is 99×, because a histogram carries the same knowledge
+as "file: lines". What LSP needs before it can be asked at all — a file and an offset — is not in
+these numbers; modelling an agent's path would be inventing one.
+
+**4. What the tools cost before they answer anything.** Tool definitions sit in every request:
+sextant **13 tools, 6 353 bytes**; Serena **21 tools, 26 215 bytes**. Four times more, and not
+bloat — Serena buys symbol-level editing, memories and onboarding with it, which we deliberately do
+not have.
+
+**And a defect of ours the measurement found.** `usages: 1000 of 2518 (internal cap) in 59 file(s)`
+counted the files among the thousand collected, while the whole set touches 116. The number was
+right and read as something else; it now says `in 59 file(s) of those shown`.
+
 ## Canonical queries (the system's acceptance test)
 
 Each of these must be answerable without a text grep:

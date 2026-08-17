@@ -11,6 +11,9 @@ instead of from scratch.
 | `sourcekit-lsp-probe.py` | What sourcekit-lsp answers about a symbol, how long it waits for its own index, and whether it reads the store the build already wrote | [roadmap](../roadmap.md#sourcekit-lsp-and-serena-on-the-same-questions--spike-2026-08-17) |
 | `serena-probe.py` | The same questions through Serena's MCP tools | same |
 | `staleness-probe.py` | After an edit nobody built: who answers about the code as it is now, and who says it cannot | [roadmap](../roadmap.md#the-xcode-project-and-the-unbuilt-edit--spike-2026-08-18) |
+| `agreement-probe.py` | Do the two tools return the same references across a sample of symbols, not just one | [roadmap](../roadmap.md#four-more-measurements-against-the-same-two-tools-2026-08-18) |
+| `settled-probe.py` | What the editor's answer becomes once its background index stops growing | same |
+| `payload-probe.py` | How many bytes the same answer costs in each tool's own shape | same |
 | `lsp-client.py` | Shared: a minimal LSP client over stdio, imported by the probes | — |
 
 The two probes take a project and, for the LSP one, a file, a symbol spelling and which occurrence

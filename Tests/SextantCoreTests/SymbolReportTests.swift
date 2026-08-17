@@ -84,6 +84,27 @@ struct SymbolReportTests {
         #expect(tail?.contains("enclosing type") != true)
     }
 
+    /// A capped answer counts the files it has, not the files there are. Measured on swift-syntax:
+    /// 2518 references to `TokenSyntax`, of which 1000 are collected and land in 59 files, while
+    /// the whole set touches 116 — so the file count beside a cap needs to say which set it is over.
+    @Test("A capped count says its file count is over what was shown")
+    func cappedCountScopesItsFileCount() {
+        let capped = SymbolHit(
+            name: "TokenSyntax", usr: "s:TokenSyntax", kind: "struct",
+            definition: location("/repo/Sources/TokenSyntax.swift", 23, 15, isDefinition: true),
+            references: [location("/repo/Sources/A.swift", 1), location("/repo/Sources/B.swift", 2)],
+            totalReferences: 2518
+        )
+        let lines = render([capped], query: .references, style: .cli(compact: true, referenceLimit: 40),
+                           symbol: "TokenSyntax").lines
+        #expect(lines.contains { $0.contains("2 of 2518 (internal cap) in 2 file(s) of those shown") })
+
+        // Nothing capped, nothing qualified.
+        let whole = render([hit], query: .references, style: .cli(compact: true, referenceLimit: 40)).lines
+        #expect(whole.contains { $0.contains("usages: 3 in 2 file(s)") })
+        #expect(!whole.contains { $0.contains("of those shown") })
+    }
+
     @Test("MCP prints neither columns nor the CLI hint about --full")
     func mcpStyleOmitsCLIDetails() {
         let lines = render([hit], query: .references, style: .mcp).lines
