@@ -114,6 +114,14 @@ class LSP:
             "uri": self.uri(relative), "languageId": language, "version": 1, "text": text}})
         return text
 
+    def change(self, relative, text, version=2):
+        """The whole document, the way an editor sends it after a save."""
+        self.notify("textDocument/didChange", {
+            "textDocument": {"uri": self.uri(relative), "version": version},
+            "contentChanges": [{"text": text}],
+        })
+        self.notify("textDocument/didSave", {"textDocument": {"uri": self.uri(relative)}, "text": text})
+
     def close(self):
         self.request("shutdown", {}, timeout=10)
         self.notify("exit", {})

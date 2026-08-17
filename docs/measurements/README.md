@@ -10,7 +10,8 @@ instead of from scratch.
 | `shared-index-database-control.py` | The control for it: the same concurrency with one database per process | same |
 | `sourcekit-lsp-probe.py` | What sourcekit-lsp answers about a symbol, how long it waits for its own index, and whether it reads the store the build already wrote | [roadmap](../roadmap.md#sourcekit-lsp-and-serena-on-the-same-questions--spike-2026-08-17) |
 | `serena-probe.py` | The same questions through Serena's MCP tools | same |
-| `lsp-client.py` | Shared: a minimal LSP client over stdio, imported by the probe | — |
+| `staleness-probe.py` | After an edit nobody built: who answers about the code as it is now, and who says it cannot | [roadmap](../roadmap.md#the-xcode-project-and-the-unbuilt-edit--spike-2026-08-18) |
+| `lsp-client.py` | Shared: a minimal LSP client over stdio, imported by the probes | — |
 
 The two probes take a project and, for the LSP one, a file, a symbol spelling and which occurrence
 of it to stand on:

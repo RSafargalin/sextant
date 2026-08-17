@@ -685,11 +685,16 @@ Alamofire the first answer came after **36.8 s**, and `.build` went from 140 MB 
 extra 365 MB is its index build. sextant answered the same question off the store the ordinary
 build had already written: **1.3 s** for a cold process, 0.9 s warm.
 
-**2. On the question both can answer, they agree.** References of `Session` in Alamofire:
-**25 usages in 7 files** from sourcekit-lsp, the same 25 in the same 7 from sextant. Serena, asked
-for the same thing, returns **23 in 7** and 8017 bytes with surrounding source; the two missing
-entries are references sharing an enclosing symbol with another, which its answer groups by
-referencing *symbol* rather than by location (that reading is inference, not measured).
+**2. On the question both can answer, they agree — once they are reading the same code.** This
+point was first written as "25 usages in 7 files from both", and that was wrong: the two agreed
+because both were partial at the moment of asking. sourcekit-lsp had been indexing for 37 seconds
+and had reached the library; sextant was reading a store built without the test targets. Asked again
+when the background index had finished, sourcekit-lsp answers **504 in 33 files**, most of it tests.
+sextant answers the same 504 in the same 33 once `index` builds the tests — which it now does; see
+[the tests missing from our own index](#the-xcode-project-and-the-unbuilt-edit--spike-2026-08-18)
+below. Serena, asked for the same symbol, returned **23 in 7** and 8017 bytes with surrounding
+source against sextant's 587; its answer groups by referencing *symbol* rather than by location,
+which is why two entries collapse (that reading is inference, not measured).
 
 **3. LSP is addressed by position; an agent has a name.** The same Objective-C method, asked from
 its declaration in the header, returns **empty** — references and `prepareCallHierarchy` both.
@@ -733,6 +738,54 @@ Not tested, and each would move the conclusion: an `.xcodeproj` or workspace rat
 package; a repository large enough for the index build to take tens of minutes; C and C++;
 diagnostics after an edit, which sextant does not do at all; Serena's memories and onboarding, which
 are not navigation; and token counts rather than bytes.
+
+### The Xcode project and the unbuilt edit — spike (2026-08-18)
+
+The two questions the first spike left open, and the one it got wrong. Same stand as above; the
+Xcode case is a checkout of Alamofire at `0455bfb` with `Package.swift` removed, so the SwiftPM path
+cannot stand in for the Xcode one. `Alamofire.xcodeproj` has ten targets across five platforms and
+no shared schemes.
+
+**1. On a bare `.xcodeproj`, sourcekit-lsp answers nothing.** No references within 180 s and none
+when asked again warm; `implementation`, `prepareCallHierarchy` and `workspace/symbol` all empty; no
+`index-build` directory created at all. The only non-empty reply was `definition`, which returned the
+position the cursor was already on. The reason is not a defect: without a package manifest there are
+no compile arguments, and the build server that would supply them — `xcode-build-server` — is a
+separate install that the `swift-lsp` plugin neither ships nor configures. It was not installed here,
+and **that is the untested half**: with it configured the answer would probably be different, and
+"probably" is not a measurement.
+
+sextant on the same checkout: `sextant index --app` picked the scheme itself, built with
+`COMPILER_INDEX_STORE_ENABLE` in **25.6 s**, and `refs Session` then answered in **1.8 s** — the same
+25 in 7 files the SwiftPM checkout gave at that time. Before that, `doctor` said `no index store
+found` and named the command. This is the axis where the difference is not a matter of degree.
+
+**2. After an edit that has not been built, we are the ones who are wrong.** A new function using
+`Session` was appended to a built package and the file saved, with no rebuild. sourcekit-lsp, in one
+run, reflected it immediately: 27 references instead of 25, the new symbol found by
+`workspace/symbol` in 0.0 s. sextant answered 25, marked the answer `⚠ STALE`, and on the new symbol
+degraded to a textual match saying "the index is stale — run `sextant index`". Honest, and wrong.
+
+The same run repeated on a fresh clone behaved differently: the server did **not** see the new symbol
+within 300 s and kept answering 25. So its advantage here is real but not dependable — which is worth
+knowing before either tool's freshness is described as a property rather than a tendency.
+
+**3. What the second question uncovered instead: our own index was missing the tests.** `sextant
+index` ran `swift build --enable-index-store` without `--build-tests`, so no usage written in a test
+existed for any semantic command. On Alamofire that is 43 of 98 files covered and **25** references
+to `Session` where the package holds **504 in 33 files**. The coverage line had been printing
+`covers 43/98 files (44%)` all along; it reads as "partial", not as "every test is missing". Fixed:
+the test targets are built by default (`--no-tests` opts out, the build costs 44 s against 80 s
+there), and the coverage line now names the test files a store was not built from.
+
+The Xcode path still has the same hole — `index --app` builds the scheme, not its tests, and closing
+it needs `xcodebuild build-for-testing` and a decision about the destination.
+
+**What this changes.** The moat is where the first spike could not look: an Xcode project, which is
+what an iOS codebase is. The freshness story is the opposite — for an agent that edits and asks in
+the same breath, an editor's index is the better source and ours is stale by construction. Both are
+now measured rather than assumed, and the second one is an argument for the daemon watching the store
+and for a rebuild trigger, not for defending the current behaviour.
 
 ## Canonical queries (the system's acceptance test)
 
