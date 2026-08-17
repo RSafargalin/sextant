@@ -215,6 +215,7 @@ public enum StoreSelection {
             let why = candidate.rejection.map { " — \($0)" }
                 ?? (chosenPaths.contains(candidate.path) ? "" : " — \(leftOutReason(candidate, chosen: chosen, policy: policy))")
             lines.append("   \(mark) \(shorten(candidate.path))  [\(facts)]\(why)")
+            if let writer = writer(ofPath: candidate.path) { lines.append("            \(writer)") }
             if showOrigin, let origin = candidate.origin { lines.append("            built from \(shorten(origin))") }
         }
         return lines
@@ -233,6 +234,7 @@ public enum StoreSelection {
         for candidate in candidates.filter(\.isUsable)
             .sorted(by: { ($0.modified ?? .distantPast) > ($1.modified ?? .distantPast) }) {
             lines.append("   \(shorten(candidate.path))  [\(describe(candidate))]")
+            if let writer = writer(ofPath: candidate.path) { lines.append("      \(writer)") }
             if let origin = candidate.origin { lines.append("      built from \(shorten(origin))") }
         }
         lines.append("")
@@ -269,6 +271,17 @@ public enum StoreSelection {
 
     /// The facts about one store, in the order a reader needs them: what it covers of this project
     /// first, because that is what decides whether it can answer, and only then its size and age.
+    /// Who writes a store, where the path says so. Two paths under one `.build` look
+    /// interchangeable, and one of them belongs to an editor: sourcekit-lsp keeps its own index
+    /// under `index-build` and fills it in the background, so it covers what it has prepared
+    /// rather than what was built. Nothing is decided here — the reader making the choice is told
+    /// which store is theirs and which one an editor keeps for itself.
+    public static func writer(ofPath path: String) -> String? {
+        if path.contains("/.build/index-build/") { return "sourcekit-lsp's own index, filled in the background" }
+        if path.contains("/Index.noindex/DataStore") { return "Xcode's own index" }
+        return nil
+    }
+
     static func describe(_ candidate: StoreCandidate) -> String {
         var parts: [String] = []
         if let coverage = candidate.coverage { parts.append("covers \(coverage.summary)") }

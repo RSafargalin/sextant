@@ -38,6 +38,18 @@ Human-readable text output is not covered — parse `--json`, not prose.
 
 ### Fixed
 
+- **A name shared by hundreds of symbols is answered, not dumped.** `callers request` on Alamofire
+  printed 337 symbol blocks — an answer whose size is the reason this tool exists. The ten most used
+  are printed now, and the rest are stated: how many symbols were left out and how many usages they
+  hold between them, with `--symbols N` for more and `--json` for all of them. MCP is capped the
+  same way and offers no advice on narrowing, because there is no way to name one of several symbols
+  that share a name — a gap this makes visible instead of papering over.
+- **A store an editor keeps for itself is named as one.** Installing the `swift-lsp` plugin gives
+  every project a second index store under `.build/index-build`, and the comparison that asks for a
+  store policy showed two interchangeable-looking paths. Each candidate that belongs to sourcekit-lsp
+  or to Xcode now says so. The choice is still the reader's — see
+  [ADR-0006](docs/adr/0006-store-policy-is-a-persons-decision.md), where the editor's store held more
+  units and covered half as many files.
 - **`ugrep` and `bfs` are counted as the searches they are.** A client that routes `Grep` and `Glob`
   through the shell as those binaries was invisible to the adoption denominator. One list now serves
   both the hook and the transcript reader, and the test walks the whole list.

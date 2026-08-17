@@ -69,4 +69,19 @@ struct StoreSelectionTests {
         let releaseStamp = try #require(IndexFreshness.timestamp(ofStore: release))
         #expect(debugStamp > releaseStamp)
     }
+
+    /// Installing the `swift-lsp` plugin gives every project a second store, and the two paths
+    /// under one `.build` look interchangeable while one of them belongs to an editor. Measured on
+    /// this repository (ADR-0006): the editor's store held more units and covered half as many
+    /// files. Whoever chooses the policy has to be told which is which.
+    @Test("A store an editor keeps for itself is named as one")
+    func namesTheWriterOfAForeignStore() {
+        #expect(StoreSelection.writer(ofPath: "/repo/.build/index-build/x86_64-apple-macosx/debug/index/store")
+                == "sourcekit-lsp's own index, filled in the background")
+        #expect(StoreSelection.writer(ofPath: "/Users/x/Library/Developer/Xcode/DerivedData/App-abc/Index.noindex/DataStore")
+                == "Xcode's own index")
+        // An ordinary build's store gets no label: the reader's own build needs no explanation,
+        // and a line under every candidate would bury the one that does.
+        #expect(StoreSelection.writer(ofPath: "/repo/.build/x86_64-apple-macosx/debug/index/store") == nil)
+    }
 }

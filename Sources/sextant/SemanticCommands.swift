@@ -155,13 +155,14 @@ func runSemantic(_ query: SymbolQuery, arguments: [String]) -> Int32 {
     let fullPaths = arguments.contains("--full-paths")
     let format: (String) -> String = { fullPaths ? $0 : shorten($0) }
     let limit = max(0, optionValue("--limit", in: arguments).flatMap(Int.init) ?? 40)
+    let symbolLimit = max(1, optionValue("--symbols", in: arguments).flatMap(Int.init) ?? 10)
     let reader = SourceLineReader()
 
     let rendering = SymbolReport.lookup(
         symbol: symbol,
         hits: ordered,
         query: query,
-        style: .cli(compact: isCompact(arguments), referenceLimit: limit),
+        style: .cli(compact: isCompact(arguments), referenceLimit: limit, symbolLimit: symbolLimit),
         path: format,
         snippet: { reader.line($0.line, inFile: $0.path) }
     )

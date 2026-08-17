@@ -41,6 +41,49 @@ struct SymbolReportTests {
         #expect(lines.contains { $0.contains("A.swift:10:1") })   // the CLI shows columns
     }
 
+    /// A bare name is not a symbol. `request` on Alamofire resolves to 337 of them, and every one
+    /// of them used to be printed — an answer whose size is the reason the tool exists.
+    @Test("Many symbols sharing a name: the most used are printed, the rest are counted")
+    func manySymbolsAreCappedAndCounted() {
+        let hits = (1...25).map { index in
+            SymbolHit(name: "request(_:)", usr: "s:request\(index)", kind: "instanceMethod",
+                      definition: location("/repo/Sources/File\(index).swift", index, 1, isDefinition: true),
+                      references: Array(repeating: location("/repo/Sources/Use.swift", index), count: 26 - index))
+        }
+        let lines = render(hits, query: .references, style: .cli(compact: true, referenceLimit: 40),
+                           symbol: "request").lines
+
+        #expect(lines.filter { $0.hasPrefix("── request(_:)") }.count == 10)
+        let tail = try? #require(lines.first { $0.contains("more symbol") })
+        #expect(tail?.contains("15 more symbol(s) named 'request'") == true)
+        // The symbols left out carry usages, and the count of those is the part a reader needs:
+        // "10 shown" without it reads as if the rest were empty.
+        #expect(tail?.contains("120 usage(s) between them") == true)
+        #expect(tail?.contains("--json") == true)
+    }
+
+    @Test("One symbol per name: nothing is capped and nothing is said about a cap")
+    func singleSymbolIsNotAnnotated() {
+        let lines = render([hit], query: .references, style: .cli(compact: true, referenceLimit: 40)).lines
+        #expect(!lines.contains { $0.contains("more symbol") })
+    }
+
+    /// MCP gets the same cap and no advice: there is no way to name one of several symbols that
+    /// share a name, so a hint would be an instruction the tool cannot carry out.
+    @Test("MCP caps the same way and suggests nothing it cannot do")
+    func mcpCapsWithoutFalseAdvice() {
+        let hits = (1...12).map { index in
+            SymbolHit(name: "request(_:)", usr: "s:request\(index)", kind: "instanceMethod",
+                      definition: location("/repo/Sources/File\(index).swift", index, 1, isDefinition: true),
+                      references: [location("/repo/Sources/Use.swift", index)])
+        }
+        let lines = render(hits, query: .references, style: .mcp, symbol: "request").lines
+        let tail = lines.first { $0.contains("more symbol") }
+        #expect(tail?.contains("2 more symbol(s)") == true)
+        #expect(tail?.contains("--json") != true)
+        #expect(tail?.contains("enclosing type") != true)
+    }
+
     @Test("MCP prints neither columns nor the CLI hint about --full")
     func mcpStyleOmitsCLIDetails() {
         let lines = render([hit], query: .references, style: .mcp).lines
