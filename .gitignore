@@ -14,7 +14,10 @@ field-reports/
 # path to the binary (which differs between Intel and Apple Silicon Homebrew) and the absolute
 # project root (which differs per worktree). `.sextant.json` next to it IS shared: budget, scope
 # and rules are properties of the project, not of a machine.
-.mcp.json
+#
+# Anchored to the repository root: the plugin ships its own `.mcp.json`, which names no absolute
+# path and is committed.
+/.mcp.json
 
 # Release build artefacts: separate scratch paths per architecture and the
 # packaged binary. Created by .github/workflows/release.yml, and by anyone

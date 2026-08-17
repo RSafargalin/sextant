@@ -1,0 +1,17 @@
+{
+  "name": "sextant",
+  "owner": {
+    "name": "Ruslan Safargalin",
+    "url": "https://github.com/RSafargalin"
+  },
+  "description": "Code intelligence for Swift, Objective-C, C and C++ projects, as Claude Code plugins.",
+  "plugins": [
+    {
+      "name": "sextant",
+      "source": "./plugins/sextant",
+      "description": "Registers the sextant MCP server, a skill that says when to ask it instead of grepping, and a setup command. Needs the sextant binary installed separately (Homebrew).",
+      "category": "development",
+      "tags": ["swift", "objective-c", "code-navigation", "mcp", "macos"]
+    }
+  ]
+}
