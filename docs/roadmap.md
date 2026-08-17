@@ -239,12 +239,14 @@ Two items have since moved out of Iter 10, because they were built rather than d
   15 structural matches plus 13 textual ones inside `#if` branches the build does not contain.
 - **The adoption metric (#41) is done** — as its own `adoption` command plus a `hook`, not inside
   `bench`. What remains is not code but elapsed time: the number is worth reading only after real
-  sessions with the MCP server registered.
+  sessions with the MCP server registered. The hook was connected on 2026-08-17 — before that it was
+  released but present in no `settings.json`, so the clock starts at that date, not at the release.
 
-What that leaves open, in order: the second half of the P3 gate (`brew install` on a machine with
-no Xcode toolchain), tuning the tool descriptions (#39) and hinting away from grep (#40) — both
-waiting on adoption data — and the two daemon questions in ADR-0003 (`serve` and MCP are separate
-processes; the AST caches are per-invocation).
+What that leaves open, in order: a fix to the navigation classifier, without which the adoption share
+is biased in our favour (see "Lessons from someone else's tracker"); tuning the tool descriptions
+(#39) and hinting away from grep (#40) — both wait on data, and the data waits on that fix; prompts
+as slash commands (#30) and elicitation (#31); the second half of the P3 gate (`brew install` on a
+machine with no Xcode toolchain); the three daemon questions (see Iter 6).
 
 ### Iter 4 — Measurability and trust. The foundation. ✅ SHIPPED (v0.6.0)
 You cannot optimise what you do not measure, and you cannot call a tool "better" while it is
@@ -285,9 +287,11 @@ correctness at once.
 - **Line dedup + a deterministic order** (→ the model's prompt cache) (#13).
 - **Gate:** bench records the drop in output tokens on typical queries; cold CLI start is gone.
 - **Fact:** the token half is done — isatty verbosity (#11), the histogram (#12), dedup (#13).
-  **`sextant serve` (#5) was not done** — a ~2.1s cold CLI start is paid by every sub-agent; this
-  is P4 of ADR-0003 (with a prerequisite first: actor isolation of the caches plus a unique
-  IndexStoreDB database per instance).
+  **`sextant serve` (#5) is done** — P4 of ADR-0003 is closed together with its prerequisite (actor
+  isolation of the caches). Three questions remain, each checked in the code: the MCP server holds
+  its own `IndexStoreSet` and never goes through the daemon (`runViaDaemon` is called only from
+  `main.swift`), the parse cache is created per invocation (`MCPServer.swift`), and the daemon has
+  no SIGINT/SIGTERM handler — killed by a signal, it leaves its socket file behind.
 
 ### Iter 7 — MCP surface + adoption. On the re-checked basis of ADR-0002. ⚠ PARTIAL
 Only the primitives Claude Code supports and that survive the stateless transition.
@@ -306,11 +310,13 @@ Only the primitives Claude Code supports and that survive the stateless transiti
   prebuilt/Homebrew (#38).
 - **Gate:** resources are reachable through `@`; the adoption metric (the share of searches that go
   through sextant) grows; staleness is handled interactively rather than by refusal.
-- **Fact:** `CLAUDE_PROJECT_DIR` (#32), Resources + templates + completion (#29, #33) and
-  `readOnlyHint` (#34) are done. **Outstanding:** prompts as slash commands (#30), elicitation
-  (#31), `sextant init` (#37), prebuilt/Homebrew (#38), description tuning (#39), grep
-  interception (#40), the adoption metric (#41) — these are P1/P3 of ADR-0003. CLI↔MCP parity (an
-  `api` tool, one shared config, per-tool-call telemetry) is P1.
+- **Fact:** `CLAUDE_PROJECT_DIR` (#32), Resources + templates + completion (#29, #33),
+  `readOnlyHint` (#34), `sextant init` (#37), prebuilt/Homebrew (#38 — shipped in 0.9.0, with the
+  formula in `RSafargalin/homebrew-tap`), the adoption metric (#41) and CLI↔MCP parity (P1: an `api`
+  tool, one shared config, per-tool-call telemetry) are done. **Outstanding:** prompts as slash
+  commands (#30) — `prompts/list` currently returns an empty list, so it is a stub; elicitation
+  (#31); description tuning (#39) and hinting away from grep (#40) — both wait on adoption data, and
+  the data waits on a fix to the classifier (see "Lessons from someone else's tracker").
 
 ### Iter 8 — The memory zone (code-anchored). A context-offloading layer.
 Rests on content hashing (Iter 5) and Resources (Iter 7). Automatic invalidation by anchor is what
@@ -339,6 +345,12 @@ separates it from dangerous generic memory.
 > cannot serve. The spend is not in the repeat but in the **first** delivery — which is the context
 > compiler (#16, Iter 10), untouched by this measurement. Reasoning and table in
 > [ADR-0003](adr/0003-path-to-production-v1.md).
+>
+> **A second argument, independent of tokens (2026-08-17).** In Serena, cross-project memory
+> poisoning is filed as a vulnerability alongside path traversal in memory paths
+> ([#1251](https://github.com/oraios/serena/issues/1251)). Phase 2 ("the asserted risk") therefore
+> buys not only a doubtful benefit but a class of attack: a note written in one project is read by
+> another.
 
 ### Iter 9 — Differential context + automatic freshness.
 
@@ -391,6 +403,129 @@ separates it from dangerous generic memory.
 - **An architectural boundary linter** (#42); **"negative space"** for safe deletion plus dead code
   (#43); **online relevance learning** (#44).
 - **Gate:** every feature gets its own measurement of value against a baseline before it is kept.
+
+## Lessons from someone else's tracker — Serena (2026-08-17)
+
+[Serena](https://github.com/oraios/serena) is the closest analogue by purpose: an MCP toolkit for
+navigating and editing code, 40+ languages through LSP, 28k stars. The whole tracker was read: 823
+issues, 762 closed and 61 open. This is not competitive analysis but a source of detectors —
+someone else's bug is cheaper than your own.
+
+**Breadth is a liability, not an advantage.** 332 of the 823 issues (40 %) are per-language and LSP
+plumbing, and among the open ones that share is two thirds. Kotlin and Clojure leave zombie
+processes, the Kotlin LS litters `/tmp`, Bloop survives `stop()` and gets reparented to PID 1, the
+JDT LS fails to start on a newer Java, the Erlang LS has been archived, F# regressed. Every language
+is an external process with its own lifecycle, permanently. Specialising on the Apple environment
+declines that rent rather than narrowing the market. The second largest bucket is configuration and
+installation: 213 issues. Separately,
+[#1327](https://github.com/oraios/serena/issues/1327): their own language support tiers are
+acknowledged as unreliable, so "Swift in the standard tier" promises nothing.
+
+**Theses confirmed.** Their incidents are exactly what our honesty layer is built against:
+
+- [#1814](https://github.com/oraios/serena/issues/1814): `find_referencing_symbols` returned `{}`
+  because tsserver died of OOM — with `isError: false` and a log line saying "cross-file indexing
+  complete". The reporter's phrasing for that failure shape: fast, confident and wrong; an agent will
+  conclude that dead code is safe to delete.
+  [#1593](https://github.com/oraios/serena/issues/1593) is the same class: `find_symbol` returning
+  stale information.
+- [#576](https://github.com/oraios/serena/issues/576),
+  [#326](https://github.com/oraios/serena/issues/326),
+  [#1744](https://github.com/oraios/serena/issues/1744): symbolic editing duplicates code, produces
+  a syntax error, and silently skips files that are not open, leaving stale references behind. That
+  answers the question "should we add editing": in a mature LSP-backed tool, the edit is silently
+  wrong. If we ever do it, only behind a gate that the build is green afterwards.
+- [#1325](https://github.com/oraios/serena/issues/1325),
+  [#1042](https://github.com/oraios/serena/issues/1042): JSON output is consumed worse by a model
+  than structured text. Our text surface with provenance inside the answer is not a lag.
+- [#992](https://github.com/oraios/serena/issues/992),
+  [#1607](https://github.com/oraios/serena/issues/1607): they arrived at content-hash validation
+  after the pain; for us it was Iter 5, as an architectural move. And
+  [#726](https://github.com/oraios/serena/issues/726), "preserve the exact source text", is free for
+  us because we read files rather than only LSP nodes.
+- Command injection through `shell=True`
+  ([#1585](https://github.com/oraios/serena/issues/1585)): we do not have that class by construction
+  — every child process is `executableURL` plus an argument array, never a shell.
+
+**A defect this found in us.** [#1845](https://github.com/oraios/serena/issues/1845): Claude Code
+2.1.117+ on native macOS/Linux builds removed the `Grep` and `Glob` tools and routes them through
+`Bash` as the embedded `ugrep`/`bfs`. Our `NavigationAct` knows `grep, rg, ag, ack, ripgrep` and does
+not know `ugrep` or `bfs`. Measured on the installed binary: of three events (`ugrep`, `bfs`, `rg`)
+one was recorded. The **denominator** goes missing, so sextant's share looks higher than it is — and
+#39 and #40 rest on that number. One fix covers both paths: the hook and the transcript reader share
+the classifier.
+
+**Detectors we do not have** — each from someone else's mistake:
+
+- the daemon is killed by a signal → no socket file is left and the next client does not trip over it
+  ([#1464](https://github.com/oraios/serena/issues/1464),
+  [#1816](https://github.com/oraios/serena/issues/1816));
+- one unreadable, huge or oddly named file does not bring the walk down
+  ([#514](https://github.com/oraios/serena/issues/514) — a crash on `.ico`,
+  [#182](https://github.com/oraios/serena/issues/182) — a file name too long);
+- the semantic layer dies mid-query → the answer is not empty without saying so (#1814).
+
+**Taken from their data.** [#1491](https://github.com/oraios/serena/issues/1491) — a measurement over
+21,089 tool calls, 192 sessions and 21 days: Serena is used in only 35.4 % of sessions, and its share
+is 20.3 % of read-class operations. The second signal matters more: **18.4 % of symbol queries end in
+a plain `Read` of the same file**, and in 80.8 % of those the symbol body was already in the answer
+while the `Read` used `offset`/`limit` — the agent has the body and is reaching for the *surrounding*
+lines. Two tasks follow: `--context-lines N` on `body` and `context`; and a fallback metric in
+`adoption` — "after which of our answers did the agent go and read the file anyway". Their script
+cannot do the second; our command can, because it reads whole transcripts.
+
+**A quiet wrongness of our own, found on the way.** The MCP server echoes back whatever protocol
+revision the client claims (defaulting to `2025-06-18`), which confirms support for something it may
+not implement.
+
+## Next up — fixes, not bets
+
+The order is strict: the first item blocks everything that rests on adoption.
+
+1. **`ugrep` and `bfs` in the classifier**, plus a test per search-tool name. Without it the adoption
+   share is biased in our favour, and #39/#40 would be built on an inflated number.
+2. **The three detectors above**: a signal to the daemon, an odd file, the semantic layer dying
+   mid-query.
+3. **`--context-lines N` on `body`/`context`** and **a fallback metric in `adoption`** — both out of
+   the #1491 data.
+4. **An honest MCP revision** instead of echoing the client's.
+5. **`doctor` checks the whole chain** — today it prints "✅ ready — sextant mcp will work" without
+   checking either the MCP registration in the client or the hook: exactly the class of defect that
+   left the hook unnoticed for ten days.
+
+## Candidates after 0.9.0 — by axis, not by number
+
+Not an iteration but a set of bets with different costs and risks. The order inside an axis is by
+benefit over cost; the order between axes is decided by adoption data, once it is unbiased.
+
+**Axis 1. Answers an LSP-based tool cannot give at all.** This is differentiation rather than
+catching up: Swift 6 concurrency (`@MainActor` boundary crossings, `Sendable` gaps, actor isolation);
+dead public surface (`api` ∩ `refs` — what is `public` but unused outside its module, a direct tool
+for extracting one); references outside the static graph (`#selector`, `NSSelectorFromString`, KVO
+strings: the index knows the `@objc` name, so a string can be tied to a symbol); the SwiftUI
+injection graph (`@Environment`/`@EnvironmentObject` — a symbol reachable only through the
+environment); `@available` and the deployment target (what is freed or broken by raising the minimum
+iOS); a symbol's test coverage (which public symbols no test target mentions).
+
+**Axis 2. The reality of Xcode — the only real moat.** A workspace of several projects, several
+schemes and configurations at once, the target as a first-class notion ("which targets does this
+change break"). None of these notions exist in LSP. The prerequisite is a spike: run Serena on the
+reference Xcode project and compare the answers. Without it, "we are stronger on `.xcodeproj`" stays
+at L1.
+
+**Axis 3. Distribution and trust in the install.** A one-step Claude Code plugin — the MCP server,
+the hook and the slash commands in a single install (this closes #30 and removes three manual steps;
+Serena has a heavily upvoted request for exactly this,
+[#802](https://github.com/oraios/serena/issues/802)). An HTTP transport: today it is stdio only, so
+cloud and remote sessions cannot reach sextant at all. `make verify-public` — the bench of five public
+repositories plus `tea` as a repeatable artefact rather than one-off scripts: in the last run half the
+false findings were bugs in the harness itself.
+
+**Axis 4. A gate in someone else's CI — the only bet that goes around rather than against.** `lint`,
+dead public surface, forbidden imports and module boundaries as a PR check. Half the infrastructure
+exists: `golden` (semantic regressions against a spec) and `bench`. It makes the tool useful to a
+team rather than only to an agent — and that is a conversation about the product frame, not an
+evening's task.
 
 ## Backlog — waiting on circumstances, not on work
 
