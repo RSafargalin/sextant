@@ -52,6 +52,8 @@ public enum CommandCatalog {
     static let exclude = FlagSpec("--exclude", takesValue: true, "glob to leave out; repeatable, replaces the config list")
     static let includeTests = FlagSpec("--include-tests", "include test files")
     static let limit = FlagSpec("--limit", takesValue: true, "how many entries to show")
+    static let symbols = FlagSpec("--symbols", takesValue: true,
+                                  "how many symbols sharing the name to show (default 10; the rest are counted)")
     static let contextLines = FlagSpec("--context-lines", takesValue: true,
                                        "lines of surrounding source around the declaration (default 0)")
     static let fullPaths = FlagSpec("--full-paths", "full paths instead of shortened ones")
@@ -67,7 +69,7 @@ public enum CommandCatalog {
                                           "for this command only: \(StorePolicy.known) (see `sextant store`)")
 
     static var semanticFlags: [FlagSpec] {
-        [project, indexStore, indexLib, storePolicyFlag, derivedData, reindex, limit, fullPaths, full, compact, verify, json]
+        [project, indexStore, indexLib, storePolicyFlag, derivedData, reindex, limit, symbols, fullPaths, full, compact, verify, json]
     }
 
     // MARK: Commands
