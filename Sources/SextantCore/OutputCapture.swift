@@ -24,17 +24,29 @@ public enum OutputCapture {
     /// The crucial part: a pipe buffer holds about 64 KB, and a writer producing more than that
     /// would block forever if reading only started after it finished. The write ends are closed
     /// after `body`, which is the readers' EOF.
+    ///
+    /// Each reader gets a thread of its own rather than a block on the global queue. A queue only
+    /// promises to run the block eventually, and "eventually" is not enough when the caller is
+    /// already blocked on the write: the pool is finite, and anything that holds its threads —
+    /// several `Process.waitUntilExit` calls, say — starves the reader that would unblock the
+    /// writer. Reproduced with 80 blocked tasks on the global queue: the write never returned, and
+    /// a watchdog scheduled on the same queue never fired either. The CI runner hit it for real,
+    /// where the test for this very defect timed out at 60 seconds while passing in 0.002s locally.
     public static func collect(from pipes: [Pipe], while body: () -> Void) -> [String] {
         let boxes = pipes.map { _ in Box() }
         let readers = DispatchGroup()
         for (pipe, box) in zip(pipes, boxes) {
-            DispatchQueue.global().async(group: readers) {
+            readers.enter()
+            let thread = Thread {
                 while true {
                     let chunk = pipe.fileHandleForReading.availableData
-                    guard !chunk.isEmpty else { return }   // an empty chunk means EOF
+                    guard !chunk.isEmpty else { break }   // an empty chunk means EOF
                     box.append(chunk)
                 }
+                readers.leave()
             }
+            thread.name = "sextant.output-drain"
+            thread.start()
         }
         body()
         for pipe in pipes { try? pipe.fileHandleForWriting.close() }
