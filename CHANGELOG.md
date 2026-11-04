@@ -13,8 +13,18 @@ Human-readable text output is not covered — parse `--json`, not prose.
 
 ## [Unreleased]
 
+## [0.9.1] — 2026-11-04
+
 ### Added
 
+- **A measurement history** — [docs/measurements/history.md](docs/measurements/history.md) keeps
+  every benchmark row each release published, with what produced it, so the numbers can be
+  followed across releases. The benchmark pages now show 0.9.1, re-measured on the same commits.
+  Doing it turned up that the 0.9.0 figures for scenario A could not be reproduced with the 0.9.0
+  binary that was released (swift-nio 5 055 declarations published against 4 259 printed); both
+  are kept, and the release procedure now re-measures and names the binary rather than only
+  bumping the version on the page. The recipes were re-run: with test targets in the index,
+  `blast`, `context` and `impls` count the tests too.
 - **A Claude Code plugin, distributed from this repository.** `/plugin marketplace add
   RSafargalin/sextant` then `/plugin install sextant@sextant` registers the MCP server for every
   project opened, a skill that says when to ask the index instead of grepping, and a

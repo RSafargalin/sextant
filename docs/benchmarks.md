@@ -5,7 +5,7 @@
 Every number here was measured on public open-source Swift packages at a pinned commit, with
 commands you can run yourself. Nothing depends on a private codebase.
 
-**Environment:** macOS 26.5.2, x86_64, sextant 0.9.0. Scenarios A and B were re-measured for 0.9.0 at the commits named below; scenario C is a record of the 0.7.0 measurement and was not re-run.
+**Environment:** macOS 26.6.2, x86_64, sextant 0.9.1. All three scenarios were re-measured for 0.9.1 at the commits named below. Every earlier measurement, and how the numbers moved between releases, is in the [measurement history](measurements/history.md).
 
 **Repositories** (shallow clones, pinned):
 
@@ -39,11 +39,11 @@ an unfamiliar dependency.
 
 | Repository | Declarations | `api` bytes | Source bytes | Saving |
 |---|---:|---:|---:|---:|
-| Alamofire | 1 226 | 170 753 | 803 997 | **78.8%** |
-| swift-argument-parser | 376 | 46 724 | 461 564 | **89.9%** |
-| swift-numerics | 497 | 31 911 | 181 937 | **82.5%** |
-| swift-nio | 5 055 | 518 860 | 4 464 792 | **88.4%** |
-| swift-syntax | 13 989 | 1 374 492 | 6 673 159 | **79.4%** |
+| Alamofire | 1 226 | 170 754 | 803 997 | **78.8%** |
+| swift-argument-parser | 376 | 46 725 | 461 564 | **89.9%** |
+| swift-numerics | 400 | 30 009 | 181 937 | **83.5%** |
+| swift-nio | 4 259 | 489 671 | 4 464 792 | **89.0%** |
+| swift-syntax | 13 967 | 1 373 566 | 6 673 159 | **79.4%** |
 
 Saving is stable in the **79–90%** band across a 9× spread in repository size. The two ends of
 the band are the two kinds of code that are already close to pure surface: swift-syntax is largely
@@ -51,11 +51,15 @@ generated, with a very high declaration-to-body ratio, and Alamofire carries doc
 every declaration — `api` keeps their summaries, which is most of what it prints.
 
 Compared with the same measurement at 0.7.0, every surface is larger: Alamofire 973 → 1 226
-declarations, swift-nio 3 672 → 5 055. Nothing about the packages changed — the commits are the
+declarations, swift-nio 3 672 → 4 259. Nothing about the packages changed — the commits are the
 same — the surface did. Declarations behind `#if` are now listed with the condition they are
 guarded by, and an internal `extension` that carries public members is now part of the surface it
 carries. Both were missing before, so the old numbers were a saving measured against an answer
 that was too small.
+
+The 0.9.0 figures this page published for swift-nio (5 055) and swift-numerics (497) could not be
+reproduced with the 0.9.0 binary that was released; the [history](measurements/history.md) keeps
+both and says what is known about why.
 
 ## Scenario B — learn one type
 
@@ -91,14 +95,16 @@ as Scenario A, run twice:
 
 | Repository | Cold | Warm | Speed-up |
 |---|---:|---:|---:|
-| swift-numerics | 1.46 s | 0.18 s | 8× |
-| swift-argument-parser | 3.80 s | 0.20 s | 19× |
-| swift-nio | 30.45 s | 0.36 s | 84× |
-| swift-syntax | 57.57 s | 0.51 s | **112×** |
+| swift-numerics | 1.75 s | 0.43 s | 4× |
+| swift-argument-parser | 3.81 s | 0.44 s | 9× |
+| swift-nio | 30.41 s | 0.68 s | 45× |
+| swift-syntax | 54.19 s | 0.80 s | **68×** |
 
 The cold figure is the honest cost of first contact with a large repository: a full
 SwiftSyntax parse of 318 files takes ~a minute. Every subsequent query on an unchanged tree
-is sub-second.
+is sub-second. The warm figures are 0.25–0.3 s slower than at 0.7.0 on every repository — a fixed
+cost per run, not a cache that stopped working; its source is not yet established (see the
+[history](measurements/history.md)).
 
 These timings come from a **debug** build (`swift build`), which is what you get from a
 source checkout. SwiftSyntax parsing is substantially slower without optimisation, so the

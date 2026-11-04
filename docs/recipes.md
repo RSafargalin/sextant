@@ -22,7 +22,7 @@ Output is trimmed where marked `…`; everything else is verbatim.
 ```console
 $ sextant blast Session
 ── blast radius: Session [class]
-   a change would touch: 7 files · 25 usages · 0 calls
+   a change would touch: 33 files · 504 usages · 0 calls
      Source/Alamofire.swift
      Source/Core/Session.swift
      Source/Features/AuthenticationInterceptor.swift
@@ -31,7 +31,8 @@ $ sextant blast Session
 
 One command instead of grepping a name and opening what it hits. `blast` counts usages, call
 sites and implementations, so "0 calls" for a class is the answer, not a gap — a type has no call
-sites. If the number is small, read the files; if it is 25 across 7, that is your review.
+sites. If the number is small, read the files; if it is 504 across 33, that is your review — and
+since the index holds the test targets too, a test that would stop compiling is in that count.
 
 ## What does this type expose?
 
@@ -46,13 +47,18 @@ Source/Core/Session.swift
     …
 ```
 
-Signatures and doc summaries, no bodies — on the benchmark set that is 79–91% fewer bytes than
+Signatures and doc summaries, no bodies — on the benchmark set that is 79–90% fewer bytes than
 reading the sources. `--package` for a whole target, `--scope` for a subdirectory.
 
 ## Who actually calls this, through the protocol?
 
 ```console
 $ sextant callers validate
+── validate()  [instanceMethod]
+   def: Source/Features/Validation.swift:188:17  public func validate() -> Self {
+   calls: 77 in 5 file(s)
+     Tests/AuthenticationInterceptorTests.swift: 159, 197, 237, 242, 282, 316, 351, 396, 431, …
+     …
 ── validate(policy:errorProducer:)  [instanceMethod]
    def: Source/Features/ServerTrustEvaluation.swift:521:17  public func validate(policy: SecPolicy, …) throws {
    calls: 3 in 1 file(s)
@@ -68,7 +74,7 @@ the `overrideOf` relation, which a text search cannot. Add `--full` for the line
 $ sextant context RetryResult
 ── RetryResult  [enum]
    def: Source/Features/RequestInterceptor.swift:67  public enum RetryResult: Sendable {
-   usages: 17
+   usages: 57
      • Source/Core/Request.swift:1271  func retryResult(for request: Request, dueTo error: AFError, …)
      • Source/Core/Session.swift:1349  public func retryResult(for request: Request, …) {
      …
@@ -81,7 +87,7 @@ for first — the rest are for when you already know which half you need.
 
 ```console
 $ sextant impls RequestInterceptor
-── RequestInterceptor: 7
+── RequestInterceptor: 13
    • AuthenticationInterceptor [class]  Source/Features/AuthenticationInterceptor.swift:160  …
    • OfflineRetrier [class]  Source/Features/OfflineRetrier.swift:31  …
    • DeflateRequestCompressor [struct]  Source/Features/RequestCompression.swift:39  …

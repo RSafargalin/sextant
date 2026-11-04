@@ -13,6 +13,9 @@ instead of from scratch.
 | `staleness-probe.py` | After an edit nobody built: who answers about the code as it is now, and who says it cannot | [roadmap](../roadmap.md#the-xcode-project-and-the-unbuilt-edit--spike-2026-08-18) |
 | `lsp-client.py` | Shared: a minimal LSP client over stdio, imported by the probes | — |
 
+The benchmark numbers of every release, with what produced each of them, are kept in
+[history.md](history.md) ([по-русски](history.ru.md)).
+
 The two probes take a project and, for the LSP one, a file, a symbol spelling and which occurrence
 of it to stand on:
 
