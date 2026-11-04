@@ -41,6 +41,19 @@ public struct CommandSpec: Sendable {
 /// flags used to be maintained by hand — a forgotten flag turned its own value into a
 /// positional argument, and the error surfaced as "symbol not found".
 public enum CommandCatalog {
+    // MARK: Groups
+
+    static let navigationGroup = "Navigation (syntax, no build required)"
+    static let semanticsGroup = "Semantics (index store)"
+
+    /// Commands that answer a question about the code — what an adoption share counts as navigation
+    /// through sextant. Setup, help, measurement, building the index and linting are not: `lint`
+    /// judges the code rather than finding anything in it.
+    public static let navigationCommands: Set<String> = Set(
+        commands.filter { [navigationGroup, semanticsGroup].contains($0.group) && !["index", "lint"].contains($0.name) }
+            .map(\.name)
+    )
+
     // MARK: Shared flag sets
 
     static let project = FlagSpec("--project", takesValue: true, "project root (otherwise CLAUDE_PROJECT_DIR or the current directory)")
@@ -77,7 +90,7 @@ public enum CommandCatalog {
     public static let commands: [CommandSpec] = [
         CommandSpec(
             name: "map", summary: "repository map under a token budget",
-            group: "Navigation (syntax, no build required)",
+            group: navigationGroup,
             flags: [project, FlagSpec("--budget", takesValue: true, "token budget for the map (default 6000)"),
                     FlagSpec("--semantic", "types by usage count (needs an index)"),
                     FlagSpec("--pagerank", "files by centrality (needs an index)"),
@@ -86,7 +99,7 @@ public enum CommandCatalog {
         ),
         CommandSpec(
             name: "api", summary: "public surface of a package, subdirectory, or type",
-            group: "Navigation (syntax, no build required)",
+            group: navigationGroup,
             flags: [project, FlagSpec("--package", takesValue: true, "package name"),
                     FlagSpec("--type", takesValue: true, "type name — only that type"),
                     apiBudget, scope, maxFiles, exclude, json],
@@ -96,19 +109,19 @@ public enum CommandCatalog {
         ),
         CommandSpec(
             name: "search", argument: "<pattern>", summary: "structural search over the AST (a grep replacement)",
-            group: "Navigation (syntax, no build required)",
+            group: navigationGroup,
             flags: [project, scope, maxFiles, exclude, includeTests, limit, json],
             details: ["Metavariables: $X (an expression), variadic $$$. For example 'try? $X.save()'."]
         ),
         CommandSpec(
             name: "lint", summary: "structural code-hygiene rules",
-            group: "Navigation (syntax, no build required)",
+            group: navigationGroup,
             flags: [project, FlagSpec("--rules", takesValue: true, "JSON rules file (otherwise the built-in set)"),
                     scope, maxFiles, exclude, includeTests, json]
         ),
         CommandSpec(
             name: "changed", summary: "symbol-level git diff: added, removed, or changed signature",
-            group: "Navigation (syntax, no build required)",
+            group: navigationGroup,
             flags: [project, FlagSpec("--from", takesValue: true, "baseline revision (default HEAD)"),
                     FlagSpec("--to", takesValue: true, "second revision; omit to use the working tree"), json],
             details: ["Compares SYMBOLS, not lines: body edits and reformatting do not add noise.",
@@ -117,7 +130,7 @@ public enum CommandCatalog {
 
         CommandSpec(
             name: "index", summary: "build an index store (SPM or an app target)",
-            group: "Semantics (index store)",
+            group: semanticsGroup,
             flags: [project, FlagSpec("--app", "app target via xcodebuild (covers an xcodeproj)"),
                     FlagSpec("--scheme", takesValue: true, "Xcode scheme (otherwise auto-detected)"),
                     FlagSpec("--destination", takesValue: true, "xcodebuild destination"),
@@ -128,36 +141,36 @@ public enum CommandCatalog {
                       "store covers 43 of 98 files and `refs Session` answers 25 instead of 504."]
         ),
         CommandSpec(name: "refs", argument: "<symbol>", summary: "every usage of a symbol",
-                    group: "Semantics (index store)", flags: semanticFlags,
+                    group: semanticsGroup, flags: semanticFlags,
                     details: ["Default when piped (an agent) is a histogram by file; TTY or --full gives line by line."]),
         CommandSpec(name: "defs", argument: "<symbol>", summary: "where a symbol is defined",
-                    group: "Semantics (index store)", flags: semanticFlags),
+                    group: semanticsGroup, flags: semanticFlags),
         CommandSpec(name: "callers", argument: "<symbol>", summary: "call sites, accounting for protocol dispatch",
-                    group: "Semantics (index store)", flags: semanticFlags,
+                    group: semanticsGroup, flags: semanticFlags,
                     details: ["Types have no call sites — use refs, context, or blast for those."]),
         CommandSpec(name: "callees", argument: "<symbol>", summary: "what a symbol calls (best effort)",
-                    group: "Semantics (index store)", flags: [project, indexStore, indexLib, storePolicyFlag, derivedData, reindex, limit, json]),
+                    group: semanticsGroup, flags: [project, indexStore, indexLib, storePolicyFlag, derivedData, reindex, limit, json]),
         CommandSpec(name: "impls", argument: "<type>", summary: "implementations and subtypes of a protocol or class",
-                    group: "Semantics (index store)", flags: [project, indexStore, indexLib, storePolicyFlag, derivedData, reindex, limit, json]),
+                    group: semanticsGroup, flags: [project, indexStore, indexLib, storePolicyFlag, derivedData, reindex, limit, json]),
         CommandSpec(name: "supertypes", argument: "<type>", summary: "bases and protocols of a type",
-                    group: "Semantics (index store)", flags: [project, indexStore, indexLib, storePolicyFlag, derivedData, reindex, limit, json]),
+                    group: semanticsGroup, flags: [project, indexStore, indexLib, storePolicyFlag, derivedData, reindex, limit, json]),
         CommandSpec(
             name: "hierarchy", argument: "<symbol>", summary: "transitive call graph, as a tree",
-            group: "Semantics (index store)",
+            group: semanticsGroup,
             flags: [project, FlagSpec("--callees", "down the call graph (default)"), FlagSpec("--callers", "up to the callers"),
                     FlagSpec("--depth", takesValue: true, "traversal depth (default 3)"), indexStore, indexLib, storePolicyFlag, derivedData, reindex, json]
         ),
         CommandSpec(name: "context", argument: "<symbol>", summary: "everything about one symbol in a single query",
-                    group: "Semantics (index store)", flags: [project, indexStore, indexLib, storePolicyFlag, derivedData, reindex, limit, json],
+                    group: semanticsGroup, flags: [project, indexStore, indexLib, storePolicyFlag, derivedData, reindex, limit, json],
                     details: ["Definition, usages, callers, callees, hierarchy — instead of a series of greps."]),
         CommandSpec(name: "blast", argument: "<symbol>", summary: "impact analysis: what a change would touch",
-                    group: "Semantics (index store)", flags: [project, indexStore, indexLib, storePolicyFlag, derivedData, reindex, json]),
+                    group: semanticsGroup, flags: [project, indexStore, indexLib, storePolicyFlag, derivedData, reindex, json]),
         CommandSpec(name: "body", argument: "<symbol>", summary: "full text of a declaration (signature and body)",
-                    group: "Semantics (index store)",
+                    group: semanticsGroup,
                     flags: [project, indexStore, indexLib, storePolicyFlag, derivedData, reindex, limit, contextLines, json],
                     details: ["`--context-lines N` adds N lines on each side, marked apart from the declaration."]),
         CommandSpec(name: "construct", argument: "<type>", summary: "construction and injection sites of a type",
-                    group: "Semantics (index store)", flags: [project, indexStore, indexLib, storePolicyFlag, derivedData, reindex, limit, json],
+                    group: semanticsGroup, flags: [project, indexStore, indexLib, storePolicyFlag, derivedData, reindex, limit, json],
                     details: ["A `Type(` heuristic over usages — not exact semantics."]),
 
         CommandSpec(name: "mcp", summary: "MCP server (stdio) for an agent",

@@ -242,9 +242,9 @@ Two items have since moved out of Iter 10, because they were built rather than d
   sessions with the MCP server registered. The hook was connected on 2026-08-17 — before that it was
   released but present in no `settings.json`, so the clock starts at that date, not at the release.
 
-What that leaves open, in order: a fix to the navigation classifier, without which the adoption share
-is biased in our favour (see "Lessons from someone else's tracker"); tuning the tool descriptions
-(#39) and hinting away from grep (#40) — both wait on data, and the data waits on that fix; prompts
+What that leaves open, in order: data from the fixed classifier (the fix itself landed on
+2026-10-19, see "Adoption data" in the backlog); tuning the tool descriptions (#39) and hinting away
+from grep (#40) — both wait on that data; prompts
 as slash commands (#30) and elicitation (#31); the second half of the P3 gate (`brew install` on a
 machine with no Xcode toolchain); the three daemon questions (see Iter 6).
 
@@ -315,8 +315,8 @@ Only the primitives Claude Code supports and that survive the stateless transiti
   formula in `RSafargalin/homebrew-tap`), the adoption metric (#41) and CLI↔MCP parity (P1: an `api`
   tool, one shared config, per-tool-call telemetry) are done. **Outstanding:** prompts as slash
   commands (#30) — `prompts/list` currently returns an empty list, so it is a stub; elicitation
-  (#31); description tuning (#39) and hinting away from grep (#40) — both wait on adoption data, and
-  the data waits on a fix to the classifier (see "Lessons from someone else's tracker").
+  (#31); description tuning (#39) and hinting away from grep (#40) — both wait on adoption data
+  from the fixed classifier (see "Adoption data" in the backlog).
 
 ### Iter 8 — The memory zone (code-anchored). A context-offloading layer.
 Rests on content hashing (Iter 5) and Resources (Iter 7). Automatic invalidation by anchor is what
@@ -624,6 +624,28 @@ happen in the world first, so it stays here instead of being raised at every pla
   now: the signal only means anything after roughly a week of ordinary sessions, and until then #39
   (tool descriptions) and #40 (intercepting grep) have no ground to stand on, because both are
   changes aimed at a behaviour that has not been measured yet.
+
+  **Two months of it, read on 2026-10-18, measured the classifier rather than the agents.** 13 826
+  lines, a raw share of 4.6 %. Re-reading the transcripts behind them: 239 of the 640 "calls" only
+  mentioned a path with `sextant` in it (`cd ~/Tools/sextant && git log`), about 150 more were
+  `--help`, `--version`, `hook`, `index`; 4 878 of 17 285 shell lines counted as text search were
+  `swift build | grep`-style filters of a command's output; every worktree and subdirectory was its
+  own project (81 of them); MCP tools of a plugin-bundled server were not recognised at all; the
+  transcript reader skipped subagents. Corrected by hand the share was about 2.7 %, and MCP carried
+  16 of roughly 370 real answers. All of that is fixed on 2026-10-19 (log format `"v": 2`), and the
+  clock starts again from the release that carries it: the first-format lines are kept and named,
+  never added to the new ones.
+
+  Three calls made on the way, so they are not reopened by accident. **The old name `codectx` is
+  not recognised**: it was never public, and the transcripts that carry it age out on their own —
+  numbers read from transcripts before August are low for that reason alone. **A call that asks
+  sextant and also greps the sources counts as both**, and the answer is marked cross-checked: one
+  act per call hid the search from the denominator and the check from sight, and a cross-check
+  rate of 20–28 % is itself the finding — an answer the agent did not trust, or that was not
+  enough. **An act about another project** (after `cd` there, or sextant's `--project` there) is
+  not counted for this one; the live log files it under the project it was about.
+  Runs against fixtures inside sextant's own repository still count for it, so that repository is
+  not a fair sample of adoption either way.
 - **Linux.** Never planned either way. The semantic layer is IndexStoreDB (portable), the Swift
   structural layer is SwiftSyntax (portable), the C-family layer is libclang loaded by `dlopen`
   (portable in principle, but the path search is written for Xcode). The open question is not

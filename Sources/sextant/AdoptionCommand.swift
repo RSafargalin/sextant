@@ -11,60 +11,96 @@ func runAdoption(arguments: [String]) -> Int32 {
     let root = projectRoot(in: arguments)
     let showQueries = arguments.contains("--show-queries")
     let directory = Adoption.transcriptDirectory(forProjectRoot: root)
+    // The hook records the same acts as the transcript does, so the two are shown apart and never
+    // added: one is the session as the client wrote it down, the other as the hook saw it live.
+    let transcripts = Adoption.transcripts(forProjectRoot: root)
+    let live = AdoptionLog.report(forProjectRoot: root, transcripts: transcripts)
+    let hasTranscripts = !transcripts.isEmpty
 
-    guard FileManager.default.fileExists(atPath: directory.path) else {
-        reportError("sextant adoption: no session transcripts for \(shorten(root)) (looked in \(directory.path)).")
-        reportError("   They are written by the client per project directory; a project worked on elsewhere has its own.")
+    guard hasTranscripts || FileManager.default.fileExists(atPath: directory.path)
+            || live.navigation > 0 || live.legacyRecords > 0 else {
+        reportError("sextant adoption: no session transcripts for the repository of \(shorten(root)) (looked in \(directory.path) and its worktrees),")
+        reportError("   and nothing in the live log for its repository.")
+        reportError("   Transcripts are written by the client per directory; a project worked on elsewhere has its own.")
         return 1
     }
 
-    let report = Adoption.report(forProjectRoot: root, keepingQueries: showQueries)
+    let report = hasTranscripts
+        ? Adoption.report(forProjectRoot: root, keepingQueries: showQueries)
+        : AdoptionReport.empty
 
     if arguments.contains("--json") {
-        struct Output: Encodable {
+        struct Counts: Encodable {
             let sessions: Int
             let sextant: Int
+            let throughMCP: Int
+            let throughCLI: Int
             let textSearch: Int
             let fileRead: Int
             let share: Double?
+            let readAfterSextant: Int
+            let crossCheckedAnswers: Int
             let residue: [String: Int]
-            let queries: [String]
+
+            init(_ report: AdoptionReport) {
+                sessions = report.sessions
+                sextant = report.sextant
+                throughMCP = report.throughMCP
+                throughCLI = report.throughCLI
+                textSearch = report.textSearch
+                fileRead = report.fileRead
+                share = report.share
+                readAfterSextant = report.readAfterSextant
+                crossCheckedAnswers = report.crossCheckedAnswers
+                residue = Dictionary(uniqueKeysWithValues: report.residue.map { ($0.key.rawValue, $0.value) })
+            }
         }
-        printJSON(Output(
-            sessions: report.sessions, sextant: report.sextant, textSearch: report.textSearch,
-            fileRead: report.fileRead, share: report.share,
-            residue: Dictionary(uniqueKeysWithValues: report.residue.map { ($0.key.rawValue, $0.value) }),
-            queries: report.queries
-        ))
+        struct Live: Encodable {
+            let counts: Counts
+            let legacyRecords: Int
+            enum CodingKeys: String, CodingKey { case legacyRecords }
+            func encode(to encoder: Encoder) throws {
+                try counts.encode(to: encoder)
+                var container = encoder.container(keyedBy: CodingKeys.self)
+                try container.encode(legacyRecords, forKey: .legacyRecords)
+            }
+        }
+        struct Output: Encodable {
+            let counts: Counts
+            let transcripts: Bool
+            let queries: [String]
+            let live: Live
+            enum CodingKeys: String, CodingKey { case transcripts, queries, live }
+            func encode(to encoder: Encoder) throws {
+                try counts.encode(to: encoder)
+                var container = encoder.container(keyedBy: CodingKeys.self)
+                try container.encode(transcripts, forKey: .transcripts)
+                try container.encode(queries, forKey: .queries)
+                try container.encode(live, forKey: .live)
+            }
+        }
+        printJSON(Output(counts: Counts(report), transcripts: hasTranscripts, queries: report.queries,
+                         live: Live(counts: Counts(live), legacyRecords: live.legacyRecords)))
         return 0
     }
 
     print("# sextant adoption — \(shorten(root))")
-    print("   sessions read: \(report.sessions)")
-    guard let share = report.share else {
-        print("\nNo code navigation in these sessions — nothing to take a share of.")
-        return 0
-    }
-    print("""
+    if hasTranscripts {
+        print("   sessions read: \(report.sessions)")
+        if let share = report.share {
+            print("""
 
-    through sextant:  \(report.sextant)
-    text search:      \(report.textSearch)
-    reading a file:   \(report.fileRead)
-    ── share: \(Int((share * 100).rounded()))% of \(report.navigation) navigation acts
-    """)
-
-    // A share says how often the tool was reached for. It does not say whether the answer was
-    // enough — and an answer that always needs a file opened after it is a question we answered
-    // badly, not a search we won.
-    if report.sextant > 0 {
-        let share = Double(report.readAfterSextant) / Double(report.sextant)
-        print("""
-
-        after \(report.readAfterSextant) of \(report.sextant) answers (\(Int((share * 100).rounded()))%) \
-        the next act was opening a file
-           — adjacency, not the same file: the transcript records calls, not answers. High means \
-        our answers stop one step short.
-        """)
+            through sextant:  \(report.sextant)\(channels(report))
+            text search:      \(report.textSearch)
+            reading a file:   \(report.fileRead)
+            ── share: \(Int((share * 100).rounded()))% of \(report.navigation) navigation acts
+            """)
+            printReadsAfterAnswers(report)
+        } else {
+            print("\nNo code navigation in these sessions — nothing to take a share of.")
+        }
+    } else {
+        print("   no session transcripts for this repository — the live log below is all there is")
     }
 
     if !report.residue.isEmpty {
@@ -74,12 +110,21 @@ func runAdoption(arguments: [String]) -> Int32 {
             print("   \(shape.rawValue.padding(toLength: 13, withPad: " ", startingAt: 0)) \(count)\(hint(for: shape))")
         }
     }
-    // The hook records the same acts as the transcript does, so the two are shown apart and never
-    // added: one is the session as the client wrote it down, the other as the hook saw it live.
-    let live = AdoptionLog.report(forProjectRoot: root)
-    if live.navigation > 0 {
-        print("\nlive log (hook), the same acts as they happened — NOT to be added to the above:")
-        print("   through sextant: \(live.sextant) · text search: \(live.textSearch) · reading a file: \(live.fileRead)")
+
+    if live.navigation > 0 || live.legacyRecords > 0 {
+        print("\nlive log (hook), the whole repository as it happened — NOT to be added to the above:")
+        if live.navigation > 0 {
+            print("   sessions: \(live.sessions) · through sextant: \(live.sextant)\(channels(live))"
+                  + " · text search: \(live.textSearch) · reading a file: \(live.fileRead)")
+            if let share = live.share {
+                print("   ── share: \(Int((share * 100).rounded()))% of \(live.navigation) navigation acts")
+            }
+            printReadsAfterAnswers(live, indent: "   ")
+        }
+        if live.legacyRecords > 0 {
+            print("   \(live.legacyRecords) lines of the earlier log format are left out: it counted a path containing")
+            print("   `sextant` as a call and a grep over piped output as a search of the sources.")
+        }
     }
 
     if showQueries, !report.queries.isEmpty {
@@ -90,6 +135,31 @@ func runAdoption(arguments: [String]) -> Int32 {
         print("\n(the patterns themselves are not printed; --show-queries shows them)")
     }
     return 0
+}
+
+/// ` (MCP n · CLI m)` when any answer was asked for at all.
+private func channels(_ report: AdoptionReport) -> String {
+    report.sextant > 0 ? " (MCP \(report.throughMCP) · CLI \(report.throughCLI))" : ""
+}
+
+/// A share says how often the tool was reached for. It does not say whether the answer was
+/// enough — and an answer that always needs a file opened after it is a question we answered
+/// badly, not a search we won.
+private func printReadsAfterAnswers(_ report: AdoptionReport, indent: String = "") {
+    guard report.sextant > 0 else { return }
+    let share = Double(report.readAfterSextant) / Double(report.sextant)
+    print("""
+
+    \(indent)after \(report.readAfterSextant) of \(report.sextant) answers (\(Int((share * 100).rounded()))%) \
+    the next act was opening a file
+    \(indent)   — adjacency, not the same file: calls are recorded, not answers. High means our \
+    answers stop one step short.
+    """)
+    if report.crossCheckedAnswers > 0 {
+        let checked = Double(report.crossCheckedAnswers) / Double(report.sextant)
+        print("\(indent)\(report.crossCheckedAnswers) of \(report.sextant) answers (\(Int((checked * 100).rounded()))%) " +
+              "came in a call that also searched the sources — checked, or not enough")
+    }
 }
 
 /// What each shape says about the gap it represents. A phrase in prose is not sextant's business;
