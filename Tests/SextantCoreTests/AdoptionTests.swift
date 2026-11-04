@@ -116,6 +116,14 @@ struct AdoptionTests {
                          AdoptionSample(act: .sextant, shape: nil)]
         #expect(Adoption.readsAfterAnswers(in: unrelated) == 0)
         #expect(Adoption.readsAfterAnswers(in: []) == 0)
+
+        // A read written into the same call as the answer was decided before the answer was seen.
+        let sameCall = [AdoptionSample(act: .sextant, shape: nil, call: "1"),
+                        AdoptionSample(act: .fileRead, shape: .path, call: "1")]
+        #expect(Adoption.readsAfterAnswers(in: sameCall) == 0)
+        let nextCall = [AdoptionSample(act: .sextant, shape: nil, call: "1"),
+                        AdoptionSample(act: .fileRead, shape: .path, call: "2")]
+        #expect(Adoption.readsAfterAnswers(in: nextCall) == 1)
     }
 
     @Test("Each kind of call is counted once, and the rest is ignored")
@@ -155,6 +163,107 @@ struct AdoptionTests {
                                residue: [:], queries: []).share == 0.25)
     }
 
+    /// A session started in a worktree is kept by the client under the worktree's own slug; read
+    /// from the root alone, the transcripts missed most of a repository that is worked on in
+    /// worktrees, while the live log saw all of it.
+    @Test("Transcripts are gathered for the whole repository, worktrees included")
+    func gathersWorktreeTranscripts() throws {
+        let repository = try TemporaryRepository()
+        defer { repository.remove() }
+        let projects = repository.root.deletingLastPathComponent().appendingPathComponent("projects")
+        func session(in directory: String, cwd: String) throws {
+            let folder = projects.appendingPathComponent(directory)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let record = String(decoding: try JSONSerialization.data(withJSONObject: ["cwd": cwd, "type": "user"]), as: UTF8.self)
+            try record.write(to: folder.appendingPathComponent("\(UUID().uuidString).jsonl"), atomically: true, encoding: .utf8)
+        }
+        let main = repository.root.resolvingSymlinksInPath().path
+        let worktree = main + "/.claude/worktrees/feature"
+        try session(in: Adoption.slug(main), cwd: main)
+        try session(in: Adoption.slug(main) + "-Sources", cwd: main + "/Sources")
+        try session(in: Adoption.slug(worktree), cwd: worktree)
+        // A sibling whose slug happens to extend ours, and is another directory.
+        try session(in: Adoption.slug(main) + "-old", cwd: main + "-old")
+
+        #expect(Adoption.transcripts(forProjectRoot: main, in: projects).count == 3)
+        // Asked from a linked worktree, the repository — and so the answer — is the same.
+        #expect(Adoption.transcripts(forProjectRoot: repository.worktree.path, in: projects).count == 3)
+    }
+
+    @Test("Subagent transcripts are read however deep the client files them")
+    func readsNestedSubagents() throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("sextant-sub-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let session = base.appendingPathComponent("s.jsonl")
+        let nested = base.appendingPathComponent("s/subagents/workflows/wf_1")
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        try "".write(to: session, atomically: true, encoding: .utf8)
+        try "".write(to: base.appendingPathComponent("s/subagents/agent-a.jsonl"), atomically: true, encoding: .utf8)
+        try "".write(to: nested.appendingPathComponent("agent-b.jsonl"), atomically: true, encoding: .utf8)
+        #expect(Adoption.subagentTranscripts(of: session).map(\.lastPathComponent) == ["agent-a.jsonl", "agent-b.jsonl"])
+    }
+
+    @Test("The transcript directory is named the way the client names it")
+    func slugMatchesTheClient() {
+        #expect(Adoption.slug("/Users/a/PSBR-1_Screen Part5/app.x") == "-Users-a-PSBR-1-Screen-Part5-app-x")
+        #expect(Adoption.slug("/Users/a/Проект") == "-Users-a-------")
+    }
+
+    /// Working on sextant itself, most "answers" were runs of a fresh build against fixtures and
+    /// scratch directories — testing the tool, not navigating this repository.
+    @Test("A sextant call about another repository is not navigation of this one")
+    func callsAboutOtherProjects() throws {
+        let repository = try TemporaryRepository()
+        defer { repository.remove() }
+        let elsewhere = FileManager.default.temporaryDirectory.appendingPathComponent("sextant-elsewhere-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: elsewhere, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: elsewhere) }
+
+        let main = repository.root.path
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("sextant-t-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let calls = ["sextant refs A --project \(elsewhere.path)", "sextant refs B --project Sources/Core",
+                     "sextant refs C", "sextant search 'x' | head; grep -rn x Sources",
+                     "cd \(elsewhere.path) && sextant refs D --project .", "D=\(elsewhere.path); sextant refs E --project $D"]
+        let lines = try calls.map { command -> String in
+            let record: [String: Any] = ["cwd": main, "message": ["content": [
+                ["type": "tool_use", "name": "Bash", "input": ["command": command]]]]]
+            return String(decoding: try JSONSerialization.data(withJSONObject: record), as: UTF8.self)
+        }
+        try lines.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
+
+        let samples = Adoption.samples(inTranscript: file)
+        // The calls about another directory are gone; one inside this repository stays.
+        #expect(samples.filter { $0.act == .sextant }.count == 3)
+        #expect(samples.filter(\.crossChecked).count == 1)
+        #expect(samples.filter { $0.act == .textSearch }.count == 1)
+
+        // So is a search made after moving into another project.
+        let moved = FileManager.default.temporaryDirectory.appendingPathComponent("sextant-m-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: moved) }
+        let record: [String: Any] = ["cwd": main, "message": ["content": [
+            ["type": "tool_use", "name": "Bash", "input": ["command": "cd \(elsewhere.path) && grep -rn X Sources"]],
+            ["type": "tool_use", "name": "Bash", "input": ["command": "cd Sources && grep -rn Y ."]]]]]
+        try String(decoding: try JSONSerialization.data(withJSONObject: record), as: UTF8.self)
+            .write(to: moved, atomically: true, encoding: .utf8)
+        #expect(Adoption.samples(inTranscript: moved).filter { $0.act == .textSearch }.count == 1)
+    }
+
+    @Test("A subdirectory is the same project, inside a repository or outside any")
+    func subdirectoriesBelong() throws {
+        let plain = FileManager.default.temporaryDirectory.appendingPathComponent("sextant-plain-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: plain.appendingPathComponent("LocalPackages/Kit"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: plain) }
+        #expect(Adoption.isWithinProject("LocalPackages/Kit", of: plain.path))
+        #expect(Adoption.isWithinProject(plain.path + "/LocalPackages", of: plain.path))
+        #expect(!Adoption.isWithinProject("/somewhere/else", of: plain.path))
+        #expect(!Adoption.isWithinProject("..", of: plain.path))
+
+        let repository = try TemporaryRepository()
+        defer { repository.remove() }
+        #expect(Adoption.isWithinProject(repository.worktree.path, of: repository.root.appendingPathComponent("Sources").path))
+    }
+
     @Test("A project with no transcripts is reported as such, not as zero adoption")
     func missingTranscripts() {
         let root = "/nowhere-\(UUID().uuidString)"
@@ -167,16 +276,106 @@ struct AdoptionTests {
 struct AdoptionLogTests {
     @Test("A line carries an act and a shape, and nothing that identifies anything")
     func writesNothingIdentifying() throws {
-        // The log lives at a fixed path; this checks the shape of what would be written by
-        // encoding it the same way, rather than appending to the user's real file.
-        let entry: [String: Any] = [
-            "ts": 1_700_000_000, "project": AdoptionLog.projectKey(forRoot: "/Users/someone/Secret Project"),
-            "act": NavigationAct.textSearch.rawValue, "shape": QueryShape.identifier.rawValue
-        ]
+        // The log lives at a fixed path; this checks what would be written, rather than appending
+        // to the user's real file.
+        let entry = AdoptionLog.entry(act: .textSearch, shape: .identifier, channel: nil, session: "s-1", agent: nil,
+                                      projectRoot: "/Users/someone/Secret Project", timestamp: 1_700_000_000)
         let line = String(decoding: try JSONSerialization.data(withJSONObject: entry, options: [.sortedKeys]), as: UTF8.self)
         #expect(!line.contains("Secret"))
         #expect(!line.contains("/Users"))
         #expect(line.contains("textSearch") && line.contains("identifier"))
+        #expect(entry["v"] as? Int == AdoptionLog.schemaVersion)
+        #expect(entry["session"] as? String == "s-1")
+        // A channel belongs to a sextant answer only; an absent agent is the main conversation.
+        #expect(entry["via"] == nil)
+        #expect(entry["agent"] == nil)
+
+        let answer = AdoptionLog.entry(act: .sextant, shape: nil, channel: .mcp, session: "s-1", agent: "a-7",
+                                       projectRoot: "/p", timestamp: 1)
+        #expect(answer["via"] as? String == "mcp")
+        #expect(answer["agent"] as? String == "a-7")
+        #expect(answer["checked"] == nil)
+        let checked = AdoptionLog.entry(act: .sextant, shape: nil, channel: .cli, crossChecked: true,
+                                        session: "s-1", agent: nil, projectRoot: "/p", timestamp: 1)
+        #expect(checked["checked"] as? Int == 1)
+        let key = AdoptionLog.projectKey(forRoot: "/p")
+        let contents = [self.line(checked), self.line(answer)].joined(separator: "\n")
+        #expect(AdoptionLog.report(forProjectKey: key, in: contents).crossCheckedAnswers == 1)
+    }
+
+    private func line(_ entry: [String: Any]) -> String {
+        String(decoding: try! JSONSerialization.data(withJSONObject: entry, options: [.sortedKeys]), as: UTF8.self)
+    }
+
+    private func entry(_ act: NavigationAct, _ channel: NavigationChannel? = nil, session: String,
+                       agent: String? = nil, project: String = "/p") -> String {
+        line(AdoptionLog.entry(act: act, shape: act == .textSearch ? .identifier : nil, channel: channel,
+                               session: session, agent: agent, projectRoot: project, timestamp: 1))
+    }
+
+    @Test("The report counts sessions, splits the channels, and leaves the earlier format out")
+    func readsTheCurrentFormat() {
+        let key = AdoptionLog.projectKey(forRoot: "/p")
+        // The first format, as it was written for months: no version, no session.
+        let legacy = line(["ts": 1, "project": key, "act": "sextant", "shape": "path"])
+        let contents = [
+            legacy, legacy,
+            entry(.sextant, .mcp, session: "one"),
+            entry(.textSearch, session: "one"),
+            entry(.sextant, .cli, session: "two"),
+            entry(.fileRead, session: "two"),
+            entry(.textSearch, session: "two", project: "/elsewhere"),
+            "not json at all"
+        ].joined(separator: "\n")
+
+        let report = AdoptionLog.report(forProjectKey: key, in: contents)
+        #expect(report.sessions == 2)
+        #expect(report.sextant == 2)
+        #expect(report.throughMCP == 1)
+        #expect(report.throughCLI == 1)
+        #expect(report.textSearch == 1)          // the other project's search is not ours
+        #expect(report.fileRead == 1)
+        #expect(report.legacyRecords == 2)       // counted apart, never added
+        #expect(report.residue[.identifier] == 1)
+    }
+
+    @Test("Lines of the first format are found under every directory of the project, and a later format is skipped")
+    func findsLegacyLinesOfWorktrees() {
+        let key = AdoptionLog.projectKey(forRoot: "/p")
+        let worktree = AdoptionLog.legacyKey(forDirectory: "/p/.claude/worktrees/w")
+        let contents = [
+            line(["ts": 1, "project": worktree, "act": "textSearch", "shape": "identifier"]),
+            line(["ts": 1, "project": AdoptionLog.legacyKey(forDirectory: "/q"), "act": "textSearch", "shape": ""]),
+            line(["v": AdoptionLog.schemaVersion + 1, "ts": 1, "project": key, "act": "sextant", "shape": ""]),
+            entry(.textSearch, session: "one"),
+        ].joined(separator: "\n")
+        let report = AdoptionLog.report(forProjectKey: key, legacyKeys: [worktree], in: contents)
+        #expect(report.legacyRecords == 1)       // the worktree's, not the other project's
+        #expect(report.navigation == 1)          // the later format is neither counted nor legacy
+    }
+
+    /// Sessions run side by side and their hook lines interleave in the file. Read in file order,
+    /// one session's read would be taken for the follow-up of another session's answer.
+    @Test("An answer is followed by a read only within its own session and agent")
+    func followUpsDoNotCrossSessions() {
+        let key = AdoptionLog.projectKey(forRoot: "/p")
+        let contents = [
+            entry(.sextant, .mcp, session: "one"),
+            entry(.fileRead, session: "two"),             // another session's read
+            entry(.sextant, .cli, session: "two", agent: "sub"),
+            entry(.fileRead, session: "two"),             // the parent's read, not the subagent's
+            entry(.fileRead, session: "one"),             // the real follow-up of the first answer
+        ].joined(separator: "\n")
+        #expect(AdoptionLog.report(forProjectKey: key, in: contents).readAfterSextant == 1)
+    }
+
+    @Test("Every worktree and subdirectory of a repository is one project")
+    func projectKeyIsTheRepository() throws {
+        let main = try TemporaryRepository()
+        defer { main.remove() }
+        let key = AdoptionLog.projectKey(forRoot: main.root.path)
+        #expect(AdoptionLog.projectKey(forRoot: main.root.appendingPathComponent("Sources/Core").path) == key)
+        #expect(AdoptionLog.projectKey(forRoot: main.worktree.path) == key)
     }
 
     @Test("The project key is stable and does not spell the path")

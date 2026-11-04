@@ -38,6 +38,39 @@ Human-readable text output is not covered — parse `--json`, not prose.
 
 ### Fixed
 
+- **The adoption metric counts what a command runs, not the words in it.** A shell line is split
+  into the commands it actually runs. `sextant` counts only when it runs a navigation command —
+  not `--help`, `hook` or `index`, and not a path such as `cd ~/Tools/sextant`, which made up 239 of
+  640 "calls" in two months of the first log. A search tool counts only when it searches files —
+  first in its pipeline, fed by `xargs` or `find -exec`, or reading the sources or a list of them
+  through a pipe; `swift build | grep error` filters a build log, and such lines were 28 % of what
+  was counted as text search. A search limited to files other than sources — `grep -n X docs/a.md`,
+  `rg -g '*.md'`, the `Grep` tool with `glob: "*.md"`, `Glob` of `**/*.md` — is not counted, the way
+  a `Read` of a README never was; a target held in a variable set in the same line is judged by its
+  value. A call counts every kind of act it ran, once each: `sextant search X | head; grep -rn X
+  Sources` is an answer and a search, and the answer is marked as cross-checked — in real sessions
+  about a fifth to a quarter of the lines asking sextant also grepped the sources. An act made
+  about another project — after a `cd` there, or a sextant call with `--project` there — is not
+  counted for this one; the live log records it under the project it was about. `lint` is not counted as navigation:
+  it judges the code rather than finding anything in it.
+  Commands inside `for`, `if` and `{ }` count; heredoc bodies and
+  comments do not; `git grep` counts. A source file printed with `cat`, `sed -n`, `head` or `tail`
+  is a read, the same act as the `Read` tool — before, those reads were missing from the
+  denominator. The pattern of a search is found past `--type swift`, `-j 4`, `--exclude-dir X` and
+  `--`, which used to be reported as the pattern. MCP tools of a plugin-bundled server
+  (`mcp__plugin_sextant_sextant__…`) were not recognised at all and now are.
+- **The live log keys a project by its repository.** Every worktree and subdirectory of a
+  repository is one project; before, each directory a session stood in was its own. Lines carry
+  `"v": 2`, the client's session and subagent identifiers, and `via` (`mcp` or `cli`) for a
+  sextant answer. Lines of the first format are not added to the new ones: `sextant adoption`
+  names how many it left out.
+- **`sextant adoption`** reads the whole repository: transcripts of its worktrees and
+  subdirectories, admitted by the directory each session stood in, and the transcripts of
+  subagents, workflow agents included. It splits answers into MCP and CLI, counts live sessions,
+  finds a read after an answer only within one session and agent, and reports from the live log
+  alone when the client kept no transcripts. It names how many answers were cross-checked by a
+  search in the same call. `--json` gains `transcripts`, `throughMCP`, `throughCLI`,
+  `readAfterSextant`, `crossCheckedAnswers` and a `live` object; no field was removed.
 - **`sextant index` says when the store it just built holds none of the project's tests.** The
   SwiftPM path builds them; the Xcode path cannot be fixed the same way, and this is measured rather
   than assumed: `xcodebuild build-for-testing` builds the test targets and writes **no index store at

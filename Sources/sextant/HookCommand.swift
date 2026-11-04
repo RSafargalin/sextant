@@ -15,20 +15,17 @@ func runHook(arguments: [String]) -> Int32 {
     guard let event = try? JSONSerialization.jsonObject(with: input) as? [String: Any],
           let tool = event["tool_name"] as? String else { return 0 }
 
-    let toolInput = event["tool_input"] as? [String: Any]
-    let query = (toolInput?["pattern"] as? String)
-        ?? (toolInput?["command"] as? String)
-        ?? (toolInput?["file_path"] as? String)
-    let act = NavigationAct.of(tool: tool, command: query)
-    guard act != .other else { return 0 }
-
-    // A shell search is classified by its pattern, not by the command line carrying it.
-    let searched = (tool == "Bash" && act == .textSearch)
-        ? query.flatMap(NavigationAct.searchPattern(inShellCommand:))
-        : query
-    let root = (event["cwd"] as? String) ?? projectRoot(in: arguments)
-    AdoptionLog.record(act: act, shape: searched.map(QueryShape.of), projectRoot: root,
-                       timestamp: Date().timeIntervalSince1970)
+    // The project is the repository the session stands in, whichever worktree or subdirectory —
+    // or, for an act the line moved elsewhere, the project it was about.
+    let cwd = (event["cwd"] as? String) ?? projectRoot(in: arguments)
+    let now = Date().timeIntervalSince1970
+    for act in NavigationAct.events(tool: tool, input: event["tool_input"] as? [String: Any]) {
+        AdoptionLog.record(act: act.act, shape: act.shape, channel: act.channel, crossChecked: act.crossChecked,
+                           session: event["session_id"] as? String, agent: event["agent_id"] as? String,
+                           call: event["tool_use_id"] as? String,
+                           projectRoot: act.project.flatMap { Adoption.isWithinProject($0, of: cwd) ? nil : Adoption.resolve($0, from: cwd) } ?? cwd,
+                           timestamp: now)
+    }
     return 0
 }
 
@@ -44,9 +41,13 @@ private func printHookInstallation() -> Int32 {
     \(AdoptionLog.installationSnippet(binaryPath: binary))
 
     What gets written to \(AdoptionLog.path().path):
-      a timestamp, a hash of the project root, the kind of act, and the shape of the query.
-    Not the query, not the command, not the file path, not the project path. Nothing is sent
-    anywhere. Delete the file to erase it; remove the hook to stop it.
+      a timestamp, a hash of the repository root, the kind of act, the shape of the query,
+      MCP or CLI for a sextant answer, and the client's session, subagent and tool-call
+      identifiers.
+    Not the query, not the command, not the file path, not the project path. The session
+    identifier is also the name of that session's transcript, so anyone who can read your
+    transcripts can tell which project a line is about. Nothing is sent anywhere. Delete the
+    file to erase it; remove the hook to stop it.
     """)
     return 0
 }
