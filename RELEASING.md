@@ -35,19 +35,24 @@ contract — see [CHANGELOG.md](CHANGELOG.md).
 2. In both changelogs, rename `## [Unreleased]` to `## [X.Y.Z] — YYYY-MM-DD` and add a fresh
    empty `## [Unreleased]` above it.
 3. Update the version references found by the `grep` above: the "version 0.N.x" line in both
-   READMEs, `V=…` in the download snippet, and the environment line in both benchmark pages.
-   If the benchmarks were not re-measured, only the version string changes — the numbers are
-   a record of what was measured and stay as they are.
-4. Re-run the recipes in [docs/recipes.md](docs/recipes.md) against the commit named there.
+   READMEs and `V=…` in the download snippet.
+4. Re-measure the benchmarks and append a row per repository to
+   [docs/measurements/history.md](docs/measurements/history.md) (and its Russian copy), naming
+   what produced the numbers; then bring both benchmark pages, and the summary table in both
+   READMEs, to the new numbers. If you do not re-measure, leave the benchmark pages alone,
+   environment line included: a version there claims a measurement of that version. A number
+   that moved without the packages moving is a finding — say why on the history page, or that
+   it is not known.
+5. Re-run the recipes in [docs/recipes.md](docs/recipes.md) against the commit named there.
    Every block on that page is real output, which is the only reason it is worth reading — when
    the output has moved, update the blocks, and bump the commit if the package has moved on.
-5. Run the full local check:
+6. Run the full local check:
 
    ```bash
    make ci
    ```
 
-6. Commit and push. **Wait for CI to go green before tagging.**
+7. Commit and push. **Wait for CI to go green before tagging.**
 
 ## 2. Tag
 

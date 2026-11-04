@@ -22,7 +22,7 @@ sextant index          # сборка, ~минута; семантическим
 ```console
 $ sextant blast Session
 ── blast radius: Session [class]
-   a change would touch: 7 files · 25 usages · 0 calls
+   a change would touch: 33 files · 504 usages · 0 calls
      Source/Alamofire.swift
      Source/Core/Session.swift
      Source/Features/AuthenticationInterceptor.swift
@@ -31,7 +31,8 @@ $ sextant blast Session
 
 Одна команда вместо грепа по имени и открывания всего, что нашлось. `blast` считает
 использования, места вызова и реализации, поэтому «0 calls» у класса — это ответ, а не пробел:
-у типа мест вызова не бывает. Мало — прочитайте файлы; 25 в 7 файлах — вот объём ревью.
+у типа мест вызова не бывает. Мало — прочитайте файлы; 504 в 33 файлах — вот объём ревью, и раз
+индекс держит тестовые таргеты, тест, который перестанет компилироваться, в этом счёте тоже есть.
 
 ## Что этот тип выставляет наружу?
 
@@ -46,13 +47,18 @@ Source/Core/Session.swift
     …
 ```
 
-Сигнатуры и doc-саммари, без тел — на наборе замеров это на 79–91% меньше байт, чем чтение
+Сигнатуры и doc-саммари, без тел — на наборе замеров это на 79–90% меньше байт, чем чтение
 исходников. `--package` для целого таргета, `--scope` для подкаталога.
 
 ## Кто это вызывает на самом деле, через протокол?
 
 ```console
 $ sextant callers validate
+── validate()  [instanceMethod]
+   def: Source/Features/Validation.swift:188:17  public func validate() -> Self {
+   calls: 77 in 5 file(s)
+     Tests/AuthenticationInterceptorTests.swift: 159, 197, 237, 242, 282, 316, 351, 396, 431, …
+     …
 ── validate(policy:errorProducer:)  [instanceMethod]
    def: Source/Features/ServerTrustEvaluation.swift:521:17  public func validate(policy: SecPolicy, …) throws {
    calls: 3 in 1 file(s)
@@ -68,7 +74,7 @@ $ sextant callers validate
 $ sextant context RetryResult
 ── RetryResult  [enum]
    def: Source/Features/RequestInterceptor.swift:67  public enum RetryResult: Sendable {
-   usages: 17
+   usages: 57
      • Source/Core/Request.swift:1271  func retryResult(for request: Request, dueTo error: AFError, …)
      • Source/Core/Session.swift:1349  public func retryResult(for request: Request, …) {
      …
@@ -81,7 +87,7 @@ $ sextant context RetryResult
 
 ```console
 $ sextant impls RequestInterceptor
-── RequestInterceptor: 7
+── RequestInterceptor: 13
    • AuthenticationInterceptor [class]  Source/Features/AuthenticationInterceptor.swift:160  …
    • OfflineRetrier [class]  Source/Features/OfflineRetrier.swift:31  …
    • DeflateRequestCompressor [struct]  Source/Features/RequestCompression.swift:39  …

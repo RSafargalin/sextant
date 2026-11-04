@@ -92,9 +92,9 @@ yourself are in [docs/benchmarks.md](docs/benchmarks.md):
 
 | Task | Saving vs reading the sources |
 |---|---|
-| Learn a package's public surface | **79–91%** |
-| Learn one type, including all its extensions | **83–95%** |
-| Repeat a query on an unchanged tree | up to **112×** faster (content-hash cache) |
+| Learn a package's public surface | **79–90%** |
+| Learn one type, including all its extensions | **83–94%** |
+| Repeat a query on an unchanged tree | up to **68×** faster (content-hash cache) |
 
 The unit is bytes of output, because bytes are exactly reproducible while a token count
 depends on the tokenizer. The comparison holds for the task "understand the surface", not
@@ -227,7 +227,7 @@ tap rather than homebrew-core.
 **2. Prebuilt binary from a release** — macOS universal (arm64 + x86_64), no Homebrew:
 
 ```bash
-V=0.9.0
+V=0.9.1
 curl -fsSL -O "https://github.com/RSafargalin/sextant/releases/download/v$V/sextant-$V-macos-universal.tar.gz"
 shasum -a 256 "sextant-$V-macos-universal.tar.gz"   # compare with the sha256 in the release notes
 tar -xzf "sextant-$V-macos-universal.tar.gz"
