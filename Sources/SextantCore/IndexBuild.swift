@@ -16,6 +16,13 @@ public enum IndexBuild {
         ["build", "--enable-index-store"] + (buildTests ? ["--build-tests"] : []) + ["-v"]
     }
 
+    /// What to say when a build succeeds and leaves no store. SwiftPM's Swift Build system treats
+    /// a package built without an index store as up to date when asked to build it with one, and
+    /// a build that compiles nothing indexes nothing.
+    public static let upToDateBuildNote =
+        "   A package that was already built without an index store counts as up to date, and an "
+        + "up-to-date build indexes nothing: `swift package clean`, then run this again."
+
     /// Where the output of the last `swift build` run for a project is kept.
     public static func buildLog(forRoot root: String) -> URL {
         umbrellaDirectory(forRoot: root).appendingPathComponent("swift-build.log")

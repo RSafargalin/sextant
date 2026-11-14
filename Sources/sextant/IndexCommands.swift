@@ -393,6 +393,7 @@ func runIndex(arguments: [String]) -> Int32 {
         }
         guard let store = IndexStoreLocator.candidates(under: root).first(where: \.isUsable)?.path else {
             reportError("sextant index: the build succeeded, but it left no index store with units under \(package.path)/.build.")
+            reportError(IndexBuild.upToDateBuildNote)
             return 1
         }
         print("\nindex ready: \(store)")
@@ -442,6 +443,7 @@ func runIndex(arguments: [String]) -> Int32 {
     }
     guard let store = IndexBuild.umbrellaStorePath(forRoot: rootPath) else {
         reportError("sextant index: the umbrella build succeeded, but it left no index store with units under \(umbrella.path)/.build.")
+        reportError(IndexBuild.upToDateBuildNote)
         return 1
     }
     print("\nindex ready (single store): \(store)")

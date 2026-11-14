@@ -26,7 +26,8 @@ Human-readable text output is not covered — parse `--json`, not prose.
   `sextant index` runs. Its output therefore goes to a log, whose path is printed, instead of the
   terminal. One limit follows and is stated when it applies: a build that compiles nothing states
   no flags, so a package built before its first `sextant index` needs `swift package clean`
-  once. Flags captured earlier are kept.
+  once. Flags captured earlier are kept. The same holds for the store itself: a package already
+  built without an index store counts as up to date and gets none, and the message now says so.
 - **Over MCP, "the 10 most used" symbols sharing a name were the first ten by USR.** The cut
   relied on an order only the CLI produced. The answer now orders the symbols itself, so every
   surface keeps the most used, and the usages of the symbols left out are counted from the
