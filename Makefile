@@ -7,8 +7,9 @@ build:
 # The C-family tests need the fixture built AND its compile flags captured: without them they
 # skip themselves, and a green run would mean nothing was checked. Doing it here is what keeps
 # the local run and CI honest about the same thing.
+# `sextant index` runs the build itself. Building the fixture first would leave it nothing to
+# compile, and under SwiftPM's Swift Build system the flags are read from what a build compiles.
 fixture: build
-	swift build --package-path Tests/Fixtures/IndexFixture --enable-index-store
 	$$(swift build --show-bin-path)/sextant index --project Tests/Fixtures/IndexFixture >/dev/null
 
 test:

@@ -18,12 +18,7 @@ struct SurvivalTests {
     private static var binary: URL? {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let build = root.appendingPathComponent(".build")
-        for triple in (try? FileManager.default.contentsOfDirectory(atPath: build.path)) ?? [] {
-            let candidate = build.appendingPathComponent("\(triple)/debug/sextant")
-            if FileManager.default.isExecutableFile(atPath: candidate.path) { return candidate }
-        }
-        return nil
+        return BuildProducts.sextantBinary(under: root)
     }
 
     private func sextant(_ arguments: [String], environment: [String: String] = [:]) throws -> String {
@@ -152,13 +147,7 @@ struct SurvivalTests {
         build.waitUntilExit()
         guard build.terminationStatus == 0 else { return }
 
-        let buildDirectory = root.appendingPathComponent(".build")
-        var store: String?
-        for triple in (try? FileManager.default.contentsOfDirectory(atPath: buildDirectory.path)) ?? [] {
-            let candidate = buildDirectory.appendingPathComponent("\(triple)/debug/index/store").path
-            if FileManager.default.fileExists(atPath: candidate) { store = candidate }
-        }
-        let path = try #require(store, "the fixture did not produce an index store")
+        let path = try #require(BuildProducts.indexStore(under: root), "the fixture did not produce an index store")
 
         // Sanity: with the store intact the symbol is found. Without this the test could pass on a
         // tool that never answers anything.

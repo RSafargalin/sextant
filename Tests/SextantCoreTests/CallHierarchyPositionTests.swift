@@ -11,12 +11,7 @@ struct CallHierarchyPositionTests {
     private static var binary: URL? {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let build = root.appendingPathComponent(".build")
-        for triple in (try? FileManager.default.contentsOfDirectory(atPath: build.path)) ?? [] {
-            let candidate = build.appendingPathComponent("\(triple)/debug/sextant")
-            if FileManager.default.isExecutableFile(atPath: candidate.path) { return candidate }
-        }
-        return nil
+        return BuildProducts.sextantBinary(under: root)
     }
 
     private struct Output { let stdout: String, stderr: String; var all: String { stdout + stderr } }
@@ -69,12 +64,7 @@ struct CallHierarchyPositionTests {
         try? build.run()
         build.waitUntilExit()
         guard build.terminationStatus == 0 else { return nil }
-        let buildDirectory = root.appendingPathComponent(".build")
-        for triple in (try? FileManager.default.contentsOfDirectory(atPath: buildDirectory.path)) ?? [] {
-            let store = buildDirectory.appendingPathComponent("\(triple)/debug/index/store").path
-            if FileManager.default.fileExists(atPath: store) { return (root, store) }
-        }
-        return nil
+        return BuildProducts.indexStore(under: root).map { store in (root, store) }
     }
 
     @Test("a callee is shown where it is defined, and its call site is named separately")

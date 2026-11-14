@@ -16,10 +16,13 @@ public struct CompileCommand: Codable, Equatable, Sendable {
 
 /// Where the compile flags for Objective-C, C and C++ come from.
 ///
-/// They are read from the build graph, not scraped from build output. SwiftPM writes the whole
-/// graph to `.build/<configuration>.yaml`, where every clang node carries its arguments as a JSON
-/// array. That avoids shell quoting entirely, and it avoids the incremental hole: a rebuild that
-/// compiles nothing prints nothing, while the manifest still describes every file.
+/// They are read from the build graph wherever one exists. SwiftPM's native build system writes
+/// the whole graph to `.build/<configuration>.yaml`, where every clang node carries its arguments
+/// as a JSON array. That avoids shell quoting entirely, and it avoids the incremental hole: a
+/// rebuild that compiles nothing prints nothing, while the manifest still describes every file.
+///
+/// SwiftPM's Swift Build system and Xcode write no such graph. There the flags are read from the
+/// build's own output, which states them only for the files it compiled.
 ///
 /// Approximate flags are not an option — with them clang builds an AST for a quarter of the files
 /// and fails outright on the rest, which is worse than refusing. A file absent from the database
@@ -156,6 +159,52 @@ public enum CompilationDatabase {
         return results
     }
 
+    // MARK: - Reading a verbose SwiftPM build log
+
+    /// Compile commands from the output of `swift build -v`.
+    ///
+    /// SwiftPM's Swift Build system writes no graph with arguments in it: its manifest names the
+    /// compile nodes and a response file holding part of their flags, and the whole invocation is
+    /// stated only in verbose output, as
+    ///
+    ///     Compile <source> (<arch>)
+    ///         cd <directory>
+    ///         <the full clang invocation>
+    ///
+    /// The header carries a bare file name, so the source is taken from the invocation itself —
+    /// the argument `-c` introduces. A dependency scan repeats the same flags behind a `builtin-`
+    /// prefix and a link step runs clang with no `-c`; neither is a compile and neither is read.
+    ///
+    /// A build that compiles nothing prints no invocation, so an incremental run yields an empty
+    /// result — the caller keeps what an earlier capture found and says so when there is none.
+    public static func commands(inBuildLog log: String) -> [CompileCommand] {
+        var byFile: [String: CompileCommand] = [:]
+        var order: [String] = []
+        var directory: String?
+
+        for rawLine in log.split(separator: "\n", omittingEmptySubsequences: false) {
+            let trimmed = rawLine.trimmingCharacters(in: .whitespaces)
+            // A task block ends at an empty line or at the next unindented header; the directory
+            // belongs to its own block only.
+            if !rawLine.hasPrefix(" "), !rawLine.hasPrefix("\t"), !trimmed.isEmpty { directory = nil }
+            if trimmed.hasPrefix("cd ") {
+                directory = ShellWords.split(String(trimmed.dropFirst(3))).first
+                continue
+            }
+            guard trimmed.hasPrefix("/"), trimmed.contains(" -c ") else { continue }
+            let words = ShellWords.split(trimmed)
+            guard let executable = words.first, (executable as NSString).lastPathComponent.hasPrefix("clang"),
+                  let flag = words.firstIndex(of: "-c"), flag + 1 < words.endIndex else { continue }
+            let file = words[flag + 1]
+            guard compilableExtensions.contains((file as NSString).pathExtension) else { continue }
+            let arguments = ShellWords.expandingResponseFiles(words)
+            if byFile[file] == nil { order.append(file) }
+            byFile[file] = CompileCommand(directory: directory ?? (file as NSString).deletingLastPathComponent,
+                                          file: file, arguments: arguments)
+        }
+        return order.compactMap { byFile[$0] }
+    }
+
     // MARK: - Storage
 
     /// The database for a project, kept in the cache directory rather than in the project.
@@ -258,7 +307,8 @@ public enum CompilationDatabase {
         var index = command.arguments.startIndex
         // The first argument is the compiler executable, not a flag.
         if index < command.arguments.endIndex { index += 1 }
-        let flagsWithPathValue: Set<String> = ["-o", "-MF", "-MT", "-MQ", "-index-store-path", "-serialize-diagnostics"]
+        let flagsWithPathValue: Set<String> = ["-o", "-MF", "-MT", "-MQ", "-index-store-path", "-index-unit-output-path",
+                                                "-serialize-diagnostics", "--serialize-diagnostics"]
         while index < command.arguments.endIndex {
             let argument = command.arguments[index]
             if flagsWithPathValue.contains(argument) { index += 2; continue }

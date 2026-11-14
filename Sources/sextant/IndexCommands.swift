@@ -98,9 +98,30 @@ func indexIsStale(paths: [String], root: String) -> Bool {
 /// project. Nothing is captured for an Xcode build (it describes itself elsewhere), and an empty
 /// capture never replaces a database that already has entries — silently losing the flags would
 /// turn later structural queries into refusals with no explanation.
-func captureCompileDatabase(root: String, stores: [String]) {
-    saveCompileDatabase(CompilationDatabase.capture(fromStores: stores), forRoot: root,
-                        emptyReason: "no clang commands in the build graph")
+func captureCompileDatabase(root: String, stores: [String], buildLog: URL) {
+    // The native build system writes a graph that describes every file, compiled this time or
+    // not, so it is read first. The Swift Build system writes none, and there the flags are read
+    // from what the build just printed.
+    let fromGraph = CompilationDatabase.capture(fromStores: stores)
+    guard fromGraph.isEmpty else {
+        saveCompileDatabase(fromGraph, forRoot: root, emptyReason: "")
+        return
+    }
+    let log = (try? String(contentsOf: buildLog, encoding: .utf8)) ?? ""
+    saveCompileDatabase(CompilationDatabase.commands(inBuildLog: log), forRoot: root,
+                        emptyReason: "no clang commands in the build graph or the build log (an incremental build compiles nothing — `swift package clean`, then run this again)")
+}
+
+/// Runs `swift build` for an index, with its output in a log rather than on the terminal: the
+/// build is verbose, and a failure is reported with the end of that log.
+private func runSwiftBuild(_ build: [String], in directory: URL, log: URL) -> Int32 {
+    try? FileManager.default.createDirectory(at: log.deletingLastPathComponent(), withIntermediateDirectories: true)
+    print("   build log: \(log.path)")
+    let status = Command.status("/usr/bin/env", ["swift"] + build, in: directory, loggingTo: log)
+    if status != 0, let text = try? String(contentsOf: log, encoding: .utf8) {
+        text.split(separator: "\n").suffix(30).forEach { reportError("   \($0)") }
+    }
+    return status
 }
 
 /// Stores a fresh capture, merged with what was already known. Nothing is lost when a project is
@@ -111,7 +132,15 @@ func saveCompileDatabase(_ captured: [CompileCommand], forRoot root: String, emp
     guard !sources.isEmpty else { return }
 
     guard !captured.isEmpty else {
-        reportError("⚠ compile database: \(emptyReason) — \(sources.count) Objective-C/C/C++ file(s) will not be readable structurally.")
+        // A build that compiled nothing states no flags, and that is not a loss when an earlier
+        // one already did: changed flags would have recompiled the file and been printed.
+        let known = CompilationDatabase.load(forRoot: root)
+        let missing = CompilationDatabase.missingSources(known, among: sources)
+        guard !missing.isEmpty else {
+            print("compile database: \(known.count) file(s), kept from an earlier build — this one compiled none of them")
+            return
+        }
+        reportError("⚠ compile database: \(emptyReason) — \(missing.count) Objective-C/C/C++ file(s) will not be readable structurally.")
         return
     }
     let merged = CompilationDatabase.merge(existing: CompilationDatabase.load(forRoot: root), fresh: captured)
@@ -356,15 +385,19 @@ func runIndex(arguments: [String]) -> Int32 {
         let package = packageDirs[0]
         let build = IndexBuild.swiftBuildArguments(buildTests: !arguments.contains("--no-tests"))
         print("▶ swift \(build.joined(separator: " ")): \(package.lastPathComponent)")
-        let status = Command.status("/usr/bin/env", ["swift"] + build, in: package)
-        guard status == 0,
-              let store = IndexStoreLocator.candidates(under: root).first(where: \.isUsable)?.path else {
+        let log = IndexBuild.buildLog(forRoot: rootPath)
+        let status = runSwiftBuild(build, in: package, log: log)
+        guard status == 0 else {
             reportError("sextant index: build failed (code \(status)).")
+            return 1
+        }
+        guard let store = IndexStoreLocator.candidates(under: root).first(where: \.isUsable)?.path else {
+            reportError("sextant index: the build succeeded, but it left no index store with units under \(package.path)/.build.")
             return 1
         }
         print("\nindex ready: \(store)")
         reportTestCoverage(ofStore: store, root: rootPath, arguments: arguments, isXcode: false)
-        captureCompileDatabase(root: rootPath, stores: [store])
+        captureCompileDatabase(root: rootPath, stores: [store], buildLog: log)
         return 0
     }
 
@@ -401,14 +434,19 @@ func runIndex(arguments: [String]) -> Int32 {
 
     let build = IndexBuild.swiftBuildArguments(buildTests: !arguments.contains("--no-tests"))
     print("▶ umbrella build (\(packages.count) packages, one pass): swift \(build.joined(separator: " "))")
-    let status = Command.status("/usr/bin/env", ["swift"] + build, in: umbrella)
-    guard status == 0, let store = IndexBuild.umbrellaStorePath(forRoot: rootPath) else {
+    let log = IndexBuild.buildLog(forRoot: rootPath)
+    let status = runSwiftBuild(build, in: umbrella, log: log)
+    guard status == 0 else {
         reportError("sextant index: umbrella build failed (code \(status)).")
+        return 1
+    }
+    guard let store = IndexBuild.umbrellaStorePath(forRoot: rootPath) else {
+        reportError("sextant index: the umbrella build succeeded, but it left no index store with units under \(umbrella.path)/.build.")
         return 1
     }
     print("\nindex ready (single store): \(store)")
     reportTestCoverage(ofStore: store, root: rootPath, arguments: arguments, isXcode: false)
-    captureCompileDatabase(root: rootPath, stores: [store])
+    captureCompileDatabase(root: rootPath, stores: [store], buildLog: log)
     return 0
 }
 

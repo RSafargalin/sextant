@@ -24,13 +24,7 @@ struct IndexStoreIntegrationTests {
 
         _ = run("/usr/bin/env", ["swift", "build", "--enable-index-store", "--package-path", fixture.path])
 
-        let build = fixture.appendingPathComponent(".build")
-        var storePath: String?
-        for triple in (try? FileManager.default.contentsOfDirectory(atPath: build.path)) ?? [] {
-            let candidate = build.appendingPathComponent("\(triple)/debug/index/store").path
-            if FileManager.default.fileExists(atPath: candidate) { storePath = candidate }
-        }
-        let store = try #require(storePath, "the index store was not built")
+        let store = try #require(BuildProducts.indexStore(under: fixture), "the index store was not built")
 
         let databasePath = FileManager.default.temporaryDirectory.appendingPathComponent("sextant-fixture-\(UUID().uuidString)").path
         let index = try IndexStore(storePath: store, libraryPath: library, databasePath: databasePath)

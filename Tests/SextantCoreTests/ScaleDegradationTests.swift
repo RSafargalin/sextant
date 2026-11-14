@@ -12,12 +12,7 @@ struct ScaleDegradationTests {
     private static var binary: URL? {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let build = root.appendingPathComponent(".build")
-        for triple in (try? FileManager.default.contentsOfDirectory(atPath: build.path)) ?? [] {
-            let candidate = build.appendingPathComponent("\(triple)/debug/sextant")
-            if FileManager.default.isExecutableFile(atPath: candidate.path) { return candidate }
-        }
-        return nil
+        return BuildProducts.sextantBinary(under: root)
     }
 
     private struct Output { let stdout: String, stderr: String, code: Int32; var all: String { stdout + stderr } }

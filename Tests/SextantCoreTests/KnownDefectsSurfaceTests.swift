@@ -13,12 +13,7 @@ struct KnownDefectsSurfaceTests {
     private static var binary: URL? {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let build = root.appendingPathComponent(".build")
-        for triple in (try? FileManager.default.contentsOfDirectory(atPath: build.path)) ?? [] {
-            let candidate = build.appendingPathComponent("\(triple)/debug/sextant")
-            if FileManager.default.isExecutableFile(atPath: candidate.path) { return candidate }
-        }
-        return nil
+        return BuildProducts.sextantBinary(under: root)
     }
 
     private struct Output {
@@ -75,7 +70,7 @@ struct KnownDefectsSurfaceTests {
 
     private struct Fixture { let root: URL; let store: String }
 
-    private func buildFixture(name: String, files: [String: String], manifest: String) -> Fixture? {
+    private func writeFixture(name: String, files: [String: String], manifest: String) -> URL {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("sextant-surface-\(name)-\(UUID().uuidString)")
         var all = files
@@ -85,6 +80,11 @@ struct KnownDefectsSurfaceTests {
             try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
             try? contents.write(to: file, atomically: true, encoding: .utf8)
         }
+        return root
+    }
+
+    private func buildFixture(name: String, files: [String: String], manifest: String) -> Fixture? {
+        let root = writeFixture(name: name, files: files, manifest: manifest)
         let build = Process()
         build.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         build.arguments = ["swift", "build", "--enable-index-store", "--package-path", root.path]
@@ -93,12 +93,7 @@ struct KnownDefectsSurfaceTests {
         try? build.run()
         build.waitUntilExit()
         guard build.terminationStatus == 0 else { return nil }
-        let buildDirectory = root.appendingPathComponent(".build")
-        for triple in (try? FileManager.default.contentsOfDirectory(atPath: buildDirectory.path)) ?? [] {
-            let candidate = buildDirectory.appendingPathComponent("\(triple)/debug/index/store").path
-            if FileManager.default.fileExists(atPath: candidate) { return Fixture(root: root, store: candidate) }
-        }
-        return nil
+        return BuildProducts.indexStore(under: root).map { candidate in Fixture(root: root, store: candidate) }
     }
 
     /// A mixed package: one Swift target and one Objective-C target, which is the shape the
@@ -111,17 +106,18 @@ struct KnownDefectsSurfaceTests {
                                   products: [.library(name: "\(name)", targets: ["\(name)"])],
                                   targets: [.target(name: "legacy"), .target(name: "\(name)", dependencies: ["legacy"])])
             """
-        let fixture = buildFixture(name: name, files: [
+        let root = writeFixture(name: name, files: [
             "Sources/\(name)/a.swift": "public struct Thing {}\n",
             "Sources/legacy/include/legacy.h": "#import <Foundation/Foundation.h>\n@interface Legacy : NSObject\n- (NSInteger)legacyValue;\n- (NSInteger)twice;\n@end\n",
             "Sources/legacy/legacy.m": objcBody,
         ], manifest: manifest)
-        guard let fixture else { return nil }
         // Capture the compile flags the way a user would — `index` builds and records them, and
         // without them the clang layer has nothing to run on and calls every file unscanned.
-        guard let captured = try? sextant(["index", "--project", fixture.root.path]),
+        // The build is left to `index`: one of SwiftPM's build systems states the flags only
+        // while compiling, and a package built beforehand would give it nothing to compile.
+        guard let captured = try? sextant(["index", "--project", root.path]),
               captured.all.contains("compile database") else { return nil }
-        return fixture
+        return BuildProducts.indexStore(under: root).map { store in Fixture(root: root, store: store) }
     }
 
     // MARK: - clang layer

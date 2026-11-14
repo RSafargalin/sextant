@@ -17,12 +17,7 @@ struct KnownDefectsScaleTests {
     private static var binary: URL? {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let build = root.appendingPathComponent(".build")
-        for triple in (try? FileManager.default.contentsOfDirectory(atPath: build.path)) ?? [] {
-            let candidate = build.appendingPathComponent("\(triple)/debug/sextant")
-            if FileManager.default.isExecutableFile(atPath: candidate.path) { return candidate }
-        }
-        return nil
+        return BuildProducts.sextantBinary(under: root)
     }
 
     private struct Output {
@@ -80,12 +75,7 @@ struct KnownDefectsScaleTests {
         try? build.run()
         build.waitUntilExit()
         guard build.terminationStatus == 0 else { return nil }
-        let buildDirectory = root.appendingPathComponent(".build")
-        for triple in (try? FileManager.default.contentsOfDirectory(atPath: buildDirectory.path)) ?? [] {
-            let candidate = buildDirectory.appendingPathComponent("\(triple)/debug/index/store").path
-            if FileManager.default.fileExists(atPath: candidate) { return Fixture(root: root, store: candidate) }
-        }
-        return nil
+        return BuildProducts.indexStore(under: root).map { candidate in Fixture(root: root, store: candidate) }
     }
 
     // MARK: - Counts past the internal cap
@@ -127,7 +117,8 @@ struct KnownDefectsScaleTests {
                                                        to: rivalIndex.appendingPathComponent("store")))
         let rivalUnits = rivalIndex.appendingPathComponent("store/v5/units")
         let units = try #require(try? FileManager.default.contentsOfDirectory(atPath: rivalUnits.path))
-        for unit in units where unit.hasPrefix("b.swift") {
+        // A unit is named after its object file: `b.swift.o-…` from one build system, `b.o-…` from the other.
+        for unit in units where unit.hasPrefix("b.") {
             try FileManager.default.removeItem(at: rivalUnits.appendingPathComponent(unit))
         }
         #expect(units.count > ((try? FileManager.default.contentsOfDirectory(atPath: rivalUnits.path))?.count ?? 0))

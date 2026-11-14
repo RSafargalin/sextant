@@ -23,8 +23,8 @@ struct IndexBuildTests {
     /// package holds. The usages are in the code either way — only the index forgets them.
     @Test("The index build takes the test targets in by default")
     func swiftBuildIncludesTests() {
-        #expect(IndexBuild.swiftBuildArguments() == ["build", "--enable-index-store", "--build-tests"])
-        #expect(IndexBuild.swiftBuildArguments(buildTests: false) == ["build", "--enable-index-store"])
+        #expect(IndexBuild.swiftBuildArguments() == ["build", "--enable-index-store", "--build-tests", "-v"])
+        #expect(IndexBuild.swiftBuildArguments(buildTests: false) == ["build", "--enable-index-store", "-v"])
     }
 
     /// The Xcode path cannot be fixed the way the SwiftPM one was: `xcodebuild build-for-testing`

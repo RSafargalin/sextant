@@ -23,7 +23,7 @@ struct ClangPatternSearchTests {
     }
 
     private func command(suffix: String) throws -> CompileCommand {
-        let commands = CompilationDatabase.capture(fromStores: IndexStoreLocator.usableStorePaths(under: Self.fixture))
+        let commands = BuildProducts.compileCommands(under: Self.fixture)
         return try #require(commands.first { $0.file.hasSuffix(suffix) })
     }
 
@@ -116,7 +116,7 @@ struct ClangPatternSearchTests {
         // Left out, the answer would say "2 usages" where a reader of the sources counts three.
         #expect(outcome.inactive.count == 1)
         #expect(outcome.inactive.first?.text.contains("[self ocFeed]") == true)
-        #expect(outcome.targets.contains { $0.contains("macosx") })
+        #expect(outcome.targets.contains { $0.contains("-apple-macos") })
     }
 
     @Test("A variadic is refused for the C family rather than quietly ignored")

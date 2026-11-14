@@ -9,8 +9,16 @@ public enum IndexBuild {
     /// Alamofire, the store then covered 43 of 98 files and `refs Session` answered 25 where the
     /// whole package holds 504. The build costs roughly twice as long (44s against 80s there),
     /// which is a price paid once per build against an undercount paid on every query.
+    ///
+    /// The build is verbose because its output is where one of SwiftPM's two build systems states
+    /// the C-family compile flags, and nowhere else — the caller sends it to a log, not a terminal.
     public static func swiftBuildArguments(buildTests: Bool = true) -> [String] {
-        ["build", "--enable-index-store"] + (buildTests ? ["--build-tests"] : [])
+        ["build", "--enable-index-store"] + (buildTests ? ["--build-tests"] : []) + ["-v"]
+    }
+
+    /// Where the output of the last `swift build` run for a project is kept.
+    public static func buildLog(forRoot root: String) -> URL {
+        umbrellaDirectory(forRoot: root).appendingPathComponent("swift-build.log")
     }
 
     /// What to say when the store a build just produced holds none of the project's tests.
@@ -100,15 +108,8 @@ public enum IndexBuild {
     /// Freshness is measured by unit update time, exactly as in `IndexStoreLocator`.
     public static func umbrellaStorePath(forRoot root: String) -> String? {
         let build = umbrellaDirectory(forRoot: root).appendingPathComponent(".build")
-        guard let triples = try? FileManager.default.contentsOfDirectory(atPath: build.path) else { return nil }
-        var candidates: [(path: String, modified: Date)] = []
-        for triple in triples.sorted() {
-            for configuration in ["debug", "release"] {
-                let candidate = build.appendingPathComponent("\(triple)/\(configuration)/index/store").path
-                if let modified = IndexFreshness.timestamp(ofStore: candidate) {
-                    candidates.append((candidate, modified))
-                }
-            }
+        let candidates = IndexStoreLocator.storePaths(inBuildDirectory: build).compactMap { candidate in
+            IndexFreshness.timestamp(ofStore: candidate).map { (path: candidate, modified: $0) }
         }
         return DerivedDataLocator.freshest(from: candidates)
     }

@@ -36,12 +36,7 @@ struct IndexStoreUnitsTests {
         try? build.run()
         build.waitUntilExit()
         guard build.terminationStatus == 0 else { return nil }
-        let buildDirectory = root.appendingPathComponent(".build")
-        for triple in (try? FileManager.default.contentsOfDirectory(atPath: buildDirectory.path)) ?? [] {
-            let store = buildDirectory.appendingPathComponent("\(triple)/debug/index/store").path
-            if FileManager.default.fileExists(atPath: store) { return (root, store) }
-        }
-        return nil
+        return BuildProducts.indexStore(under: root).map { store in (root, store) }
     }()
 
     private func reader() throws -> IndexStoreUnits? {

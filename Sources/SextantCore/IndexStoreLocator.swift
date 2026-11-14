@@ -32,24 +32,39 @@ public enum IndexStoreLocator {
         candidates(under: root).filter(\.isUsable).map(\.path)
     }
 
-    private static func candidates(inPackage directory: URL) -> [StoreCandidate] {
-        let build = directory.appendingPathComponent(".build")
-        guard let triples = try? FileManager.default.contentsOfDirectory(atPath: build.path) else { return [] }
-        var found: [StoreCandidate] = []
-        for triple in triples.sorted() {
+    /// Every place a SwiftPM build directory can hold an index store, existing or not.
+    ///
+    /// SwiftPM has two build systems and each lays `.build` out its own way: the native one writes
+    /// `<triple>/<configuration>/index/store`, the Swift Build one `out/Products/<Configuration>/index/store`.
+    /// `.build/debug` is a symlink into whichever was used last, so it is never listed on its own —
+    /// it would name the same store twice.
+    public static func storePaths(inBuildDirectory build: URL) -> [String] {
+        var paths: [String] = []
+        let entries = (try? FileManager.default.contentsOfDirectory(atPath: build.path)) ?? []
+        for triple in entries.sorted() {
             for configuration in ["debug", "release"] {
-                let path = build.appendingPathComponent("\(triple)/\(configuration)/index/store").path
-                guard FileManager.default.fileExists(atPath: path) else { continue }
-                // A store with no units is not a candidate — there is nothing in it to open.
-                let modified = IndexFreshness.timestamp(ofStore: path)
-                found.append(StoreCandidate(
-                    path: path,
-                    origin: directory.path,
-                    unitCount: StoreCandidate.unitCount(ofStore: path),
-                    modified: modified,
-                    rejection: modified == nil ? "no units — nothing to read" : nil
-                ))
+                paths.append(build.appendingPathComponent("\(triple)/\(configuration)/index/store").path)
             }
+        }
+        for configuration in ["Debug", "Release"] {
+            paths.append(build.appendingPathComponent("out/Products/\(configuration)/index/store").path)
+        }
+        return paths
+    }
+
+    private static func candidates(inPackage directory: URL) -> [StoreCandidate] {
+        var found: [StoreCandidate] = []
+        for path in storePaths(inBuildDirectory: directory.appendingPathComponent(".build")) {
+            guard FileManager.default.fileExists(atPath: path) else { continue }
+            // A store with no units is not a candidate — there is nothing in it to open.
+            let modified = IndexFreshness.timestamp(ofStore: path)
+            found.append(StoreCandidate(
+                path: path,
+                origin: directory.path,
+                unitCount: StoreCandidate.unitCount(ofStore: path),
+                modified: modified,
+                rejection: modified == nil ? "no units — nothing to read" : nil
+            ))
         }
         // Debug and release of one package are different builds of different code; mixing them
         // would answer about a configuration nobody asked for. Only the configuration that was
@@ -66,10 +81,11 @@ public enum IndexStoreLocator {
         }
     }
 
-    /// `debug` or `release` from `.build/<triple>/<configuration>/index/store`.
+    /// `debug` or `release`, from the directory that holds `index/store` — spelled in lower case
+    /// by one build system and capitalised by the other.
     private static func configuration(ofStorePath path: String) -> String {
         URL(fileURLWithPath: path).deletingLastPathComponent().deletingLastPathComponent()
-            .lastPathComponent
+            .lastPathComponent.lowercased()
     }
 
     private static func hasManifest(_ directory: URL) -> Bool {

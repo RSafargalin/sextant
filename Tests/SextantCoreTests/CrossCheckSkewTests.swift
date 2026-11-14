@@ -12,12 +12,7 @@ struct CrossCheckSkewTests {
     private static var binary: URL? {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let build = root.appendingPathComponent(".build")
-        for triple in (try? FileManager.default.contentsOfDirectory(atPath: build.path)) ?? [] {
-            let candidate = build.appendingPathComponent("\(triple)/debug/sextant")
-            if FileManager.default.isExecutableFile(atPath: candidate.path) { return candidate }
-        }
-        return nil
+        return BuildProducts.sextantBinary(under: root)
     }
 
     private func sextant(_ arguments: [String]) throws -> String {
@@ -56,12 +51,7 @@ struct CrossCheckSkewTests {
         try? build.run()
         build.waitUntilExit()
         guard build.terminationStatus == 0 else { return nil }
-        let buildDirectory = root.appendingPathComponent(".build")
-        for triple in (try? FileManager.default.contentsOfDirectory(atPath: buildDirectory.path)) ?? [] {
-            let store = buildDirectory.appendingPathComponent("\(triple)/debug/index/store").path
-            if FileManager.default.fileExists(atPath: store) { return (root, store) }
-        }
-        return nil
+        return BuildProducts.indexStore(under: root).map { store in (root, store) }
     }
 
     /// The measured case: uses inside a branch this build does not contain. The gap has a reason,

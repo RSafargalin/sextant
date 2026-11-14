@@ -13,6 +13,21 @@ Human-readable text output is not covered — parse `--json`, not prose.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`sextant index` found no index on a toolchain whose SwiftPM defaults to the Swift Build
+  system (Swift 6.4).** That build system writes the store to
+  `.build/out/Products/<Configuration>/index/store`, and only `.build/<triple>/<configuration>/index/store`
+  was looked for — so a build that had succeeded was reported as `build failed (code 0)`. Both
+  layouts are read now, for a package and for the umbrella alike, and a build that succeeds
+  without leaving a store is said to have done exactly that.
+- **Objective-C, C and C++ had no compile flags under the Swift Build system.** It writes no
+  build graph with arguments in it, so the flags are read from the verbose output of the build
+  `sextant index` runs. Its output therefore goes to a log, whose path is printed, instead of the
+  terminal. One limit follows and is stated when it applies: a build that compiles nothing states
+  no flags, so a package built before its first `sextant index` needs `swift package clean`
+  once. Flags captured earlier are kept.
+
 ## [0.9.1] — 2026-11-04
 
 ### Added
