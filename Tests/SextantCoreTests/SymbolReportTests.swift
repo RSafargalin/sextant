@@ -62,6 +62,49 @@ struct SymbolReportTests {
         #expect(tail?.contains("--json") == true)
     }
 
+    /// The index merges hits in USR order, and only the CLI used to re-sort them. MCP passed
+    /// them straight through, so "the 10 most used" were the first ten USRs.
+    @Test("The cut keeps the most used symbols whatever order the hits arrive in")
+    func cutKeepsTheMostUsedInAnyOrder() {
+        // USR order is the reverse of usage order: s:a01 has 1 usage, s:a12 has 12.
+        let hits = (1...12).map { index in
+            SymbolHit(name: "request(_:)", usr: String(format: "s:a%02d", index), kind: "instanceMethod",
+                      definition: location("/repo/Sources/File\(index).swift", index, 1, isDefinition: true),
+                      references: Array(repeating: location("/repo/Sources/Use.swift", index), count: index))
+        }
+        let lines = render(hits, query: .references, style: .mcp, symbol: "request").lines
+
+        // Shown: the ten with 12…3 usages. Left out: the two with 2 and 1.
+        #expect(lines.contains { $0.contains("File12.swift") })
+        #expect(lines.contains { $0.contains("File3.swift") })
+        #expect(!lines.contains { $0.contains("File1.swift") })
+        #expect(!lines.contains { $0.contains("File2.swift") })
+        #expect(lines.contains { $0.contains("2 more symbol(s)") && $0.contains("3 usage(s) between them") })
+    }
+
+    /// `references` stops at the internal cap; the figure for the symbols left out is a total,
+    /// so it is summed from the index's own count, not from the capped lists.
+    @Test("Usages of the symbols left out are counted past the internal cap")
+    func hiddenUsagesAreTrueTotals() {
+        let hits = (1...11).map { index in
+            SymbolHit(name: "request(_:)", usr: String(format: "s:b%02d", index), kind: "instanceMethod",
+                      definition: location("/repo/Sources/File\(index).swift", index, 1, isDefinition: true),
+                      references: [location("/repo/Sources/Use.swift", index)],
+                      totalReferences: index == 11 ? 1 : 5000)
+        }
+        let lines = render(hits, query: .references, style: .mcp, symbol: "request").lines
+        #expect(lines.contains { $0.contains("1 more symbol(s)") && $0.contains("1 usage(s) between them") })
+
+        let capped = (1...11).map { index in
+            SymbolHit(name: "request(_:)", usr: String(format: "s:c%02d", index), kind: "instanceMethod",
+                      definition: location("/repo/Sources/File\(index).swift", index, 1, isDefinition: true),
+                      references: [location("/repo/Sources/Use.swift", index)],
+                      totalReferences: index == 11 ? 4000 : 5000)
+        }
+        let tail = render(capped, query: .references, style: .mcp, symbol: "request").lines
+        #expect(tail.contains { $0.contains("1 more symbol(s)") && $0.contains("4000 usage(s) between them") })
+    }
+
     @Test("One symbol per name: nothing is capped and nothing is said about a cap")
     func singleSymbolIsNotAnnotated() {
         let lines = render([hit], query: .references, style: .cli(compact: true, referenceLimit: 40)).lines

@@ -306,10 +306,11 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
         guard let set = index else { return (context.indexProblem(), true) }
         let definitions = set.lookup(name: symbol, query: .definitions).compactMap { $0.definition }
         guard !definitions.isEmpty else { return ("definition not found: \(symbol) (symbol outside the index? try find_references)", true) }
-        let blocks = definitions.compactMap { definition -> String? in
-            SourceBody.declaration(atLine: definition.line, inFile: definition.path).map { "── \(shorten(definition.path)):\(definition.line)\n\($0)" }
+        let bodies = SourceBody.bodies(of: symbol, at: definitions)
+        guard !bodies.isEmpty else {
+            return ("could not extract the body of '\(symbol)': \(SourceBody.unextractableReason)", true)
         }
-        return (blocks.isEmpty ? "could not extract the body: \(symbol)" : blocks.joined(separator: "\n\n"), false)
+        return (bodies.map { "── \(shorten($0.file)):\($0.line)\n\($0.text)" }.joined(separator: "\n\n"), false)
 
     case "blast_radius":
         guard let symbol = symbol() else { return ("the symbol parameter is required", true) }
@@ -317,6 +318,7 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
         guard let radius = set.blastRadius(forName: symbol) else { return ("symbol not found: \(symbol)", true) }
         var lines = ["blast radius: \(radius.symbol) [\(radius.kind)]",
                      "touches: \(radius.affectedFiles.count) files · \(radius.referenceCount) usages · \(radius.callerCount) calls"]
+        if let note = radius.mergeNote { lines.append(note) }
         if !radius.implementations.isEmpty { lines.append("implementations: " + radius.implementations.joined(separator: ", ")) }
         radius.affectedFiles.forEach { lines.append("  \(shorten($0))") }
         return (lines.joined(separator: "\n"), false)
@@ -334,9 +336,12 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
         // "No implementations" is a statement about a symbol that exists. For one the index has
         // never heard of, it is a made-up answer — the other six symbol tools say so.
         guard !set.resolveSymbols(forName: symbol).isEmpty else { return ("symbol not found: \(symbol)", true) }
-        let related = set.related(toName: symbol, query: .implementations, limit: 1000)
+        let related = set.related(toName: symbol, query: .implementations, limit: .max)
         guard !related.isEmpty else { return ("no implementations found: \(symbol)", false) }
-        return (related.map { "\($0.name) [\($0.kind)]  \(shorten($0.location.path)):\($0.location.line)" }.joined(separator: "\n"), false)
+        let shownLimit = 1000
+        var lines = related.prefix(shownLimit).map { "\($0.name) [\($0.kind)]  \(shorten($0.location.path)):\($0.location.line)" }
+        if related.count > shownLimit { lines.append("… (first \(shownLimit) of \(related.count) shown)") }
+        return (lines.joined(separator: "\n"), false)
 
     case "call_hierarchy":
         guard let symbol = symbol() else { return ("the symbol parameter is required", true) }
@@ -359,34 +364,20 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
             }
             lines.append(line)
             guard remaining > 0, visited.insert(usr).inserted else { return }
-            for child in set.calls(ofUSR: usr, direction: direction).prefix(40) {
+            let children = set.calls(ofUSR: usr, direction: direction)
+            for child in children.prefix(CallHierarchy.breadth) {
                 walk(child.usr, "\(child.name) [\(child.kind)]", child.location, child.callSite,
                      child.definitionKnown, remaining - 1, indent + 1)
+            }
+            if let note = CallHierarchy.omissionNote(total: children.count, direction: direction) {
+                lines.append(String(repeating: "  ", count: indent + 1) + note)
             }
         }
         for root in roots { walk(root.usr, "\(root.name) [\(root.kind)]", root.location, nil, true, depth, 0) }
         return (lines.joined(separator: "\n"), false)
 
     case "repo_map":
-        // The token budget is honoured (a field report found it being ignored); the default
-        // comes from .sextant.json, as in the CLI. Clamped: a budget of 0 would collapse the map.
-        let budget = max(500, (args["budget"] as? Int) ?? context.config?.budget ?? 4000)
-        // The index is passed here as it is in the CLI: without it the map covers Swift only,
-        // while the same command in a terminal covers Objective-C, C and C++ as well. What is
-        // missing is named, because a map that looks complete is worse than a short one.
-        let mapRoot = URL(fileURLWithPath: context.project, isDirectory: true)
-        let foreign = SwiftSources.files(under: mapRoot, includeTests: false,
-                                         extensions: IndexDeclarations.clangExtensions)
-        var map = RepoMap.generate(projectRoot: context.project,
-                                   options: .init(tokenBudget: budget, includeTests: false,
-                                                  fileLimit: fileLimit(context)),
-                                   index: context.index)
-        scaleNoteMCP(context).forEach { map += "\n\n\($0)" }
-        if !foreign.isEmpty, context.index == nil {
-            map += "\n\n⚠ \(foreign.count) non-Swift file(s) are missing from the map: no index store. "
-                 + "Build one with `sextant index`."
-        }
-        return (map, false)
+        return (repoMapText(budget: args["budget"] as? Int, context: context), false)
 
     case "structural_search":
         guard let pattern = (args["pattern"] as? String).flatMap({ $0.isEmpty ? nil : $0 }) else { return ("the pattern parameter is required", true) }
@@ -399,23 +390,34 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
         let root = URL(fileURLWithPath: context.project, isDirectory: true)
         let cache = SourceParseCache()
         let scanLimit = max(1, context.config?.maxFiles ?? 8000)   // clamped: 0 or negative would disable search
+        let shownLimit = 200
         var lines: [String] = []
         var scanned = 0
+        var swiftMatches = 0
+        var stopped = false
+        // Matches past the first 200 are counted, not printed: the answer states the total it cut.
         for file in SwiftSources.files(under: root, includeTests: false) {
             guard let engine else { break }
             scanned += 1
-            if scanned > scanLimit { lines.append("… (scanned \(scanLimit) files, search stopped — narrow the scope)"); break }
+            if scanned > scanLimit { stopped = true; break }
             guard let tree = cache.tree(atPath: file.path) else { continue }
             let relative = SwiftSources.relativePath(of: file, root: root)
             for match in engine.search(in: tree, fileName: relative) {
-                lines.append("\(relative):\(match.line):\(match.column): \(match.text)")
+                swiftMatches += 1
+                if swiftMatches <= shownLimit { lines.append("\(relative):\(match.line):\(match.column): \(match.text)") }
             }
-            if lines.count >= 200 { lines.append("… (first 200 shown)"); break }
         }
+        if swiftMatches > shownLimit {
+            lines.append("… (first \(shownLimit) of \(swiftMatches)\(stopped ? "+" : "") Swift matches shown)")
+        }
+        if stopped { lines.append("… (scanned \(scanLimit) files, search stopped — narrow the scope)") }
         // Objective-C, C and C++ go through clang, with the flags each file was built with.
         let cFamily = CFamilySearch.run(pattern: pattern, searchRoot: context.project,
                                         projectRoot: context.projectRoot, includeTests: false)
-        lines += cFamily.hits.prefix(200).map { "\($0.file):\($0.line):\($0.column): \($0.text)" }
+        lines += cFamily.hits.prefix(shownLimit).map { "\($0.file):\($0.line):\($0.column): \($0.text)" }
+        if cFamily.hits.count > shownLimit {
+            lines.append("… (first \(shownLimit) of \(cFamily.hits.count) C-family matches shown)")
+        }
         if let swiftRejection {
             guard cFamily.scannedCount > 0 || !cFamily.unscanned.isEmpty else {
                 return ("invalid pattern: \(swiftRejection)", true)
@@ -450,10 +452,12 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
         guard !violations.isEmpty else {
             return ((["✅ no violations found — rules: \(ruleSet.origin)"] + unscanned).joined(separator: "\n"), false)
         }
-        let lines = violations
+        let shownLimit = 200
+        var lines = violations
             .sorted { ($0.ruleID, $0.file, $0.line) < ($1.ruleID, $1.file, $1.line) }
-            .prefix(200)
+            .prefix(shownLimit)
             .map { "[\($0.ruleID)] \($0.file):\($0.line):\($0.column)  \($0.text)" }
+        if violations.count > shownLimit { lines.append("… (first \(shownLimit) of \(violations.count) violations shown)") }
         return ((lines + unscanned).joined(separator: "\n"), false)
 
     case "api":
@@ -523,6 +527,30 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
     }
 }
 
+/// The repository map, for the `repo_map` tool and the `sextant://repo_map` resource alike — one
+/// answer, whichever way it is asked for.
+private func repoMapText(budget requested: Int?, context: ToolContext) -> String {
+    // The token budget is honoured (a field report found it being ignored); the default
+    // comes from .sextant.json, as in the CLI. Clamped: a budget of 0 would collapse the map.
+    let budget = max(500, requested ?? context.config?.budget ?? 4000)
+    // The index is passed here as it is in the CLI: without it the map covers Swift only,
+    // while the same command in a terminal covers Objective-C, C and C++ as well. What is
+    // missing is named, because a map that looks complete is worse than a short one.
+    let mapRoot = URL(fileURLWithPath: context.project, isDirectory: true)
+    let foreign = SwiftSources.files(under: mapRoot, includeTests: false,
+                                     extensions: IndexDeclarations.clangExtensions)
+    var map = RepoMap.generate(projectRoot: context.project,
+                               options: .init(tokenBudget: budget, includeTests: false,
+                                              fileLimit: fileLimit(context)),
+                               index: context.index)
+    scaleNoteMCP(context).forEach { map += "\n\n\($0)" }
+    if !foreign.isEmpty, context.index == nil {
+        map += "\n\n⚠ \(foreign.count) non-Swift file(s) are missing from the map: no index store. "
+             + "Build one with `sextant index`."
+    }
+    return map
+}
+
 /// Symbol summary text (for the `context` tool and the `sextant://symbol/{name}` resource).
 private func contextText(_ symbol: String, _ index: IndexStoreSet?, reader: SourceLineReader,
                          problem: () -> String) -> (String, Bool) {
@@ -543,10 +571,7 @@ private func contextText(_ symbol: String, _ index: IndexStoreSet?, reader: Sour
 private func readResource(uri: String, context: ToolContext) -> (text: String, ok: Bool) {
     if uri == "sextant://repo_map" {
         if let problem = context.scopeProblem { return ("config: \(problem)", false) }
-        let budget = max(500, context.config?.budget ?? 6000)
-        return (RepoMap.generate(projectRoot: context.project,
-                                 options: .init(tokenBudget: budget, includeTests: false,
-                                                fileLimit: fileLimit(context))), true)
+        return (repoMapText(budget: nil, context: context), true)
     }
     let prefix = "sextant://symbol/"
     if uri.hasPrefix(prefix) {

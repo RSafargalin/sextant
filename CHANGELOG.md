@@ -27,6 +27,28 @@ Human-readable text output is not covered — parse `--json`, not prose.
   terminal. One limit follows and is stated when it applies: a build that compiles nothing states
   no flags, so a package built before its first `sextant index` needs `swift package clean`
   once. Flags captured earlier are kept.
+- **Over MCP, "the 10 most used" symbols sharing a name were the first ten by USR.** The cut
+  relied on an order only the CLI produced. The answer now orders the symbols itself, so every
+  surface keeps the most used, and the usages of the symbols left out are counted from the
+  index's own totals rather than from lists stopped at the internal cap.
+- **MCP `body` could return another declaration's body.** After an edit moved a file, it printed
+  whatever declaration started on the line the index recorded, as a successful answer. It now
+  checks the name the way `sextant body` does — both go through one code path — and a body that
+  cannot be extracted is an error result.
+- **MCP answers cut without saying so.** `lint` printed 200 violations, the C-family half of
+  `structural_search` 200 matches, `list_implementations` 1000 entries and `call_hierarchy` 40
+  children per node, with nothing to show that more existed; the Swift half of
+  `structural_search` said "first 200 shown" while printing more. Every cut now states what it
+  left out and the true total, and `sextant hierarchy` says the same per node in its text output.
+  The `--json` shapes are unchanged.
+- **`blast` presented the internal cap as the total.** A symbol with 4 000 usages was reported
+  with 1 000, and its affected files were taken from those first 1 000 locations only. Counts and
+  files are totals now, in `blast`, `blast --json` and MCP `blast_radius`. When several symbols
+  share the name, the text output says how many were added together.
+- **The `sextant://repo_map` MCP resource answered differently from the `repo_map` tool.** It
+  read no index and dropped the notes on files past `maxFiles` and on non-Swift files left out of
+  the map. Both now produce the same answer through one code path; the resource's default budget
+  is the tool's (4 000 tokens, or `budget` from `.sextant.json`).
 
 ## [0.9.1] — 2026-11-04
 

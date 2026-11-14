@@ -140,12 +140,7 @@ func runSemantic(_ query: SymbolQuery, arguments: [String]) -> Int32 {
         return 2
     }
     guard let set = openIndex(arguments, label: "query") else { return 1 }
-    let hits = set.lookup(name: symbol, query: query)
-    let ordered = hits.sorted { left, right in
-        left.references.count != right.references.count
-            ? left.references.count > right.references.count
-            : left.usr < right.usr
-    }
+    let ordered = SymbolReport.orderedByUsage(set.lookup(name: symbol, query: query))
 
     crossCheck(symbol: symbol, query: query, hits: ordered, arguments: arguments)
 
@@ -217,6 +212,7 @@ func runBlast(arguments: [String]) -> Int32 {
 
     print("── blast radius: \(radius.symbol) [\(radius.kind)]")
     print("   a change would touch: \(radius.affectedFiles.count) files · \(radius.referenceCount) usages · \(radius.callerCount) calls")
+    if let note = radius.mergeNote { print("   \(note)") }
     if !radius.implementations.isEmpty {
         print("   implementations (also affected): \(radius.implementations.joined(separator: ", "))")
     }
@@ -236,21 +232,13 @@ func runBody(arguments: [String]) -> Int32 {
     let limit = max(1, optionValue("--limit", in: arguments).flatMap(Int.init) ?? 10)
     let definitions = set.lookup(name: symbol, query: .definitions).compactMap { $0.definition }.prefix(limit)
 
-    struct Body: Encodable {
-        let file: String
-        let line: Int
-        let text: String
-    }
-    let bodies = definitions.compactMap { definition -> Body? in
-        SourceBody.declaration(atLine: definition.line, inFile: definition.path, named: symbol)
-            .map { Body(file: definition.path, line: definition.line, text: $0) }
-    }
+    let bodies = SourceBody.bodies(of: symbol, at: Array(definitions))
 
     // The JSON branch comes first: a --json consumer gets [] for a missing symbol, not prose.
     if json { printJSON(bodies); return 0 }
     guard !definitions.isEmpty else { print("Definition of '\(symbol)' not found (symbol outside the index? try `refs \(symbol)`)."); return 0 }
     guard !bodies.isEmpty else {
-        print("Could not extract the body of '\(symbol)': no declaration of that name on the recorded line — the file has changed since it was indexed. Rebuild the project or run `sextant index`.")
+        print("Could not extract the body of '\(symbol)': \(SourceBody.unextractableReason)")
         return 0
     }
     // Surrounding lines, on request. Measured on someone else's tool: 18.4 % of symbol queries were
@@ -401,6 +389,13 @@ struct CallNode: Encodable {
     /// are the call site standing in for it.
     let definitionKnown: Bool
     let children: [CallNode]
+    /// How many callees or callers this node has in all; more than `children.count` when the
+    /// breadth bound cut them. Text output states the cut; the JSON shape does not carry it.
+    var childTotal = 0
+
+    private enum CodingKeys: String, CodingKey {
+        case name, kind, file, line, calledAtFile, calledAtLine, definitionKnown, children
+    }
 }
 
 func runHierarchy(arguments: [String]) -> Int32 {
@@ -411,14 +406,16 @@ func runHierarchy(arguments: [String]) -> Int32 {
     guard let set = openIndex(arguments, label: "hierarchy") else { return 1 }
     let direction: CallDirection = arguments.contains("--callers") ? .callers : .callees
     let depth = max(1, optionValue("--depth", in: arguments).flatMap(Int.init) ?? 3)
-    let breadth = 40
 
     var visited = Set<String>()
     func build(usr: String, name: String, kind: String, location: SourceLocation,
                callSite: SourceLocation?, definitionKnown: Bool, remaining: Int) -> CallNode {
         var children: [CallNode] = []
+        var childTotal = 0
         if remaining > 0, visited.insert(usr).inserted {
-            for child in set.calls(ofUSR: usr, direction: direction).prefix(breadth) {
+            let calls = set.calls(ofUSR: usr, direction: direction)
+            childTotal = calls.count
+            for child in calls.prefix(CallHierarchy.breadth) {
                 children.append(build(usr: child.usr, name: child.name, kind: child.kind, location: child.location,
                                       callSite: child.callSite, definitionKnown: child.definitionKnown,
                                       remaining: remaining - 1))
@@ -426,7 +423,7 @@ func runHierarchy(arguments: [String]) -> Int32 {
         }
         return CallNode(name: name, kind: kind, file: shorten(location.path), line: location.line,
                         calledAtFile: callSite.map { shorten($0.path) }, calledAtLine: callSite?.line,
-                        definitionKnown: definitionKnown, children: children)
+                        definitionKnown: definitionKnown, children: children, childTotal: childTotal)
     }
 
     let roots = set.resolveSymbols(forName: symbol)
@@ -457,6 +454,9 @@ func runHierarchy(arguments: [String]) -> Int32 {
         }
         print(line)
         for child in node.children { printNode(child, indent: indent + 1) }
+        if let note = CallHierarchy.omissionNote(total: node.childTotal, direction: direction) {
+            print(String(repeating: "  ", count: indent + 1) + note)
+        }
     }
     print("# call hierarchy (\(direction == .callers ? "← callers" : "→ callees"), depth \(depth))")
     for tree in trees { printNode(tree, indent: 0) }

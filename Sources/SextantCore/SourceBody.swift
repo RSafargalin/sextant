@@ -27,6 +27,29 @@ public enum SourceBody {
         return declaresName(named, in: text) ? text : nil
     }
 
+    /// A declaration's text and the position the index recorded for it.
+    public struct Extracted: Sendable, Encodable {
+        public let file: String
+        public let line: Int
+        public let text: String
+    }
+
+    /// The declarations of `symbol` at the definitions the index recorded for it — the one path
+    /// the CLI and MCP both take. A definition whose recorded line no longer starts a declaration
+    /// of that name is left out: the file has changed since it was indexed, and the text found on
+    /// that line belongs to something else.
+    public static func bodies(of symbol: String, at definitions: [SourceLocation]) -> [Extracted] {
+        definitions.compactMap { definition in
+            declaration(atLine: definition.line, inFile: definition.path, named: symbol)
+                .map { Extracted(file: definition.path, line: definition.line, text: $0) }
+        }
+    }
+
+    /// Why `bodies(of:at:)` is empty although the index has definitions for the symbol.
+    public static let unextractableReason =
+        "no declaration of that name on the recorded line — the file has changed since it was indexed. "
+        + "Rebuild the project or run `sextant index`."
+
     /// Whether the extracted text declares that name — a word match on the first line, which is
     /// where a declaration states what it is called.
     static func declaresName(_ name: String, in text: String) -> Bool {

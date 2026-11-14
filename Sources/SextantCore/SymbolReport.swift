@@ -84,7 +84,19 @@ public enum SymbolReport {
         public let advisory: String?
     }
 
-    /// The refs/defs/callers answer: a definition, a histogram, or a line-by-line list.
+    /// Hits ordered by how many usages each has, most used first, with the USR breaking ties so
+    /// the order is the same on every run. Counted by `totalReferences`, the index's own total,
+    /// because `references` stops at the internal cap and would rank every capped symbol equal.
+    public static func orderedByUsage(_ hits: [SymbolHit]) -> [SymbolHit] {
+        hits.sorted { left, right in
+            left.totalReferences != right.totalReferences
+                ? left.totalReferences > right.totalReferences
+                : left.usr < right.usr
+        }
+    }
+
+    /// The refs/defs/callers answer: a definition, a histogram, or a line-by-line list. The hits
+    /// may arrive in any order: they are put in usage order here, where the cut relies on it.
     public static func lookup(
         symbol: String,
         hits: [SymbolHit],
@@ -131,9 +143,10 @@ public enum SymbolReport {
         }
 
         var lines: [String] = []
-        // The hits arrive sorted by how many usages each has, so a cut keeps the ones a reader is
-        // most likely to have meant. What is cut is stated with its count: an answer that shows
-        // ten of 337 symbols and says nothing is a wrong answer, not a short one.
+        // Ordered by how many usages each has, so a cut keeps the ones a reader is most likely to
+        // have meant. What is cut is stated with its count: an answer that shows ten of 337
+        // symbols and says nothing is a wrong answer, not a short one.
+        let hits = orderedByUsage(hits)
         let shown = style.symbolLimit >= hits.count ? hits : Array(hits.prefix(max(1, style.symbolLimit)))
         for hit in shown {
             lines.append("\(style.headerPrefix)\(hit.name)  [\(hit.kind)]")
@@ -169,7 +182,9 @@ public enum SymbolReport {
 
         if shown.count < hits.count {
             let hidden = hits.count - shown.count
-            let usages = hits.dropFirst(shown.count).reduce(0) { $0 + $1.references.count }
+            // The index's own totals: `references` stops at the internal cap, and a sum of capped
+            // lists would report the cap as the count.
+            let usages = hits.dropFirst(shown.count).reduce(0) { $0 + $1.totalReferences }
             var line = "\(style.headerPrefix)… \(hidden) more symbol(s) named '\(symbol)', "
                 + "\(usages) usage(s) between them — shown: the \(shown.count) most used"
             if let hint = style.moreSymbolsHint { line += " (\(hint))" }
