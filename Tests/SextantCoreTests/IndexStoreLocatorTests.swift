@@ -88,8 +88,8 @@ struct IndexStoreLocatorTests {
             .map { $0.hasSuffix(".build/sextant-index/out/Products/Debug/index/store") } == [true])
     }
 
-    /// A store of an ordinary build and the one `sextant index` wrote are two candidates, and the
-    /// store policy decides between them like any other two.
+    /// A store of an ordinary build and the one `sextant index` wrote are two candidates; which
+    /// one answers is decided afterwards, by `StoreSelection`.
     @Test("An ordinary build's store and sextant's own are both candidates")
     func ordinaryAndIndexBuildStoresAreBothCandidates() throws {
         let root = try package(withStoresAt: ["out/Products/Debug/index/store",
@@ -105,7 +105,7 @@ struct IndexStoreLocatorTests {
     func configurationIsReadFromEitherSpelling() throws {
         let root = try package(withStoresAt: ["out/Products/Debug/index/store", "out/Products/Release/index/store"])
         defer { try? FileManager.default.removeItem(at: root) }
-        let candidates = IndexStoreLocator.candidates(under: root)
+        let candidates = StoreSelection.resolve(IndexStoreLocator.candidates(under: root), policy: nil).candidates
         #expect(candidates.count == 2)
         #expect(candidates.filter(\.isUsable).count == 1)
         #expect(candidates.contains { $0.rejection?.contains("another configuration") == true })

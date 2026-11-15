@@ -190,7 +190,7 @@ $ sextant doctor
 # sextant doctor — …/scratchpad/alamofire
 ✅ Swift sources: 59 files
 ✅ libIndexStore: …/usr/lib/libIndexStore.dylib
-✅ index store: .build/sextant-index/x86_64-apple-macosx/debug/index/store
+✅ index store: .build/sextant-index/x86_64-apple-macosx/debug/index/store  (fresh — compared against the snapshot taken by `sextant index`)
 ✅ index opened: 1 store(s)
 
 ✅ ready — `sextant mcp` will work (semantics and structure)

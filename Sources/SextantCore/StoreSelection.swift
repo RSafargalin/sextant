@@ -11,7 +11,8 @@ public struct StoreCandidate: Sendable, Equatable {
     public let origin: String?
     public let unitCount: Int
     public let modified: Date?
-    /// Why this store cannot be used, when it cannot. `nil` means it is a candidate.
+    /// Why this store is not read, when it is not: it cannot be read, or a rule set it aside.
+    /// `nil` means it is a candidate.
     public let rejection: String?
     /// How much of the project this store was built from. Measured only where there is a decision
     /// to make or explain — reading every unit is not free, and with one candidate it buys nothing.
@@ -36,6 +37,11 @@ public struct StoreCandidate: Sendable, Equatable {
     }
 
     public var isUsable: Bool { rejection == nil }
+
+    public func settingAside(_ reason: String) -> StoreCandidate {
+        StoreCandidate(path: path, origin: origin, unitCount: unitCount, modified: modified,
+                       rejection: reason, coverage: coverage)
+    }
 
     /// Units under `v*/units` — the size of what the store holds. A directory listing, not a scan.
     public static func unitCount(ofStore path: String) -> Int {
@@ -168,8 +174,103 @@ public enum StorePolicy: String, Sendable, CaseIterable {
     public static var known: String { allCases.map(\.rawValue).joined(separator: ", ") }
 }
 
+/// Which stores answer, and by what: a policy, the rule that a store `sextant index` built goes
+/// first, or the fact that only one store was left.
+public struct StoreResolution: Sendable {
+    /// Every candidate, with the reason each one that is not read was set aside.
+    public let candidates: [StoreCandidate]
+    /// The stores to open. Empty when there is nothing usable, or when several remain and no
+    /// policy says which.
+    public let chosen: [StoreCandidate]
+    /// The explicit policy in force, if any.
+    public let policy: StorePolicy?
+    /// Whether the store `sextant index` built was chosen over others by that rule alone.
+    public let decidedByOwnStoreRule: Bool
+
+    /// Several stores remain and no policy says which: nothing is read rather than guessed.
+    public var needsPolicy: Bool { chosen.isEmpty && candidates.filter(\.isUsable).count > 1 }
+
+    /// How many usable stores the rule set aside.
+    public var setAsideByOwnStoreRule: Int {
+        candidates.filter { $0.rejection == StoreSelection.ownStoreRuleReason }.count
+    }
+}
+
 /// Applies a policy to the candidates and says, in words, what it did and why.
 public enum StoreSelection {
+    /// The rule in words, as `sextant store` and every explanation state it.
+    public static let ownStoreRule = "a store built by `sextant index` answers ahead of stores an ordinary "
+        + "build left in `.build`; an explicit store policy overrides this"
+
+    /// Why the rule set a store aside.
+    public static let ownStoreRuleReason = "an ordinary build's store — the one `sextant index` built answers "
+        + "first (an explicit store policy overrides)"
+
+    /// The whole decision, in order:
+    /// 1. With no explicit policy, a usable store `sextant index` built answers, and the stores an
+    ///    ordinary build left are set aside. Only that tool writes it, so it is the one whose
+    ///    contents are known.
+    /// 2. Of the SwiftPM stores of one package that remain, only the configuration built last
+    ///    takes part: debug and release are different builds of different code.
+    /// 3. One store left needs no policy. Several are measured with `measure` (coverage, where a
+    ///    reader needs it to decide), then the policy picks; without one, nothing is picked.
+    public static func resolve(_ candidates: [StoreCandidate], policy: StorePolicy?,
+                               measure: (StoreCandidate) -> StoreCandidate = { $0 }) -> StoreResolution {
+        var all = candidates
+        var decidedByRule = false
+        if policy == nil {
+            let usable = all.filter(\.isUsable)
+            let own = usable.filter { IndexStoreLocator.isBuiltBySextant(storePath: $0.path) }
+            if !own.isEmpty, own.count < usable.count {
+                decidedByRule = true
+                all = all.map { candidate in
+                    candidate.isUsable && !IndexStoreLocator.isBuiltBySextant(storePath: candidate.path)
+                        ? candidate.settingAside(ownStoreRuleReason) : candidate
+                }
+            }
+        }
+        all = restrictingToLastBuiltConfiguration(all)
+        if all.filter(\.isUsable).count > 1 { all = all.map { $0.isUsable ? measure($0) : $0 } }
+        let usable = all.filter(\.isUsable)
+        let chosen: [StoreCandidate]
+        if usable.count <= 1 {
+            chosen = usable
+        } else if let policy {
+            chosen = choose(from: all, policy: policy)
+        } else {
+            chosen = []
+        }
+        return StoreResolution(candidates: all, chosen: chosen, policy: policy,
+                               decidedByOwnStoreRule: decidedByRule && !chosen.isEmpty)
+    }
+
+    /// Debug and release of one package are different builds of different code; mixing them
+    /// would answer about a configuration nobody asked for. Of each package's SwiftPM stores only
+    /// the configuration whose units were written last takes part, and the other is named as
+    /// left out. Stores of other layouts (Xcode's) are not touched.
+    static func restrictingToLastBuiltConfiguration(_ candidates: [StoreCandidate]) -> [StoreCandidate] {
+        var winning: [String: String] = [:]
+        let byPackage = Dictionary(grouping: candidates.filter { $0.isUsable && configuration(ofStorePath: $0.path) != nil },
+                                   by: { $0.origin ?? "" })
+        for (package, stores) in byPackage where stores.count > 1 {
+            let newest = stores.max { ($0.modified ?? .distantPast) < ($1.modified ?? .distantPast) }
+            if let newest, let configuration = configuration(ofStorePath: newest.path) { winning[package] = configuration }
+        }
+        return candidates.map { candidate in
+            guard candidate.isUsable, let configuration = configuration(ofStorePath: candidate.path),
+                  let built = winning[candidate.origin ?? ""], configuration != built else { return candidate }
+            return candidate.settingAside("another configuration than the one built last (\(built))")
+        }
+    }
+
+    /// `debug` or `release`, from the directory that holds `index/store` — spelled in lower case
+    /// by one build system and capitalised by the other. nil for a store of another layout.
+    static func configuration(ofStorePath path: String) -> String? {
+        guard path.hasSuffix("/index/store") else { return nil }
+        return URL(fileURLWithPath: path).deletingLastPathComponent().deletingLastPathComponent()
+            .lastPathComponent.lowercased()
+    }
+
     /// The stores to open. An empty result means there is nothing usable.
     public static func choose(from candidates: [StoreCandidate], policy: StorePolicy) -> [StoreCandidate] {
         let usable = candidates.filter(\.isUsable)
@@ -203,17 +304,27 @@ public enum StoreSelection {
     /// and why. Printed with every answer — a choice nobody can see is a choice nobody can correct.
     public static func explanation(candidates: [StoreCandidate], chosen: [StoreCandidate],
                                    policy: StorePolicy, shorten: (String) -> String) -> [String] {
+        explanation(of: StoreResolution(candidates: candidates, chosen: chosen, policy: policy,
+                                        decidedByOwnStoreRule: false), shorten: shorten)
+    }
+
+    public static func explanation(of resolution: StoreResolution, shorten: (String) -> String) -> [String] {
+        let candidates = resolution.candidates
         guard candidates.count > 1 || candidates.contains(where: { !$0.isUsable }) else { return [] }
+        let chosen = resolution.chosen
         let chosenPaths = Set(chosen.map(\.path))
         // Where every candidate came from the same build directory, saying so under each of them
         // is noise; where they differ, it is the whole point.
         let showOrigin = Set(candidates.compactMap(\.origin)).count > 1
-        var lines = ["ℹ index stores: \(candidates.count) candidate(s), policy `\(policy.rawValue)`:"]
+        let decidedBy = resolution.policy.map { "policy `\($0.rawValue)`" }
+            ?? (resolution.decidedByOwnStoreRule ? "no store policy set, so the rule decides: \(ownStoreRule)" : "no store policy set")
+        var lines = ["ℹ index stores: \(candidates.count) candidate(s), \(decidedBy):"]
         for candidate in candidates.sorted(by: { ($0.modified ?? .distantPast) > ($1.modified ?? .distantPast) }) {
             let mark = chosenPaths.contains(candidate.path) ? "→ using" : "  left  "
             let facts = describe(candidate)
             let why = candidate.rejection.map { " — \($0)" }
-                ?? (chosenPaths.contains(candidate.path) ? "" : " — \(leftOutReason(candidate, chosen: chosen, policy: policy))")
+                ?? (chosenPaths.contains(candidate.path) || resolution.policy == nil
+                    ? "" : " — \(leftOutReason(candidate, chosen: chosen, policy: resolution.policy!))")
             lines.append("   \(mark) \(shorten(candidate.path))  [\(facts)]\(why)")
             if let writer = writer(ofPath: candidate.path) { lines.append("            \(writer)") }
             if showOrigin, let origin = candidate.origin { lines.append("            built from \(shorten(origin))") }
@@ -278,7 +389,7 @@ public enum StoreSelection {
     /// which store is theirs and which one an editor keeps for itself.
     public static func writer(ofPath path: String) -> String? {
         if path.contains("/.build/index-build/") { return "sourcekit-lsp's own index, filled in the background" }
-        if path.contains("/.build/\(IndexStoreLocator.indexBuildDirectoryName)/") {
+        if IndexStoreLocator.isBuiltBySextant(storePath: path) {
             return "written by `sextant index`, in a build tree of its own"
         }
         if path.contains("/Index.noindex/DataStore") { return "Xcode's own index" }

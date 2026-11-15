@@ -45,7 +45,7 @@ struct StoreSelectionTests {
         let (root, debug, release) = try makePackage()
         defer { try? FileManager.default.removeItem(at: root) }
 
-        let stores = IndexStoreLocator.usableStorePaths(under: root)
+        let stores = StoreSelection.resolve(IndexStoreLocator.candidates(under: root), policy: nil).chosen.map(\.path)
         #expect(stores == [debug])
         #expect(!stores.contains(release))
     }
@@ -57,7 +57,7 @@ struct StoreSelectionTests {
         try FileManager.default.removeItem(atPath: debug + "/v5/units")
 
         // Only release remains — an empty debug store does not quietly pass itself off as fresh.
-        #expect(IndexStoreLocator.usableStorePaths(under: root) == [release])
+        #expect(StoreSelection.resolve(IndexStoreLocator.candidates(under: root), policy: nil).chosen.map(\.path) == [release])
     }
 
     @Test("Store freshness is read from the units, not the directory")

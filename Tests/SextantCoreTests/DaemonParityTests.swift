@@ -211,10 +211,10 @@ struct DaemonParityTests {
         let binary = try #require(BuildProducts.sextantBinary(under: Self.packageRoot), "sextant is not built")
         let store = try #require(Self.fixtureStore)
         let sandbox = try Sandbox()
-        // Two usable stores of one configuration: the policy decides which is read, and with none
-        // set nothing is read.
+        // Two usable stores of one configuration, both left by ordinary builds: the policy decides
+        // which is read, and with none set nothing is read.
         let project = try sandbox.package(named: "stores")
-        for layout in [".build/out/Products/Debug/index", ".build/sextant-index/out/Products/Debug/index"] {
+        for layout in [".build/out/Products/Debug/index", ".build/arm64-apple-macosx/debug/index"] {
             let directory = project.appendingPathComponent(layout)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             try FileManager.default.copyItem(at: URL(fileURLWithPath: store), to: directory.appendingPathComponent("store"))

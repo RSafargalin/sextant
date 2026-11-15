@@ -27,4 +27,12 @@ enum BuildProducts {
         let fromGraph = CompilationDatabase.capture(fromStores: IndexStoreLocator.usableStorePaths(under: root))
         return fromGraph.isEmpty ? CompilationDatabase.load(forRoot: root.path) : fromGraph
     }
+
+    /// Removes the snapshots `sextant index` recorded in the real cache for the stores of a
+    /// package's own build tree, for tests that run it outside a sandboxed home.
+    static func removeIndexSnapshots(under root: URL) {
+        for store in IndexStoreLocator.storePaths(inBuildDirectory: IndexStoreLocator.indexBuildDirectory(ofPackage: root)) {
+            try? FileManager.default.removeItem(at: IndexSnapshot.location(forStore: store))
+        }
+    }
 }

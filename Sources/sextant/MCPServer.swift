@@ -10,9 +10,9 @@ private let indexUnavailable =
 /// not a missing index — it is a decision nobody has made — and telling an agent to run
 /// `sextant index` there sends it to build a third store instead of surfacing the choice.
 private func indexUnavailableReason(_ arguments: [String]) -> String {
-    let (candidates, _) = indexCandidatesWithCoverage(in: arguments)
-    guard candidates.filter(\.isUsable).count > 1, storePolicy(in: arguments) == nil else { return indexUnavailable }
-    return StoreSelection.unsetPolicyRefusal(candidates: candidates, shorten: shorten).joined(separator: "\n")
+    let (resolution, _) = resolveStores(in: arguments)
+    guard resolution.needsPolicy else { return indexUnavailable }
+    return StoreSelection.unsetPolicyRefusal(candidates: resolution.candidates, shorten: shorten).joined(separator: "\n")
 }
 
 /// Runs the MCP server over stdio. A single client (Claude Code) means a sequential loop with
@@ -63,16 +63,9 @@ func runMCP(arguments: [String]) -> Int32 {
         let opened = index
         let context = makeToolContext(project: project, index: index, provenance: {
             guard opened != nil else { return nil }
-            let (paths, source) = resolveIndex(in: arguments)
-            guard !paths.isEmpty else { return nil }
-            let freshness = IndexFreshness.state(storePaths: paths, projectRoot: projectRoot(in: arguments))
-            let coverage = paths.count == 1
-                ? StoreCoverage.measure(store: paths[0],
-                                        projectRoot: URL(fileURLWithPath: projectRoot(in: arguments), isDirectory: true),
-                                        libraryPath: optionValue("--index-lib", in: arguments))
-                : nil
-            return IndexProvenance(source: source, storeCount: paths.count, freshness: freshness,
-                                   coverage: coverage).summary
+            let (resolution, source) = resolveStores(in: arguments)
+            guard !resolution.chosen.isEmpty else { return nil }
+            return indexProvenance(resolution, source: source, arguments: arguments).summary
         }, indexProblem: { indexUnavailableReason(arguments) }, warnedInvalidConfig: &configWarned)
         handleMCP(method: method, id: id, params: message["params"] as? [String: Any] ?? [:], context: context)
     }

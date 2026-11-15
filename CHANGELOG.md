@@ -35,8 +35,8 @@ Human-readable text output is not covered — parse `--json`, not prose.
   compiles. The cost: a second build tree on disk beside `.build`, the dependencies fetched into it
   once more, and a full build the first time. `swift package clean` removes it with the rest. Its
   store is found beside the ordinary ones, so where an ordinary build also wrote a store (the
-  native build system does by default) there are two, and the store policy decides between them
-  as it does for any two; `sextant index` says so when no policy is set. An ordinary `swift build`
+  native build system does by default) there are two; with no store policy set, the one
+  `sextant index` built answers (see Changed). An ordinary `swift build`
   does not refresh this store — `sextant index` (or `--reindex`) does, and the stale-index hint
   now says that.
 - **Over MCP, "the 10 most used" symbols sharing a name were the first ten by USR.** The cut
@@ -112,7 +112,42 @@ Human-readable text output is not covered — parse `--json`, not prose.
   check before this was about the tool's own process, which is how a hook that was registered
   nowhere passed a green check-up for ten days.
 
+### Changed
+
+- **A store `sextant index` built answers ahead of the stores an ordinary build left.** Nothing but
+  `sextant index` writes `.build/sextant-index`, so its store is the one whose contents are known.
+  A package holding both used to refuse every semantic question until a store policy was set; with
+  no policy set, the store `sextant index` built is now read and the others are named as set aside.
+  An explicit policy — `--store-policy`, `SEXTANT_STORE_POLICY`, `storePolicy` in `.sextant.json` —
+  still decides, and stores of ordinary builds are still chosen between by a policy when there is
+  no store `sextant index` built. The rule is printed by `sextant store` and named in the
+  provenance line whenever it made the choice.
+- **Freshness of a store `sextant index` built is judged by content, against a snapshot taken when
+  it was built.** At the end of a build `sextant index` records the sources it built from (in git:
+  the `HEAD` commit and the content of every source that differed from it; outside git: every
+  source), the store's unit file names and timestamp, the toolchain, the hashes of `Package.swift`
+  and `Package.resolved`, the build's exit status and whether tests were built. It lives in
+  `~/Library/Caches/sextant/index-snapshot/`, never in the project. A query then compares content:
+  the label says how many files changed since the index was built and names up to three of them,
+  names a changed manifest or toolchain as reasons of their own, and says when the index came from
+  a build that failed or left out tests. Every other store — Xcode's, an ordinary build's, one named
+  with `--index-store`, or one rewritten since its snapshot — is still judged by build time, and
+  every label now says which basis it used (`compared against the snapshot taken by
+  \`sextant index\`` or `compared by build time`). The check costs more than the old one: measured
+  on this repository (debug build, in process), 16 ms per query on a clean tree against 8.4 ms, more
+  when files are modified — two `git` processes and a toolchain lookup in
+  place of a `stat` of every source. `--json` outputs are unchanged.
+
 ### Fixed
+
+- **A touch, or a branch switched away and back, made a fresh index `STALE`.**
+  Freshness compared modification times, so any of these marked an index built from exactly the
+  current sources as stale. For a store `sextant index` built it is now a comparison of content,
+  and they change nothing.
+- **A release build made after `sextant index` pushed its store out.** Only the configuration built
+  last took part in the choice, and that filter ran before anything else — so a later
+  `swift build -c release` set the debug store `sextant index` built aside as "another
+  configuration". The filter now runs after the rule above.
 
 - **The adoption metric counts what a command runs, not the words in it.** A shell line is split
   into the commands it actually runs. `sextant` counts only when it runs a navigation command —

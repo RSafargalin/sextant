@@ -23,7 +23,7 @@ verbatim:
 
 ```console
 $ sextant context ProjectConfig
-[index: spm · 1 store(s) · fresh]
+[index: spm · 1 store(s) · fresh (compared against the snapshot taken by `sextant index`)]
 ── ProjectConfig  [struct]
    def: Sources/SextantCore/ProjectConfig.swift:4  public struct ProjectConfig: Codable, Sendable {
    usages: 12
@@ -35,7 +35,7 @@ $ sextant context ProjectConfig
    bases and protocols: Sendable
 
 $ sextant blast SourceLocation
-[index: spm · 1 store(s) · fresh]
+[index: spm · 1 store(s) · fresh (compared against the snapshot taken by `sextant index`)]
 ── blast radius: SourceLocation [struct]
    a change would touch: 9 files · 37 usages · 0 calls
      Sources/SextantCore/BlastRadius.swift
@@ -165,8 +165,15 @@ differently — measured on this repository, `refs SwiftSources` gives **83** us
 from the store built last and **34** in 12 files from a store seven days older, while merging
 both gives **91** — and nothing in the answer shows which was read.
 
-So the tool does not choose. While one store is usable there is nothing to decide and nothing is
-asked. As soon as a second one is usable, semantic commands refuse until a policy is set:
+One rule decides without being asked: **a store `sextant index` built answers ahead of the stores
+an ordinary build left in `.build`.** Nothing else writes `.build/sextant-index`, so that is the
+store whose contents are known — and the one whose freshness can be judged by content (below). The
+rule is printed by `sextant store` and named in the provenance line whenever it made the choice;
+an explicit policy overrides it.
+
+Beyond that the tool does not choose. While one store is usable there is nothing to decide and
+nothing is asked. As soon as a second one is usable and none of them is the store `sextant index`
+built, semantic commands refuse until a policy is set:
 
 ```
 sextant store                 # what is in reach, what each policy gives, what it costs
@@ -179,7 +186,7 @@ Every answer carries what the opened store covers, next to its freshness — the
 questions and a fresh store can still hold half the project:
 
 ```
-[index: derivedData · 1 store(s) · fresh · covers 10337/12351 files (84%)]
+[index: derivedData · 1 store(s) · fresh (compared by build time) · covers 10337/12351 files (84%)]
 ```
 
 Measured on this repository, the same query against two stores of one project: `covers 92%` →
@@ -197,6 +204,31 @@ The choice is written to `.sextant.json` (`storePolicy`). Override it for one co
 `--index-store <path>`. Whenever there was a choice, every answer carries the line that says how
 many candidates there were, which are being read, and why the others were not. See
 [ADR-0006](docs/adr/0006-store-policy-is-a-persons-decision.md).
+
+### How fresh the index is
+
+Every answer says whether the index is fresh, and on what basis:
+
+- **Against the snapshot `sextant index` took.** When it builds a store, `sextant index` records
+  what it built from — in git, the `HEAD` commit and the content of every source that differed from
+  it; outside git, every source — along with the store's unit files, the toolchain, the hashes of
+  `Package.swift` and `Package.resolved`, and the build's outcome. A query compares content: a file
+  touched without a change, or a branch left and returned to, is still fresh; an edit, a new
+  source or a deleted one is not, and the label names the files:
+
+  ```
+  [index: spm · 1 store(s) · ⚠ STALE — 2 file(s) changed since the index was built: Sources/A.swift, Sources/B.swift: run `sextant index` (compared against the snapshot taken by `sextant index`)]
+  ```
+
+  A changed manifest or toolchain is named as its own reason, and an index from a build that
+  failed, or that left tests out (`--no-tests`), says so. The snapshot lives in
+  `~/Library/Caches/sextant/index-snapshot/`, never in the project.
+- **By build time,** for every other store — Xcode's, an ordinary build's, one named with
+  `--index-store`, or one rewritten since its snapshot: a source modified after the store's units
+  were last written makes it stale. `doctor` and `sextant store` say why a snapshot was not used.
+
+The content comparison costs two `git` processes per query (about 16 ms on this repository, against
+about 8.4 ms for the build-time check).
 
 `.gitignore` is respected in full — under git directly, and outside it by handing the directory
 to git as a work tree whose git dir lives in the cache, so nothing is written into the project. To leave

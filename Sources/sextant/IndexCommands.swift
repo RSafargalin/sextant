@@ -10,16 +10,18 @@ import Foundation
 /// SPM and DerivedData are deliberately NOT merged: different roots and configurations would
 /// double-count. An app target (xcodeproj) is covered through DerivedData.
 /// Freshness and its warning live in `openIndex` via provenance — one place, not duplicated.
-/// The candidates with their coverage of this project filled in — but only when there is more than
-/// one, because reading every unit costs seconds on a large store and buys nothing where there is
-/// no decision to make.
-func indexCandidatesWithCoverage(in arguments: [String])
-    -> (candidates: [StoreCandidate], source: IndexProvenance.Source) {
+///
+/// The decision over the candidates, with coverage measured only where several remain to choose
+/// between: reading every unit costs seconds on a large store and buys nothing where there is no
+/// decision to make.
+func resolveStores(in arguments: [String]) -> (resolution: StoreResolution, source: IndexProvenance.Source) {
     let (candidates, source) = indexCandidates(in: arguments)
-    guard candidates.filter(\.isUsable).count > 1 else { return (candidates, source) }
     let root = URL(fileURLWithPath: projectRoot(in: arguments), isDirectory: true)
     let library = optionValue("--index-lib", in: arguments)
-    return (candidates.map { $0.measuringCoverage(projectRoot: root, libraryPath: library) }, source)
+    let resolution = StoreSelection.resolve(candidates, policy: storePolicy(in: arguments)?.policy) {
+        $0.measuringCoverage(projectRoot: root, libraryPath: library)
+    }
+    return (resolution, source)
 }
 
 /// Every store the tool could use, in the order sources take precedence, together with where they
@@ -57,23 +59,37 @@ func storePolicy(in arguments: [String]) -> (policy: StorePolicy, origin: String
 }
 
 /// The stores to open. One usable candidate needs no policy — there is nothing to decide. Several
-/// do, and with none set nothing is picked: the two policies give different answers to the same
-/// question, so guessing here would be the confident wrongness the tool exists to prevent.
+/// do, unless one of them is the store `sextant index` built, and with none set nothing is picked:
+/// the policies give different answers to the same question, so guessing here would be the
+/// confident wrongness the tool exists to prevent.
 func resolveIndex(in arguments: [String]) -> (paths: [String], source: IndexProvenance.Source) {
-    let (candidates, source) = indexCandidatesWithCoverage(in: arguments)
-    return (chooseStores(from: candidates, arguments: arguments).map(\.path), source)
-}
-
-/// The stores to open, from candidates already in hand — enumerating them means listing every unit
-/// directory, which is 0.3s on a 22 000-unit store and not worth doing twice per command.
-func chooseStores(from candidates: [StoreCandidate], arguments: [String]) -> [StoreCandidate] {
-    let usable = candidates.filter(\.isUsable)
-    guard usable.count > 1 else { return usable }
-    guard let policy = storePolicy(in: arguments)?.policy else { return [] }
-    return StoreSelection.choose(from: candidates, policy: policy)
+    let (resolution, source) = resolveStores(in: arguments)
+    return (resolution.chosen.map(\.path), source)
 }
 
 func resolveStorePaths(in arguments: [String]) -> [String] { resolveIndex(in: arguments).paths }
+
+/// The trust label for the stores a resolution chose: where they came from, which rule chose
+/// them, how fresh they are and on what basis, and how much of the project they cover.
+func indexProvenance(_ resolution: StoreResolution, source: IndexProvenance.Source,
+                     arguments: [String]) -> IndexProvenance {
+    let paths = resolution.chosen.map(\.path)
+    let root = projectRoot(in: arguments)
+    let report = IndexFreshness.report(storePaths: paths, projectRoot: root)
+    // Coverage of the single opened store: cached against the store's own state, so this is a
+    // lookup on every run but the first after a build. With several stores the number would be a
+    // sum of overlapping sets, which is not a fact about anything.
+    let coverage = paths.count == 1
+        ? StoreCoverage.measure(store: paths[0], projectRoot: URL(fileURLWithPath: root, isDirectory: true),
+                                libraryPath: optionValue("--index-lib", in: arguments))
+        : nil
+    let aside = resolution.setAsideByOwnStoreRule
+    let selection = resolution.decidedByOwnStoreRule
+        ? "the store `sextant index` built, ahead of \(aside) ordinary build store(s) (rule; a store policy overrides)"
+        : nil
+    return IndexProvenance(source: source, storeCount: paths.count, report: report, selection: selection,
+                           coverage: coverage)
+}
 
 /// Where Xcode keeps its build products. The default location is a default, not a rule: a project
 /// built with `xcodebuild -derivedDataPath ./build` — which every CI does, and many people do
@@ -87,7 +103,7 @@ func derivedDataRoot(in arguments: [String]) -> String {
     return "\(FileManager.default.homeDirectoryForCurrentUser.path)/Library/Developer/Xcode/DerivedData"
 }
 
-/// Index freshness: whether any source is newer than the freshest store.
+/// Whether the index is stale, by the freshness layer.
 func indexIsStale(paths: [String], root: String) -> Bool {
     IndexFreshness.isStale(storePaths: paths, projectRoot: root)
 }
@@ -209,10 +225,10 @@ func runDoctor(arguments: [String]) -> Int32 {
         }
     }
 
-    let stores = resolveStorePaths(in: arguments)
-    let (allCandidates, _) = indexCandidatesWithCoverage(in: arguments)
-    let usableCandidates = allCandidates.filter(\.isUsable)
-    if stores.isEmpty, usableCandidates.count > 1, storePolicy(in: arguments) == nil {
+    let (resolution, _) = resolveStores(in: arguments)
+    let stores = resolution.chosen.map(\.path)
+    let usableCandidates = resolution.candidates.filter(\.isUsable)
+    if resolution.needsPolicy {
         // The state a check-up exists to name: there IS an index, in fact more than one, and the
         // tool is refusing to guess between them. "No index store found" would send the reader to
         // build a third.
@@ -228,15 +244,27 @@ func runDoctor(arguments: [String]) -> Int32 {
         print("❌ no index store found — build one: `sextant index` (SPM) or `sextant index --app` (xcodeproj)")
         ok = false
     } else {
+        if resolution.decidedByOwnStoreRule {
+            print("ℹ store chosen by rule: \(StoreSelection.ownStoreRule)")
+        }
         for store in stores {
-            switch IndexFreshness.state(storePaths: [store], projectRoot: root) {
+            let report = IndexFreshness.report(storePaths: [store], projectRoot: root)
+            switch report.state {
             case .fresh:
-                print("✅ index store: \(shorten(store))")
+                print("✅ index store: \(shorten(store))  (fresh — \(report.basisDescription))")
             case .stale:
-                print("⚠ index store: \(shorten(store))  (older than the sources — run `sextant index`, or rebuild whatever wrote it)")
+                let reasons = report.reasons()
+                let why = reasons.isEmpty ? "older than the sources" : reasons.joined(separator: "; ")
+                print("⚠ index store: \(shorten(store))  (\(why) — \(report.basisDescription); run `sextant index`, or rebuild whatever wrote it)")
             case .unknown:
                 print("⚠ index store: \(shorten(store))  (empty or unreadable — freshness unknown)")
                 ok = false
+            }
+            if let problem = report.snapshotProblem {
+                print("   snapshot of `sextant index` not used: \(problem)")
+            }
+            if report.testsSkipped {
+                print("⚠ index store built without tests (`--no-tests`) — references from tests are missing")
             }
         }
         if let set = openIndex(arguments, label: "doctor") {
@@ -382,26 +410,36 @@ func runIndex(arguments: [String]) -> Int32 {
 
     // A single package is built directly, in a build tree of its own inside `.build`, where
     // IndexStoreLocator finds the store beside the ordinary ones.
+    let testsBuilt = !arguments.contains("--no-tests")
     if packageDirs.count == 1 {
         let package = packageDirs[0]
         let scratch = IndexStoreLocator.indexBuildDirectory(ofPackage: package)
-        let build = IndexBuild.swiftBuildArguments(scratchPath: scratch.path,
-                                                   buildTests: !arguments.contains("--no-tests"))
+        let build = IndexBuild.swiftBuildArguments(scratchPath: scratch.path, buildTests: testsBuilt)
         print("▶ swift \(build.joined(separator: " ")): \(package.lastPathComponent)")
         let log = IndexBuild.buildLog(forRoot: rootPath)
+        // Recorded before the build reads them: a file edited while it runs then reads as changed.
+        let sources = IndexSnapshot.sources(ofProject: rootPath)
         let status = runSwiftBuild(build, in: package, log: log)
-        guard status == 0 else {
-            reportError("sextant index: build failed (code \(status)).")
-            return 1
-        }
         let built = IndexStoreLocator.storePaths(inBuildDirectory: scratch)
         let candidates = IndexStoreLocator.candidates(under: root)
-        guard let store = candidates.first(where: { $0.isUsable && built.contains($0.path) })?.path else {
+        let store = candidates.first(where: { $0.isUsable && built.contains($0.path) })?.path
+        if let store {
+            recordSnapshot(store: store, root: rootPath, sources: sources, status: status,
+                           testsBuilt: testsBuilt, log: log)
+        }
+        guard status == 0 else {
+            reportError("sextant index: build failed (code \(status)).")
+            if let store {
+                reportError("   the store it left is marked as coming from a failed build: \(store)")
+            }
+            return 1
+        }
+        guard let store else {
             reportError("sextant index: the build succeeded, but it left no index store with units under \(scratch.path).")
             return 1
         }
         print("\nindex ready: \(store)")
-        if candidates.filter(\.isUsable).count > 1, storePolicy(in: arguments) == nil {
+        if StoreSelection.resolve(candidates, policy: storePolicy(in: arguments)?.policy).needsPolicy {
             reportError("⚠ this is one of \(candidates.filter(\.isUsable).count) usable index stores for this project, and no store policy is set —")
             reportError("   semantic commands will refuse rather than guess between them. `sextant store` compares them.")
         }
@@ -442,15 +480,21 @@ func runIndex(arguments: [String]) -> Int32 {
     }
 
     let build = IndexBuild.swiftBuildArguments(scratchPath: IndexBuild.umbrellaBuildDirectory(forRoot: rootPath).path,
-                                               buildTests: !arguments.contains("--no-tests"))
+                                               buildTests: testsBuilt)
     print("▶ umbrella build (\(packages.count) packages, one pass): swift \(build.joined(separator: " "))")
     let log = IndexBuild.buildLog(forRoot: rootPath)
+    let sources = IndexSnapshot.sources(ofProject: rootPath)
     let status = runSwiftBuild(build, in: umbrella, log: log)
+    let umbrellaStore = IndexBuild.umbrellaStorePath(forRoot: rootPath)
+    if let umbrellaStore {
+        recordSnapshot(store: umbrellaStore, root: rootPath, sources: sources, status: status,
+                       testsBuilt: testsBuilt, log: log)
+    }
     guard status == 0 else {
         reportError("sextant index: umbrella build failed (code \(status)).")
         return 1
     }
-    guard let store = IndexBuild.umbrellaStorePath(forRoot: rootPath) else {
+    guard let store = umbrellaStore else {
         reportError("sextant index: the umbrella build succeeded, but it left no index store with units under \(IndexBuild.umbrellaBuildDirectory(forRoot: rootPath).path).")
         return 1
     }
@@ -458,6 +502,32 @@ func runIndex(arguments: [String]) -> Int32 {
     reportTestCoverage(ofStore: store, root: rootPath, arguments: arguments, isXcode: false)
     captureCompileDatabase(root: rootPath, stores: [store], buildLog: log)
     return 0
+}
+
+/// Records what the store a build just left was built from, so that freshness can later be
+/// judged by content. A snapshot that cannot be written is reported, not fatal: freshness then
+/// falls back to build time and says so.
+func recordSnapshot(store: String, root: String, sources captured: Result<SourceSnapshot, SourceSnapshot.CaptureFailure>,
+                    status: Int32, testsBuilt: Bool, log: URL) {
+    let sources: SourceSnapshot
+    switch captured {
+    case .success(let value):
+        sources = value
+    case .failure(let failure):
+        reportError("⚠ sextant index: no snapshot of the sources was recorded (\(failure.reason)) — "
+                    + "freshness will be judged by build time.")
+        return
+    }
+    let text = (try? String(contentsOf: log, encoding: .utf8)) ?? ""
+    guard let snapshot = IndexSnapshot.afterBuild(store: store, projectRoot: root, sources: sources,
+                                                  exitStatus: status, testsBuilt: testsBuilt, buildLog: text,
+                                                  toolchain: ToolchainIdentity.currentWithVersion()) else { return }
+    do {
+        try snapshot.save()
+    } catch {
+        reportError("⚠ sextant index: the snapshot of the sources could not be written (\(error)) — "
+                    + "freshness will be judged by build time.")
+    }
 }
 
 // MARK: - Opening the index (shared helper)
@@ -492,15 +562,15 @@ private let indexMemo = IndexMemo()
 /// потеряно. Две строки об одном и том же читаются как две разные проблемы.
 func openIndex(_ arguments: [String], label: String, listen: Bool = false, quiet: Bool = false) -> IndexStoreSet? {
     ensureFreshIndex(arguments)
-    let (candidates, source) = indexCandidatesWithCoverage(in: arguments)
-    let storePaths = chooseStores(from: candidates, arguments: arguments).map(\.path)
+    let (resolution, source) = resolveStores(in: arguments)
+    let storePaths = resolution.chosen.map(\.path)
     guard !storePaths.isEmpty,
           let libraryPath = optionValue("--index-lib", in: arguments) ?? discoverIndexStoreLibrary() else {
         if !quiet {
             // Two different states, and they need two different sentences: nothing to read, or
             // several things to read and nobody has said which.
-            if candidates.filter(\.isUsable).count > 1, storePolicy(in: arguments) == nil {
-                StoreSelection.unsetPolicyRefusal(candidates: candidates, shorten: shorten).forEach(reportError)
+            if resolution.needsPolicy {
+                StoreSelection.unsetPolicyRefusal(candidates: resolution.candidates, shorten: shorten).forEach(reportError)
             } else {
                 reportError("sextant \(label): no index store found (sextant index / an Xcode build / --index-store).")
             }
@@ -509,23 +579,11 @@ func openIndex(_ arguments: [String], label: String, listen: Bool = false, quiet
     }
     // Provenance on stderr — the single place that marks source and freshness, which is what
     // keeps the tool from being quietly wrong.
-    let freshness = IndexFreshness.state(storePaths: storePaths, projectRoot: projectRoot(in: arguments))
-    // Coverage of the single opened store: cached against the store's own state, so this is a
-    // lookup on every run but the first after a build. With several stores the number would be a
-    // sum of overlapping sets, which is not a fact about anything.
-    let coverage = storePaths.count == 1
-        ? StoreCoverage.measure(store: storePaths[0],
-                                projectRoot: URL(fileURLWithPath: projectRoot(in: arguments), isDirectory: true),
-                                libraryPath: optionValue("--index-lib", in: arguments))
-        : nil
-    reportError(IndexProvenance(source: source, storeCount: storePaths.count, freshness: freshness,
-                                coverage: coverage).summary)
+    reportError(indexProvenance(resolution, source: source, arguments: arguments).summary)
     // The decision itself, whenever there was one to make: how many stores were in reach, which
     // are being read, and what the others were left out for.
-    if let policy = storePolicy(in: arguments)?.policy {
-        let chosen = candidates.filter { storePaths.contains($0.path) }
-        StoreSelection.explanation(candidates: candidates, chosen: chosen, policy: policy, shorten: shorten)
-            .forEach(reportError)
+    if resolution.policy != nil || resolution.decidedByOwnStoreRule {
+        StoreSelection.explanation(of: resolution, shorten: shorten).forEach(reportError)
     }
     // In the cache directory rather than /tmp: periodic cleanup of temporary files killed the
     // warm IndexStoreDB database and brought back the cold start (~2.1s instead of ~0.2s).

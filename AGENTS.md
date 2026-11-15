@@ -8,7 +8,7 @@ breaking something invisible.
 ## Build and verify
 
 ```bash
-swift build && swift test          # 413 tests
+swift build && swift test          # 441 tests
 make ci                            # build + test + self-lint — run this before committing
 swift test --filter "<suite name>" # one suite
 ```
@@ -72,10 +72,24 @@ wrong answer rather than a crash.
   generated from it. Adding a tool is one edit — and the dispatcher test fails if you forget
   the handler. Do not hand-maintain a parallel list.
 - **`IndexFreshness`** is the only place that decides whether an index is fresh, and the only
-  place that reads a store's timestamp. It reads the mtime of `<store>/v*/units`, because a
-  build that writes the store rewrites unit files without touching the store directory. Selecting or judging a
-  store by directory mtime is the specific bug that made semantic queries go blind; if you
-  need a freshness signal, call this layer.
+  place that reads a store's timestamp. It judges on one of two bases and every label names which:
+  - **the snapshot** `sextant index` records after it builds a store (`IndexSnapshot`, in
+    `~/Library/Caches/sextant/index-snapshot/`): the sources it built from (`SourceSnapshot` — in
+    git the `HEAD` commit plus the blob hash of every source that differed from it, outside git
+    every source), a fingerprint of the store, and the build record. It is trusted only while the
+    store's units timestamp still matches the recorded one (O(1); units are not re-listed per
+    query). Its git commands run with `--no-optional-locks`, so a check never writes `.git/index`,
+    and a failed git command makes the comparison impossible rather than empty. Freshness is then a comparison of content, returning the
+    changed files; manifests, toolchain and a failed build are separate reasons.
+  - **build time**, for every store without a trusted snapshot: the mtime of `<store>/v*/units`
+    (a build that writes the store rewrites unit files without touching the store directory)
+    against the sources' modification times.
+  Selecting or judging a store by directory mtime is the specific bug that made semantic queries
+  go blind; if you need a freshness signal, call this layer. Nothing about freshness may be
+  memoised across requests in `serve` or `mcp`.
+- **`StoreSelection.resolve`** is the only place that decides which stores answer: the rule that a
+  store `sextant index` built goes first when no policy is set, then the configuration filter,
+  then the policy. Callers print `explanation(of:)`; they do not re-derive the decision.
 
 ## Code conventions
 
@@ -116,13 +130,16 @@ confident wrong answers, and a contributor who reports the same way is part of t
   whatever was built before — in a tree built without the store, SwiftPM's Swift Build system
   compiles nothing and writes nothing. An ordinary `swift build` does not refresh that store;
   `sextant index` or `--reindex` does. A store an ordinary build writes in `.build` is a second
-  candidate, and the store policy decides between them. Tests find stores and binaries through
+  candidate; with no store policy set the one `sextant index` built answers, and an explicit
+  policy decides otherwise. Tests find stores and binaries through
   `BuildProducts`, never through a hard-coded layout.
 - **Semantic commands need a built index store.** A test that queries semantics without one
   will pass vacuously. The integration fixture exists so this does not happen silently.
 - **Do not add a fourth patch for index staleness.** Four separate mechanisms existed once;
-  they were replaced by one layer. A new special case is a signal that the layer is wrong,
-  not that a patch is missing.
+  they were replaced by one layer, `IndexFreshness`. Its snapshot basis replaced the mtime
+  comparison for stores `sextant index` built, inside that layer, and the mtime comparison stays
+  there as the fallback for every other store. A new special case is a signal that the layer is
+  wrong, not that a patch is missing.
 - **Benchmarks must stay reproducible on public repositories** — see
   [docs/benchmarks.md](docs/benchmarks.md). A number that cannot be re-measured by a reader is
   not evidence.

@@ -214,6 +214,7 @@ struct IndexBuildRunTests {
         // Units record real paths, and the temporary directory is reached through a symlink.
         let root = created.resolvingSymlinksInPath()
         defer {
+            BuildProducts.removeIndexSnapshots(under: root)
             try? FileManager.default.removeItem(at: root)
             try? FileManager.default.removeItem(at: IndexBuild.umbrellaDirectory(forRoot: root.path))
             try? FileManager.default.removeItem(at: CompilationDatabase.path(forRoot: root.path))

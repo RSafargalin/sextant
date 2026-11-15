@@ -113,6 +113,7 @@ struct MCPAnswerBoundsTests {
     }
 
     private func remove(_ root: URL) {
+        BuildProducts.removeIndexSnapshots(under: root)
         try? FileManager.default.removeItem(at: root)
     }
 

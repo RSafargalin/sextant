@@ -80,26 +80,13 @@ public enum IndexStoreLocator {
                 rejection: modified == nil ? "no units — nothing to read" : nil
             ))
         }
-        // Debug and release of one package are different builds of different code; mixing them
-        // would answer about a configuration nobody asked for. Only the configuration that was
-        // built last takes part, and the other is named as left out.
-        let usable = found.filter(\.isUsable)
-        guard usable.count > 1, let newest = usable.max(by: { ($0.modified ?? .distantPast) < ($1.modified ?? .distantPast) })
-        else { return found }
-        let winning = configuration(ofStorePath: newest.path)
-        return found.map { candidate in
-            guard candidate.isUsable, configuration(ofStorePath: candidate.path) != winning else { return candidate }
-            return StoreCandidate(path: candidate.path, origin: candidate.origin, unitCount: candidate.unitCount,
-                                  modified: candidate.modified,
-                                  rejection: "another configuration than the one built last (\(winning))")
-        }
+        return found
     }
 
-    /// `debug` or `release`, from the directory that holds `index/store` — spelled in lower case
-    /// by one build system and capitalised by the other.
-    private static func configuration(ofStorePath path: String) -> String {
-        URL(fileURLWithPath: path).deletingLastPathComponent().deletingLastPathComponent()
-            .lastPathComponent.lowercased()
+    /// Whether a store lies in the build tree `sextant index` keeps for itself — a store nothing
+    /// else writes.
+    public static func isBuiltBySextant(storePath: String) -> Bool {
+        storePath.contains("/.build/\(indexBuildDirectoryName)/")
     }
 
     private static func hasManifest(_ directory: URL) -> Bool {

@@ -38,19 +38,48 @@ public enum SwiftSources {
         let pathspecs = extensions.map { "*.\($0)" }
         guard let output = runGit(["-C", root.path, "ls-files", "-z",
                                    "--cached", "--others", "--exclude-standard", "--"] + pathspecs) else { return nil }
-        var result: [URL] = []
-        for piece in output.split(separator: "\0") {
-            let name = String(piece)
-            guard suffixes.contains(where: name.hasSuffix) else { continue }
-            let components = name.split(separator: "/").map(String.init)
-            guard let last = components.last, !last.hasPrefix(".") else { continue }
-            // The same filtering as in FileManager mode (shouldSkip): dot directories
-            // (.claude, .build, …) and vendored code. We do not rely on the project ignoring them.
-            if components.dropLast().contains(where: { $0.hasPrefix(".") || skippedDirectories.contains($0) }) { continue }
-            if !includeTests, last.hasSuffix("Tests.swift") { continue }
-            result.append(root.appendingPathComponent(name))
-        }
-        return result
+        return output.split(separator: "\0").map(String.init)
+            .filter { isListedSource($0, suffixes: suffixes, includeTests: includeTests) }
+            .map { root.appendingPathComponent($0) }
+    }
+
+    /// Whether a path git lists, relative to the root, is one of the project's files. The same
+    /// filtering as in FileManager mode (shouldSkip): dot directories (.claude, .build, …) and
+    /// vendored code. We do not rely on the project ignoring them.
+    static func isListedSource(_ relativePath: String, suffixes: [String], includeTests: Bool) -> Bool {
+        guard suffixes.contains(where: relativePath.hasSuffix) else { return false }
+        let components = relativePath.split(separator: "/").map(String.init)
+        guard let last = components.last, !last.hasPrefix(".") else { return false }
+        if components.dropLast().contains(where: { $0.hasPrefix(".") || skippedDirectories.contains($0) }) { return false }
+        if !includeTests, last.hasSuffix("Tests.swift") { return false }
+        return true
+    }
+
+    /// Every extension the index covers: Swift and the C family.
+    public static let indexedExtensions = ["swift"] + IndexDeclarations.clangExtensions
+
+    /// Whether a path relative to the project root is a source the index is built from: a file
+    /// with an indexed extension, outside dot and vendored directories, and not a package
+    /// manifest — a manifest describes the build rather than being compiled into the store.
+    public static func isIndexedSource(relativePath: String) -> Bool {
+        isListedSource(relativePath, suffixes: indexedExtensions.map { ".\($0)" }, includeTests: true)
+            && !isPackageManifest(relativePath: relativePath)
+    }
+
+    /// `Package.swift` or a versioned `Package@swift-X.swift`, wherever it sits.
+    public static func isPackageManifest(relativePath: String) -> Bool {
+        let name = (relativePath as NSString).lastPathComponent
+        return name == "Package.swift" || (name.hasPrefix("Package@swift") && name.hasSuffix(".swift"))
+    }
+
+    /// The sources the index is built from, tests included and package manifests excluded: the
+    /// git list in a repository, otherwise the FileManager walk. Not memoised and not narrowed by
+    /// the user's exclusions — what the store holds does not depend on either.
+    public static func indexedSources(under root: URL) -> [URL] {
+        let found = gitSwiftFiles(under: root, includeTests: true, extensions: indexedExtensions)
+            ?? enumeratedFiles(under: root, includeTests: true, extensions: indexedExtensions)
+        return found.filter { !isPackageManifest(relativePath: $0.lastPathComponent) }
+            .sorted { $0.path < $1.path }
     }
 
     /// Changed source files between revisions (or against the working tree), plus the repository root.
@@ -266,17 +295,9 @@ public enum SwiftSources {
                                    "-C", root.path, "ls-files", "-z", "--others", "--exclude-standard",
                                    "--"] + pathspecs) else { return nil }
 
-        var result: [URL] = []
-        for piece in output.split(separator: "\0") {
-            let name = String(piece)
-            guard suffixes.contains(where: name.hasSuffix) else { continue }
-            let components = name.split(separator: "/").map(String.init)
-            guard let last = components.last, !last.hasPrefix(".") else { continue }
-            if components.dropLast().contains(where: { $0.hasPrefix(".") || skippedDirectories.contains($0) }) { continue }
-            if !includeTests, last.hasSuffix("Tests.swift") { continue }
-            result.append(root.appendingPathComponent(name))
-        }
-        return result
+        return output.split(separator: "\0").map(String.init)
+            .filter { isListedSource($0, suffixes: suffixes, includeTests: includeTests) }
+            .map { root.appendingPathComponent($0) }
     }
 
     /// The borrowed git dir for a project: in the cache, never inside the project. Writing a
@@ -288,7 +309,7 @@ public enum SwiftSources {
     }
 
     /// FileManager fallback for non-git directories: a walk that skips hidden and service directories.
-    private static func enumeratedFiles(under root: URL, includeTests: Bool, extensions: [String] = ["swift"]) -> [URL] {
+    static func enumeratedFiles(under root: URL, includeTests: Bool, extensions: [String] = ["swift"]) -> [URL] {
         guard let enumerator = FileManager.default.enumerator(
             at: root,
             includingPropertiesForKeys: [.isDirectoryKey],

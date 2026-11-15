@@ -29,10 +29,13 @@ private func showStores(arguments: [String]) -> Int32 {
     // decide, and "what does it actually cover" is the question they came with.
     let (found, source) = indexCandidates(in: arguments)
     let root = projectRoot(in: arguments)
-    let candidates = found.map {
+    let measured = found.map {
         $0.measuringCoverage(projectRoot: URL(fileURLWithPath: root, isDirectory: true),
                              libraryPath: optionValue("--index-lib", in: arguments))
     }
+    let policy = storePolicy(in: arguments)
+    let resolution = StoreSelection.resolve(measured, policy: policy?.policy)
+    let candidates = resolution.candidates
     print("── index stores — \(shorten(root))")
 
     guard !candidates.isEmpty else {
@@ -47,22 +50,31 @@ private func showStores(arguments: [String]) -> Int32 {
         if let coverage = candidate.coverage {
             print("     covers: \(coverage.summary) of this project"
                   + (coverage.foreign > 0 ? "   ·   \(coverage.foreign) unit(s) from outside it" : ""))
-        } else if candidate.isUsable {
+        } else if candidate.modified != nil {
             print("     covers: not measurable (libIndexStore unavailable) — ranking by coverage would")
             print("             fall back to recency")
         }
+        if candidate.modified != nil {
+            print("     freshness: \(freshnessLine(IndexFreshness.report(storePaths: [candidate.path], projectRoot: root)))")
+        }
+        if let writer = StoreSelection.writer(ofPath: candidate.path) { print("     \(writer)") }
         if let origin = candidate.origin { print("     built from: \(shorten(origin))") }
-        if let rejection = candidate.rejection { print("     NOT usable: \(rejection)") }
+        if let rejection = candidate.rejection { print("     not read: \(rejection)") }
     }
 
     let usable = candidates.filter(\.isUsable)
     print("")
-    if let (policy, origin) = storePolicy(in: arguments) {
+    print("   rule: \(StoreSelection.ownStoreRule).")
+    if let (policy, origin) = policy {
         print("   policy: \(policy.rawValue) (from \(origin)) — \(policy.title)")
-        let chosen = StoreSelection.choose(from: candidates, policy: policy)
-        print("   with it, \(chosen.count) of \(usable.count) usable store(s) are read:")
-        chosen.forEach { print("     \(shorten($0.path))") }
-    } else if usable.count > 1 {
+        print("   with it, \(resolution.chosen.count) of \(usable.count) usable store(s) are read:")
+        resolution.chosen.forEach { print("     \(shorten($0.path))") }
+    } else if resolution.decidedByOwnStoreRule {
+        print("   policy: not set — the rule decides: the store `sextant index` built is read, and the")
+        print("   \(resolution.setAsideByOwnStoreRule) store(s) an ordinary build left are not:")
+        resolution.chosen.forEach { print("     \(shorten($0.path))") }
+        print("   To read them instead or as well, set a policy: `sextant store use <\(StorePolicy.known)>`.")
+    } else if resolution.needsPolicy {
         print("   policy: NOT SET — with several usable stores nothing is chosen, and every")
         print("   semantic command refuses rather than guess. The options:")
         for policy in StorePolicy.allCases {
@@ -79,6 +91,22 @@ private func showStores(arguments: [String]) -> Int32 {
         print("   second checkout). Set it in advance with `sextant store use <\(StorePolicy.known)>`.")
     }
     return 0
+}
+
+/// One store's freshness in a line: the verdict, what changed, and the basis it was judged on.
+private func freshnessLine(_ report: IndexFreshness.Report) -> String {
+    var line: String
+    switch report.state {
+    case .fresh: line = "fresh"
+    case .stale:
+        let reasons = report.reasons()
+        line = "STALE" + (reasons.isEmpty ? " — sources are newer" : " — " + reasons.joined(separator: "; "))
+    case .unknown: line = "unknown (empty or unreadable)"
+    }
+    line += " (\(report.basisDescription))"
+    if report.testsSkipped { line += "; built without tests (`--no-tests`)" }
+    if let problem = report.snapshotProblem { line += "; snapshot not used: \(problem)" }
+    return line
 }
 
 /// Records the decision in `.sextant.json`, keeping whatever else is in the file.
