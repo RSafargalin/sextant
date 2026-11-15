@@ -6,6 +6,8 @@
 [![Swift](https://img.shields.io/badge/swift-6.2%2B-orange)](https://swift.org)
 [![Platform](https://img.shields.io/badge/platform-macOS-lightgrey)](#installation)
 
+[![MCP Badge](https://lobehub.com/badge/mcp/rsafargalin-sextant)](https://lobehub.com/mcp/rsafargalin-sextant)
+
 **English** | [Русский](README.ru.md)
 
 Code intelligence for local Swift projects: a repository map, structural search (a grep
