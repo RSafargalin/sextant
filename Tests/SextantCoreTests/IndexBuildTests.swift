@@ -217,7 +217,7 @@ struct IndexBuildRunTests {
             BuildProducts.removeIndexSnapshots(under: root)
             try? FileManager.default.removeItem(at: root)
             try? FileManager.default.removeItem(at: IndexBuild.umbrellaDirectory(forRoot: root.path))
-            try? FileManager.default.removeItem(at: CompilationDatabase.path(forRoot: root.path))
+            try? FileManager.default.removeItem(at: CompilationDatabase.entry(forRoot: root.path))
         }
         for (path, contents) in Self.files {
             let file = root.appendingPathComponent(path)

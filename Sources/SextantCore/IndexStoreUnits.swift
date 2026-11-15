@@ -42,6 +42,8 @@ public final class IndexStoreUnits: @unchecked Sendable {
         public let outFile: String
         public let target: String
         public let isDebug: Bool
+        /// The unit's own name in the store, the name of its file under `<store>/v*/units`.
+        public var name: String = ""
     }
 
     private let handle: UnsafeMutableRawPointer
@@ -128,8 +130,36 @@ public final class IndexStoreUnits: @unchecked Sendable {
                         isSystem: readerIsSystem(reader),
                         outFile: string(readerOutFile(reader)),
                         target: string(readerTarget(reader)),
-                        isDebug: readerIsDebug(reader))
+                        isDebug: readerIsDebug(reader),
+                        name: name)
         }
+    }
+
+    /// Removes from a store that lies in `buildDirectory` the units whose source file no longer
+    /// exists, and nothing else: not their records, not a unit for a module or for SDK code. A
+    /// build never removes the unit of a deleted source itself, so without this the store keeps
+    /// answering from a file that is gone. Meant only for a build tree `sextant index` owns, where
+    /// every unit was written by a build of that tree; a store outside `buildDirectory` is left
+    /// as it is. Returns the source files whose units were removed, sorted.
+    public func removeUnitsOfMissingSources(inStore storePath: String, builtIn buildDirectory: String) throws -> [String] {
+        let tree = CanonicalPath.of(buildDirectory) + "/"
+        guard CanonicalPath.of(storePath).hasPrefix(tree) else { return [] }
+        let missing = try units(inStore: storePath).filter { unit in
+            // A relative path would be judged against the working directory, not the build's.
+            !unit.isSystem && unit.mainFile.hasPrefix("/") && !unit.name.isEmpty && !unit.name.contains("/")
+                && !FileManager.default.fileExists(atPath: unit.mainFile)
+        }
+        guard !missing.isEmpty else { return [] }
+        let store = URL(fileURLWithPath: storePath, isDirectory: true)
+        let versions = ((try? FileManager.default.contentsOfDirectory(atPath: store.path)) ?? []).filter { $0.hasPrefix("v") }
+        var removed = Set<String>()
+        for unit in missing {
+            for version in versions {
+                let file = store.appendingPathComponent("\(version)/units/\(unit.name)")
+                if (try? FileManager.default.removeItem(at: file)) != nil { removed.insert(unit.mainFile) }
+            }
+        }
+        return removed.sorted()
     }
 
     /// The source files a store was built from, symlink-resolved so they compare against a project

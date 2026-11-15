@@ -147,6 +147,128 @@ struct IndexDatabaseTests {
                 == encoded(fresh.lookup(name: "c_fixture_double", query: .definitions)))
     }
 
+    /// IndexStoreDB reads a unit again on open only when its modification time moved. A unit
+    /// rewritten with its old time put back (a restored backup, `touch -r`, a build that keeps
+    /// times) left the database answering from the unit as it was.
+    @Test("A database is built anew when a unit has the recorded modification time but is another file",
+          .enabled(if: IndexDatabaseTests.ready, "needs the fixture's index store — run `make fixture`"),
+          .timeLimit(.minutes(3)))
+    func unitRewrittenUnderItsOldTimeDiscardsTheDatabase() throws {
+        let scratch = try Scratch()
+        let library = try #require(BuildProducts.indexStoreLibrary)
+        let store = try scratch.store(at: "pkg/index/store")
+        let kept = scratch.base.appendingPathComponent("kept").path
+        do {
+            let set = try IndexStoreSet(storePaths: [store], libraryPath: library, databaseRoot: kept)
+            try #require(!set.lookup(name: "c_fixture_double", query: .definitions).compactMap(\.definition).isEmpty)
+        }
+        // CFixture.c's unit now holds what another unit holds — the definition went with it — and
+        // keeps the modification time it had, as a rewrite with the time put back leaves it.
+        let rewritten = try #require(try units(named: "CFixture.o-", inStore: store).first)
+        let other = try #require(try units(named: "", inStore: store).first {
+            !$0.lastPathComponent.hasPrefix("CFixture.o-")
+                && (try? Data(contentsOf: $0))?.count != (try? Data(contentsOf: rewritten))?.count
+        })
+        // To the nanosecond, as `touch -r` puts it back: IndexStoreDB compares the time exactly.
+        var before = stat()
+        try #require(lstat(rewritten.path, &before) == 0)
+        try Data(contentsOf: other).write(to: rewritten)
+        var times = [before.st_atimespec, before.st_mtimespec]
+        try #require(utimensat(AT_FDCWD, rewritten.path, &times, 0) == 0)
+
+        let reopened = try IndexStoreSet(storePaths: [store], libraryPath: library, databaseRoot: kept)
+        #expect(reopened.reusedDatabase == [false])
+        let fresh = try IndexStoreSet(storePaths: [store], libraryPath: library,
+                                      databaseRoot: scratch.base.appendingPathComponent("fresh").path)
+        #expect(fresh.lookup(name: "c_fixture_double", query: .definitions).compactMap(\.definition).isEmpty)
+        #expect(try encoded(reopened.lookup(name: "c_fixture_double", query: .definitions))
+                == encoded(fresh.lookup(name: "c_fixture_double", query: .definitions)))
+    }
+
+    /// A record from an earlier version lists unit names alone, and says nothing about whether the
+    /// units are still the files the database imported.
+    @Test("A record of unit names alone, from an earlier version, has the database built anew",
+          .enabled(if: IndexDatabaseTests.ready, "needs the fixture's index store — run `make fixture`"),
+          .timeLimit(.minutes(3)))
+    func recordInTheEarlierFormatDiscardsTheDatabase() throws {
+        let scratch = try Scratch()
+        let library = try #require(BuildProducts.indexStoreLibrary)
+        let store = try scratch.store(at: "pkg/index/store")
+        let kept = scratch.base.appendingPathComponent("kept").path
+        _ = try IndexStoreSet(storePaths: [store], libraryPath: library, databaseRoot: kept)
+        let database = IndexStoreSet.databaseDirectory(forStore: store, in: kept)
+        let names = try FileManager.default.contentsOfDirectory(atPath: store).filter { $0.hasPrefix("v") }.flatMap { version in
+            try FileManager.default.contentsOfDirectory(atPath: "\(store)/\(version)/units").map { "\(version)/\($0)" }
+        }
+        try #require(!names.isEmpty)
+        try Data(names.sorted().joined(separator: "\n").utf8).write(to: database.appendingPathComponent("sextant-units"))
+
+        do {
+            let reopened = try IndexStoreSet(storePaths: [store], libraryPath: library, databaseRoot: kept)
+            #expect(reopened.reusedDatabase == [false])
+            #expect(!reopened.lookup(name: "EnglishGreeter", query: .definitions).isEmpty)
+        }
+        // Opened over the units it now records, it is kept again.
+        let again = try IndexStoreSet(storePaths: [store], libraryPath: library, databaseRoot: kept)
+        #expect(again.reusedDatabase == [true])
+    }
+
+    /// A long-lived process brings its database up to date with the store while it runs; the units
+    /// it imported then were missing from the record written on open, so their later removal from
+    /// the store went unnoticed by the next run.
+    @Test("A unit imported while the database was open is recorded, and its removal is noticed",
+          .enabled(if: IndexDatabaseTests.ready, "needs the fixture's index store — run `make fixture`"),
+          .timeLimit(.minutes(3)))
+    func unitImportedWhileOpenIsRecorded() throws {
+        let scratch = try Scratch()
+        let library = try #require(BuildProducts.indexStoreLibrary)
+        let store = try scratch.store(at: "pkg/index/store")
+        let kept = scratch.base.appendingPathComponent("kept").path
+        let source = try #require(try units(named: "CFixture.o-", inStore: store).first)
+        let added = source.deletingLastPathComponent().appendingPathComponent("Added.o-0000000000000")
+        do {
+            let set = try IndexStoreSet(storePaths: [store], libraryPath: library, databaseRoot: kept)
+            try FileManager.default.copyItem(at: source, to: added)
+            set.pollForChanges()
+        }
+        let database = IndexStoreSet.databaseDirectory(forStore: store, in: kept)
+        let version = added.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent
+        #expect(IndexStoreSet.recordedUnits(in: database)?["\(version)/\(added.lastPathComponent)"] != nil)
+
+        try FileManager.default.removeItem(at: added)
+        let reopened = try IndexStoreSet(storePaths: [store], libraryPath: library, databaseRoot: kept)
+        #expect(reopened.reusedDatabase == [false])
+    }
+
+    @Test("The record of units round-trips, and only a same-time different file counts against a database")
+    func unitRecordFormat() throws {
+        let scratch = try Scratch()
+        let database = scratch.base.appendingPathComponent("db")
+        try FileManager.default.createDirectory(at: database.appendingPathComponent("v13/saved"), withIntermediateDirectories: true)
+        let stamp = IndexStoreSet.UnitStamp(modified: 1_700_000_000_123_456_789, size: 4096, inode: 42, statusChanged: 1_700_000_000_123_456_789)
+        IndexStoreSet.recordUnits(["v5/units/A.o-1": stamp], in: database)
+        #expect(IndexStoreSet.recordedUnits(in: database) == ["v5/units/A.o-1": stamp])
+
+        // Moved time: IndexStoreDB reads the unit again itself.
+        let moved = IndexStoreSet.UnitStamp(modified: stamp.modified + 1, size: 10, inode: 43, statusChanged: stamp.modified + 1)
+        #expect(IndexStoreSet.prepareDatabase(database, forUnits: ["v5/units/A.o-1": moved, "v5/units/B.o-2": moved]))
+        // Same time, another size — or the same size in another file — is a rewrite it would not read.
+        for rewritten in [IndexStoreSet.UnitStamp(modified: stamp.modified, size: 4000, inode: 42, statusChanged: stamp.statusChanged),
+                          IndexStoreSet.UnitStamp(modified: stamp.modified, size: 4096, inode: 99, statusChanged: stamp.statusChanged + 5)] {
+            try FileManager.default.createDirectory(at: database.appendingPathComponent("v13/saved"), withIntermediateDirectories: true)
+            IndexStoreSet.recordUnits(["v5/units/A.o-1": stamp], in: database)
+            #expect(!IndexStoreSet.prepareDatabase(database, forUnits: ["v5/units/A.o-1": rewritten]))
+            #expect(!FileManager.default.fileExists(atPath: database.appendingPathComponent("v13").path))
+        }
+        // A record that is not in this format — the earlier names-only one, or a damaged line.
+        for text in ["v5/units/A.o-1", "sextant-units 2\nv5/units/A.o-1\t1\t2", ""] {
+            try FileManager.default.createDirectory(at: database.appendingPathComponent("v13/saved"), withIntermediateDirectories: true)
+            try Data(text.utf8).write(to: database.appendingPathComponent("sextant-units"))
+            #expect(IndexStoreSet.recordedUnits(in: database) == nil)
+            #expect(!IndexStoreSet.prepareDatabase(database, forUnits: ["v5/units/A.o-1": stamp]))
+        }
+    }
+
     /// IndexStoreDB moves a database to `<version>/saved` when it is closed and imports every unit
     /// again when it finds none. A command that exited with its index open left the database
     /// under a per-process name, so every query paid for a full import.

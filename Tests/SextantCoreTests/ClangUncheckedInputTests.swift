@@ -41,7 +41,7 @@ struct ClangUncheckedInputTests {
         }
 
         deinit {
-            try? FileManager.default.removeItem(at: CompilationDatabase.path(forRoot: root.path))
+            try? FileManager.default.removeItem(at: CompilationDatabase.entry(forRoot: root.path))
             try? FileManager.default.removeItem(at: root)
         }
     }

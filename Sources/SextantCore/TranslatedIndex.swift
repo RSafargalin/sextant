@@ -1,10 +1,13 @@
 import Foundation
 
 /// The index as every symbol answer reads it: the stores' answers, stated against the sources as
-/// they are now. Every column is restated in the reported unit (`IndexColumns`). Beyond that, over
-/// a fresh index, or one judged by build time, it returns exactly what the stores return. Over an
-/// index stale against its snapshot, every position in a changed file is mapped onto the current
-/// text or marked unconfirmed, and every answer carries a `Staleness` note.
+/// they are now. Every column is restated in the reported unit (`IndexColumns`). A position in a
+/// project file that no longer exists, and that no freshness report names, is left out — with
+/// the symbol it belongs to, a reference from it, or a call from it — and counted in `leftOut`,
+/// which every surface names (`AbsentSources`). Beyond that, over a fresh index, or one judged by
+/// build time, it returns exactly what the stores return. Over an index stale against its
+/// snapshot, every position in a changed file is mapped onto the current text or marked
+/// unconfirmed, and every answer carries a `Staleness` note.
 ///
 /// The one place the semantic commands of the CLI and their MCP tools pass through, so that none
 /// of them can print a position the others would have corrected.
@@ -12,12 +15,18 @@ public struct TranslatedIndex: SemanticIndex {
     public let base: IndexStoreSet
     public let drift: IndexDrift?
     private let columns: IndexColumns
+    private let absent: AbsentSources
 
     public init(_ base: IndexStoreSet, drift: IndexDrift?) {
         self.base = base
         self.drift = drift
         self.columns = IndexColumns(drift: drift)
+        self.absent = AbsentSources(projectRoot: base.projectRoot, drift: drift)
     }
+
+    /// What the answers given so far left out because their files no longer exist; nil when
+    /// nothing was.
+    public var leftOut: AbsentSources.Summary? { absent.summary }
 
     /// A position the stores recorded, stated against the current text: its column restated from
     /// the text it was recorded in, then, over a stale index, its line mapped.
@@ -27,7 +36,19 @@ public struct TranslatedIndex: SemanticIndex {
     }
 
     public func lookup(name: String, query: SymbolQuery, limit: Int = 1000) -> [SymbolHit] {
-        let hits = base.lookup(name: name, query: query, limit: limit, indexedText: drift.map { $0.indexedLines(ofFile:) })
+        // Every position, so that one in a missing file comes off the total and not only off the
+        // part of the list the limit keeps.
+        let hits = base.lookup(name: name, query: query, limit: .max, indexedText: drift.map { $0.indexedLines(ofFile:) })
+            .compactMap { hit -> SymbolHit? in
+                let references = hit.references.filter { !absent.leavesOut($0) }
+                let definition = hit.definition.flatMap { absent.leavesOut($0) ? nil : $0 }
+                let lost = references.count < hit.references.count || (hit.definition != nil && definition == nil)
+                // A symbol nothing is left of was only ever in files that are gone.
+                if lost && definition == nil && references.isEmpty { return nil }
+                return SymbolHit(name: hit.name, usr: hit.usr, kind: hit.kind, definition: definition,
+                                 references: Array(references.prefix(limit)),
+                                 totalReferences: hit.totalReferences - (hit.references.count - references.count))
+            }
         guard !hits.isEmpty else { return hits }
         let note = staleness(forName: name, query: query)
         return hits.map { hit in
@@ -41,7 +62,8 @@ public struct TranslatedIndex: SemanticIndex {
     }
 
     public func related(toName name: String, query: RelationQuery, limit: Int = 1000) -> [RelatedSymbol] {
-        translated(base.related(toName: name, query: query, limit: limit))
+        // Every symbol, so that the limit applies to what is left once missing files are out.
+        translated(Array(present(base.related(toName: name, query: query, limit: .max)).prefix(limit)))
     }
 
     public func resolveSymbols(forName name: String) -> [RelatedSymbol] {
@@ -86,8 +108,18 @@ public struct TranslatedIndex: SemanticIndex {
                           declarationsOnly: query == .definitions)
     }
 
+    /// The symbols with no position in a missing file. Both positions are judged, so that each one
+    /// in a missing file is counted.
+    private func present(_ symbols: [RelatedSymbol]) -> [RelatedSymbol] {
+        symbols.filter { symbol in
+            let located = absent.leavesOut(symbol.location)
+            let called = symbol.callSite.map(absent.leavesOut) ?? false
+            return !located && !called
+        }
+    }
+
     private func translated(_ symbols: [RelatedSymbol], sorting: Bool = true) -> [RelatedSymbol] {
-        let mapped = symbols.map { symbol in
+        let mapped = present(symbols).map { symbol in
             RelatedSymbol(name: symbol.name, usr: symbol.usr, kind: symbol.kind,
                           location: stated(symbol.location),
                           callSite: symbol.callSite.map(stated),

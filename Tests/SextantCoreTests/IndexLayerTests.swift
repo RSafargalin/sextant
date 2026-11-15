@@ -178,7 +178,7 @@ struct IndexLayerDecisionTests {
         try CompilationDatabase.save([CompileCommand(directory: nested.path, file: file.path,
                                                      arguments: ["clang", "-c", file.path])], forRoot: nested.path)
         defer {
-            try? FileManager.default.removeItem(at: CompilationDatabase.path(forRoot: nested.path))
+            try? FileManager.default.removeItem(at: CompilationDatabase.entry(forRoot: nested.path))
             try? FileManager.default.removeItem(at: root)
         }
 
@@ -199,7 +199,7 @@ struct IndexLayerDecisionTests {
         try CompilationDatabase.save([CompileCommand(directory: root.path, file: file.path,
                                                      arguments: ["clang", "-c", file.path])], forRoot: root.path)
         defer {
-            try? FileManager.default.removeItem(at: CompilationDatabase.path(forRoot: root.path))
+            try? FileManager.default.removeItem(at: CompilationDatabase.entry(forRoot: root.path))
             try? FileManager.default.removeItem(at: root)
         }
         let rule = Rule(id: "system-state", message: "global state", patterns: ["Calendar.current"])
@@ -445,7 +445,7 @@ struct IndexLayerRunTests {
         try "// swift-tools-version: 5.9\nimport PackageDescription\nlet package = Package(name: \"project\")\n"
             .write(to: root.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
         let ordinary = root.appendingPathComponent(".build/out/Products/Debug/index")
-        let umbrella = home.appendingPathComponent("Library/Caches/sextant/umbrella/\(CanonicalPath.fileName(of: root.path))")
+        let umbrella = home.appendingPathComponent("Library/Caches/sextant/umbrella/\(CanonicalPath.entryName(of: root.path))")
             .appendingPathComponent(".build/out/Products/Debug/index")
         for directory in [ordinary, umbrella] {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

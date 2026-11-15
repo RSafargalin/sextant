@@ -17,36 +17,95 @@ public final class IndexStoreSet {
     public init(storePaths: [String], libraryPath: String, databaseRoot: String, listenToUnitEvents: Bool = false, projectRoot: String? = nil) throws {
         try? FileManager.default.createDirectory(atPath: databaseRoot, withIntermediateDirectories: true)
         var reused: [Bool] = []
+        var databases: [URL] = []
         self.stores = try storePaths.map { path in
             let database = Self.databaseDirectory(forStore: path, in: databaseRoot)
             try? FileManager.default.createDirectory(at: database, withIntermediateDirectories: true)
             CacheEviction.recordOwner(CanonicalPath.of(path), in: database)
-            let units = Self.unitNames(ofStore: path)
-            reused.append(Self.prepareDatabase(database, forUnits: units))
+            let units = Self.unitStamps(ofStore: path)
+            let recorded = Self.recordedUnits(in: database)
+            let kept = Self.prepareDatabase(database, forUnits: units, recorded: recorded)
+            reused.append(kept)
             let store = try IndexStore(storePath: path, libraryPath: libraryPath, databasePath: database.path, listenToUnitEvents: listenToUnitEvents, projectRoot: projectRoot)
-            Self.recordUnits(units, in: database)
+            // A record that already says exactly this is not written again.
+            if !kept || recorded != units { Self.recordUnits(units, in: database) }
+            databases.append(database)
             return store
         }
         self.storeCount = stores.count
         self.storePaths = storePaths
         self.reusedDatabase = reused
+        self.databases = databases
+        self.projectRoot = projectRoot
+        self.polled = listenToUnitEvents
     }
 
-    /// The file in a database directory that lists the units the database was last opened over.
+    /// The database directory of each store, in the order of `storePaths`.
+    private let databases: [URL]
+    /// The project the stores were opened for, when one was named.
+    public let projectRoot: String?
+    /// Whether the databases may have been brought up to date with the stores while open (polled,
+    /// or listening to unit events), importing units the record written on open does not list.
+    private var polled: Bool
+
+    /// Adds to each database's record the units that appeared in its store while it was open, so
+    /// that the next run knows the database may hold them. Runs before the stores close.
+    deinit {
+        guard polled else { return }
+        for (path, database) in zip(storePaths, databases) {
+            guard let recorded = Self.recordedUnits(in: database) else { continue }
+            let added = Self.unitStamps(ofStore: path).filter { recorded[$0.key] == nil }
+            guard !added.isEmpty else { continue }
+            Self.recordUnits(recorded.merging(added) { kept, _ in kept }, in: database)
+        }
+    }
+
+    /// The file in a database directory that lists the units the database was last opened over,
+    /// with the stamp of each unit file at that moment.
     static let unitListFileName = "sextant-units"
+    /// The first line of that file in the format this version writes.
+    static let unitListHeader = "sextant-units 2"
+
+    /// What the record keeps of one unit file: its modification time (the only thing IndexStoreDB
+    /// compares when it decides whether to read a unit again), its size, its inode and its status
+    /// change time, all from one `lstat`.
+    struct UnitStamp: Equatable, Sendable {
+        let modified: Int64
+        let size: Int64
+        let inode: UInt64
+        let statusChanged: Int64
+
+        /// Whether the database may answer from an earlier version of this unit: IndexStoreDB reads
+        /// a unit again only when its modification time moved, so a unit whose time is the same
+        /// but whose file is not the one recorded was rewritten with its time put back. A unit
+        /// rewritten in place under the same modification time, size, inode and status change time
+        /// is not told apart — writing a file always moves its status change time, so that takes a
+        /// clock set back or a file system that does not keep the time.
+        func mayBeStale(against recorded: UnitStamp) -> Bool {
+            modified == recorded.modified && self != recorded
+        }
+    }
 
     /// Keeps the database from an earlier run only when it can be brought up to date by the
-    /// import IndexStoreDB runs on open, which adds new units and re-reads rewritten ones but never
-    /// drops a unit that has disappeared from the store: a database that knew a unit the store no
-    /// longer holds would keep answering from it. Such a database — or one with no record of its
-    /// units — is removed, and a new one is built from every unit. Returns whether it was kept.
-    static func prepareDatabase(_ database: URL, forUnits units: Set<String>) -> Bool {
+    /// import IndexStoreDB runs on open, which adds new units and re-reads the units whose
+    /// modification time moved, but never drops a unit that has disappeared from the store and
+    /// never re-reads one rewritten under the same modification time. A database that knew a unit
+    /// the store no longer holds, or one whose unit file has the recorded modification time but is
+    /// not the recorded file (`UnitStamp.mayBeStale`), would keep answering from what it imported.
+    /// Such a database — or one with no record of its units, or a record in an earlier format — is
+    /// removed, and a new one is built from every unit. Returns whether it was kept.
+    static func prepareDatabase(_ database: URL, forUnits units: [String: UnitStamp]) -> Bool {
+        prepareDatabase(database, forUnits: units, recorded: recordedUnits(in: database))
+    }
+
+    /// `prepareDatabase(_:forUnits:)` with the record already read.
+    static func prepareDatabase(_ database: URL, forUnits units: [String: UnitStamp], recorded: [String: UnitStamp]?) -> Bool {
         let manager = FileManager.default
         let entries = (try? manager.contentsOfDirectory(atPath: database.path)) ?? []
         let data = entries.filter { $0 != unitListFileName && $0 != CacheEviction.ownerFileName }
         guard !data.isEmpty else { return false }
-        if let recorded = try? String(contentsOf: database.appendingPathComponent(unitListFileName), encoding: .utf8),
-           Set(recorded.split(separator: "\n").map(String.init)).isSubset(of: units) {
+        if let recorded,
+           recorded.allSatisfy({ name, stamp in units[name].map { !$0.mayBeStale(against: stamp) } ?? false }) {
             // IndexStoreDB keeps a closed database under `<version>/saved`; without one it builds anew.
             return data.contains { manager.fileExists(atPath: database.appendingPathComponent("\($0)/saved").path) }
         }
@@ -54,21 +113,57 @@ public final class IndexStoreSet {
         return false
     }
 
-    static func recordUnits(_ units: Set<String>, in database: URL) {
-        try? Data(units.sorted().joined(separator: "\n").utf8)
+    static func recordUnits(_ units: [String: UnitStamp], in database: URL) {
+        let lines = units.sorted { $0.key < $1.key }.map { name, stamp in
+            "\(name)\t\(stamp.modified)\t\(stamp.size)\t\(stamp.inode)\t\(stamp.statusChanged)"
+        }
+        try? Data(([unitListHeader] + lines).joined(separator: "\n").utf8)
             .write(to: database.appendingPathComponent(unitListFileName), options: .atomic)
     }
 
-    /// The unit files of a store, as `<version>/<name>` — a directory listing, not a read.
-    static func unitNames(ofStore storePath: String) -> Set<String> {
+    /// The units a database's record lists; nil when there is no record, or it is not in the
+    /// format this version writes.
+    static func recordedUnits(in database: URL) -> [String: UnitStamp]? {
+        guard let text = try? String(contentsOf: database.appendingPathComponent(unitListFileName), encoding: .utf8)
+        else { return nil }
+        var lines = text.split(separator: "\n", omittingEmptySubsequences: false)[...]
+        guard lines.popFirst() == Substring(unitListHeader) else { return nil }
+        var units: [String: UnitStamp] = [:]
+        for line in lines {
+            let fields = line.split(separator: "\t", omittingEmptySubsequences: false)
+            guard fields.count == 5, !fields[0].isEmpty,
+                  let modified = Int64(fields[1]), let size = Int64(fields[2]),
+                  let inode = UInt64(fields[3]), let changed = Int64(fields[4]) else { return nil }
+            units[String(fields[0])] = UnitStamp(modified: modified, size: size, inode: inode, statusChanged: changed)
+        }
+        return units
+    }
+
+    /// The unit files of a store, as `<version>/<name>`, each with its stamp — a directory listing
+    /// and one `lstat` per unit, never a read.
+    static func unitStamps(ofStore storePath: String) -> [String: UnitStamp] {
         let store = URL(fileURLWithPath: storePath, isDirectory: true)
         let versions = (try? FileManager.default.contentsOfDirectory(atPath: store.path)) ?? []
-        var names = Set<String>()
+        var stamps: [String: UnitStamp] = [:]
         for version in versions where version.hasPrefix("v") {
-            let units = store.appendingPathComponent("\(version)/units").path
-            for name in (try? FileManager.default.contentsOfDirectory(atPath: units)) ?? [] { names.insert("\(version)/\(name)") }
+            guard let directory = opendir(store.appendingPathComponent("\(version)/units").path) else { continue }
+            defer { closedir(directory) }
+            let descriptor = dirfd(directory)
+            while let entry = readdir(directory) {
+                let name = withUnsafeBytes(of: entry.pointee.d_name) { raw in
+                    String(decoding: raw.prefix(Int(entry.pointee.d_namlen)), as: UTF8.self)
+                }
+                guard name != ".", name != ".." else { continue }
+                var status = stat()
+                guard fstatat(descriptor, name, &status, AT_SYMLINK_NOFOLLOW) == 0 else { continue }
+                stamps["\(version)/\(name)"] = UnitStamp(
+                    modified: Int64(status.st_mtimespec.tv_sec) * 1_000_000_000 + Int64(status.st_mtimespec.tv_nsec),
+                    size: Int64(status.st_size),
+                    inode: UInt64(status.st_ino),
+                    statusChanged: Int64(status.st_ctimespec.tv_sec) * 1_000_000_000 + Int64(status.st_ctimespec.tv_nsec))
+            }
         }
-        return names
+        return stamps
     }
 
     /// The database directory of one store: a hash of the store's canonical path, so the name has
@@ -76,11 +171,12 @@ public final class IndexStoreSet {
     /// of one store do. The directory records the store it belongs to, for the cache eviction.
     public static func databaseDirectory(forStore storePath: String, in databaseRoot: String) -> URL {
         URL(fileURLWithPath: databaseRoot, isDirectory: true)
-            .appendingPathComponent(String(ContentHash.of(CanonicalPath.of(storePath)).prefix(24)), isDirectory: true)
+            .appendingPathComponent(CanonicalPath.entryName(of: storePath), isDirectory: true)
     }
 
     /// Reads newly written units across all stores (freshness for a long-lived server).
     public func pollForChanges() {
+        polled = true
         stores.forEach { $0.pollForChanges() }
     }
 

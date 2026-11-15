@@ -360,7 +360,7 @@ func runXcodeIndex(root: URL, arguments: [String]) -> Int32 {
     // The log goes to a file, not the terminal: the compile flags appear only in full output,
     // which is thousands of lines, and that output is the only place Xcode states them.
     let logFile = IndexBuild.umbrellaDirectory(forRoot: root.path).appendingPathComponent("xcodebuild.log")
-    try? FileManager.default.createDirectory(at: logFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+    _ = try? IndexBuild.prepareUmbrellaDirectory(forRoot: root.path)
     print("   build log: \(logFile.path)")
     let buildArgs = ["xcodebuild", "build", "-scheme", scheme, "-destination", destination,
                      "COMPILER_INDEX_STORE_ENABLE=YES", "CODE_SIGNING_ALLOWED=NO"] + containerFlag
@@ -434,12 +434,16 @@ func runIndex(arguments: [String]) -> Int32 {
         let build = IndexBuild.swiftBuildArguments(scratchPath: scratch.path, buildTests: testsBuilt)
         print("▶ swift \(build.joined(separator: " ")): \(package.lastPathComponent)")
         let log = IndexBuild.buildLog(forRoot: rootPath)
+        _ = try? IndexBuild.prepareUmbrellaDirectory(forRoot: rootPath)
         // Recorded before the build reads them: a file edited while it runs then reads as changed.
         let sources = captureSources(ofProject: rootPath)
         let status = runSwiftBuild(build, in: package, log: log)
         let built = Set(IndexStoreLocator.storePaths(inBuildDirectory: scratch))
         let candidates = IndexStoreLocator.candidates(under: root)
         let store = StoreSelection.resolve(candidates.filter { built.contains($0.path) }, policy: nil).chosen.first?.path
+        if let store, status == 0 {
+            removeUnitsOfDeletedSources(store: store, buildDirectory: scratch.path, arguments: arguments)
+        }
         if let store {
             recordSnapshot(store: store, root: rootPath, sources: sources, status: status,
                            testsBuilt: testsBuilt, log: log)
@@ -503,6 +507,10 @@ func runIndex(arguments: [String]) -> Int32 {
     let sources = captureSources(ofProject: rootPath)
     let status = runSwiftBuild(build, in: umbrella, log: log)
     let umbrellaStore = StoreSelection.resolve(IndexBuild.umbrellaCandidates(forRoot: rootPath), policy: nil).chosen.first?.path
+    if let umbrellaStore, status == 0 {
+        removeUnitsOfDeletedSources(store: umbrellaStore, buildDirectory: IndexBuild.umbrellaBuildDirectory(forRoot: rootPath).path,
+                                    arguments: arguments)
+    }
     if let umbrellaStore {
         recordSnapshot(store: umbrellaStore, root: rootPath, sources: sources, status: status,
                        testsBuilt: testsBuilt, log: log)
@@ -519,6 +527,24 @@ func runIndex(arguments: [String]) -> Int32 {
     reportTestCoverage(ofStore: store, root: rootPath, arguments: arguments, isXcode: false)
     captureCompileDatabase(root: rootPath, stores: [store], buildLog: log)
     return 0
+}
+
+/// Removes from a store `sextant index` just built in a tree of its own the units of sources
+/// that no longer exist — a build leaves them behind, and the store would keep answering from a
+/// deleted file — before the snapshot records the store. Said when there were any; a store that
+/// cannot be read is left as it is and said so.
+func removeUnitsOfDeletedSources(store: String, buildDirectory: String, arguments: [String]) {
+    do {
+        let removed = try IndexStoreUnits.shared(libraryPath: optionValue("--index-lib", in: arguments))
+            .removeUnitsOfMissingSources(inStore: store, builtIn: buildDirectory)
+        guard !removed.isEmpty else { return }
+        let named = removed.prefix(5).map(shorten).joined(separator: ", ")
+        print("removed the index units of \(removed.count) deleted source(s): \(named)"
+              + (removed.count > 5 ? " and \(removed.count - 5) more" : ""))
+    } catch {
+        reportError("⚠ sextant index: the units of deleted sources could not be looked for (\(error)) — "
+                    + "answers leave out what the index records in files that no longer exist, and say so.")
+    }
 }
 
 /// The sources as they are before a build, with a copy of every one git cannot give back later —
@@ -605,6 +631,28 @@ private let indexMemo = IndexMemo()
 /// name that the next open discards, and that open then imports every unit of the store again.
 func closeOpenIndexes() { indexMemo.removeAll() }
 
+/// Makes SIGINT, SIGTERM and SIGHUP end a long-lived process the way its normal exit does. The
+/// handler runs on a dispatch queue rather than in signal context, so it may touch the file system
+/// and release objects. It waits for `busy`, which the process holds while it answers a request,
+/// so no index is closed under a request in progress; then it runs `cleanup`, closes the open
+/// indexes so their databases are kept for the next run, and exits with 0. The default action of
+/// each signal is ignored first, or the process would die before the source ever fires.
+/// Keep the returned sources alive for as long as the handling should last.
+func exitCleanlyOnSignals(waitingFor busy: NSLock, cleanup: @escaping () -> Void = {}) -> [DispatchSourceSignal] {
+    [SIGINT, SIGTERM, SIGHUP].map { number -> DispatchSourceSignal in
+        signal(number, SIG_IGN)
+        let source = DispatchSource.makeSignalSource(signal: number)
+        source.setEventHandler {
+            busy.lock()
+            cleanup()
+            closeOpenIndexes()
+            exit(0)
+        }
+        source.resume()
+        return source
+    }
+}
+
 /// `quiet` подавляет сообщение об отсутствии стора: вызывающий сам объяснит, что именно
 /// потеряно. Две строки об одном и том же читаются как две разные проблемы.
 func openIndex(_ arguments: [String], label: String, listen: Bool = false, quiet: Bool = false) -> IndexStoreSet? {
@@ -616,7 +664,36 @@ func openIndex(_ arguments: [String], label: String, listen: Bool = false, quiet
 /// by, so the label and the answer cannot disagree.
 func openTranslatedIndex(_ arguments: [String], label: String) -> TranslatedIndex? {
     guard let (set, report) = openIndexReporting(arguments, label: label) else { return nil }
-    return TranslatedIndex(set, drift: report.flatMap { IndexDrift(report: $0, projectRoot: projectRoot(in: arguments)) })
+    let index = TranslatedIndex(set, drift: report.flatMap { IndexDrift(report: $0, projectRoot: projectRoot(in: arguments)) })
+    answeringIndexes.add(index)
+    return index
+}
+
+/// The translated indexes the command being run answered from, so that what they left out is
+/// said once the command is done, whatever shape its output had.
+private final class AnsweringIndexes: @unchecked Sendable {
+    private let lock = NSLock()
+    private var indexes: [TranslatedIndex] = []
+
+    func add(_ index: TranslatedIndex) { lock.withLock { indexes.append(index) } }
+
+    func removeAll() -> [TranslatedIndex] {
+        lock.withLock {
+            defer { indexes.removeAll() }
+            return indexes
+        }
+    }
+}
+
+private let answeringIndexes = AnsweringIndexes()
+
+/// Says on stderr, beside the trust label, what the command's answers left out because the files
+/// the index records them in no longer exist — in text and under `--json` alike, so that no
+/// output shape loses it.
+func reportLeftOut() {
+    for index in answeringIndexes.removeAll() {
+        if let note = SymbolReport.leftOut(index.leftOut, path: shorten) { reportError(note) }
+    }
 }
 
 /// `openIndex`, together with the freshness report its label was printed from.

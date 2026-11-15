@@ -22,7 +22,19 @@ private let indexNeedingMethods: Set<String> = ["tools/call", "resources/read", 
 
 func runMCP(arguments: [String]) -> Int32 {
     let project = projectRoot(in: arguments)
-    var index = openIndex(arguments, label: "mcp", listen: true)
+    // A client that ends the session with a signal rather than by closing stdin gets the same
+    // exit as an end of input: the index is closed, after the message in progress is answered.
+    // The session's reference to it is dropped first, or closing would leave it open.
+    let answering = NSLock()
+    let held = HeldIndex()
+    let interrupts = exitCleanlyOnSignals(waitingFor: answering) { held.set = nil }
+    defer { interrupts.forEach { $0.cancel() } }
+    var index: IndexStoreSet? {
+        get { held.set }
+        set { held.set = newValue }
+    }
+    answering.lock()
+    index = openIndex(arguments, label: "mcp", listen: true)
     if index == nil {
         logMCP("index unavailable at start-up — will try again once a store appears (build one with `sextant index`).")
     }
@@ -33,8 +45,11 @@ func runMCP(arguments: [String]) -> Int32 {
     var openedSignature: String? = index == nil ? nil : storeSignature(in: arguments)
     var lastOpenSignature: String? = openedSignature   // avoids retrying a broken store every call
     var configWarned = false         // a broken .sextant.json is reported once per session
+    answering.unlock()
 
     while let line = readLine(strippingNewline: true) {
+        answering.lock()
+        defer { answering.unlock() }
         if line.isEmpty { continue }
         // A line that is not a request is answered with the error that says why, never dropped:
         // a client waiting on a dropped request waits forever, with nothing in its log.
@@ -93,6 +108,11 @@ func runMCP(arguments: [String]) -> Int32 {
     return 0
 }
 
+/// The index a session answers from, held where a signal handler can let go of it.
+private final class HeldIndex: @unchecked Sendable {
+    var set: IndexStoreSet?
+}
+
 /// The store decision of one call, made on first use.
 private final class CallResolution {
     private let make: () -> (resolution: StoreResolution, source: IndexProvenance.Source)
@@ -121,11 +141,20 @@ private final class CallProvenance {
 /// does not pay for the freshness report.
 private final class LazyTranslatedIndex {
     private let make: () -> TranslatedIndex
-    private lazy var stored: TranslatedIndex = make()
+    private var stored: TranslatedIndex?
 
     init(_ make: @escaping () -> TranslatedIndex) { self.make = make }
 
-    var value: TranslatedIndex { stored }
+    var value: TranslatedIndex {
+        if let stored { return stored }
+        let made = make()
+        stored = made
+        return made
+    }
+
+    /// What the answers of this call left out because their files no longer exist, said in the
+    /// answer itself; nil when the call never read the index or nothing was left out.
+    var leftOutNote: String? { SymbolReport.leftOut(stored?.leftOut, path: shorten) }
 }
 
 /// Per-call environment: the root with `scope` from the config applied, the config itself, the
@@ -258,6 +287,7 @@ private func handleMCP(method: String, id: Any?, params: [String: Any], context:
         var resource = readResource(uri: uri, context: context)
         // The same trust label a tool answer carries: a resource read from the index is the same
         // answer asked another way, and an agent cannot see stderr either way.
+        if resource.ok, let note = context.translated?.leftOutNote { resource.text += "\n\n\(note)" }
         if resource.ok, let provenance = context.provenance() {
             resource.text += "\n\n\(provenance)"
         }
@@ -301,6 +331,7 @@ private func handleMCP(method: String, id: Any?, params: [String: Any], context:
         var (text, isError) = callMCPTool(name: name, args: toolArgs, context: context)
         // The same label the CLI prints, inside the answer: an agent that cannot see it has no way
         // to tell a fresh answer from one describing yesterday's code.
+        if !isError, let note = context.translated?.leftOutNote { text += "\n\n\(note)" }
         if !isError, indexBackedTools.contains(name), let provenance = context.provenance() {
             text += "\n\n\(provenance)"
         }

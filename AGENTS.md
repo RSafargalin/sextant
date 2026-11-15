@@ -8,7 +8,7 @@ breaking something invisible.
 ## Build and verify
 
 ```bash
-swift build && swift test          # 590 tests
+swift build && swift test          # 602 tests
 make ci                            # build + test + self-lint — run this before committing
 swift test --filter "<suite name>" # one suite
 ```
@@ -97,7 +97,11 @@ wrong answer rather than a crash.
   mapped `unconfirmed` (never drops it), lists text matches the index does not confirm as
   candidates (never counted), and notes changed declarations. `ReferencePositions.verified` runs
   before the mapping, against the indexed text. It also restates every column the store recorded
-  (`IndexColumns`, from the text the position was recorded in). Beyond that, on a fresh index, or
+  (`IndexColumns`, from the text the position was recorded in), and it leaves out a position in a
+  project file that no longer exists and no freshness report names — a build keeps the unit of a
+  deleted source — naming what it left out (`AbsentSources`; the CLI says it on stderr after the
+  command, MCP in the answer). That is a fact about files, not a judgement of freshness: a file the
+  report names as changed is `IndexDrift`'s. Beyond that, on a fresh index, or
   on the build-time basis, it is a pass-through, and the output must stay byte-for-byte what it
   was — `StaleAnswerTests` and the JSON-key test in `IndexDriftTests` guard that.
 - **`SourceColumn`** is the only place a column is converted into the one reported unit: 1-based,

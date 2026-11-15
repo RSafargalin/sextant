@@ -328,6 +328,17 @@ public enum SymbolReport {
         return [header] + body + (style.separatesHits ? [""] : [])
     }
 
+    /// What an answer left out because the files the index records it in no longer exist
+    /// (`AbsentSources`): said beside the answer, never dropped in silence. nil when nothing was.
+    public static func leftOut(_ summary: AbsentSources.Summary?, path: (String) -> String) -> String? {
+        guard let summary else { return nil }
+        let named = summary.files.prefix(5).map(path).joined(separator: ", ")
+        let more = summary.files.count > 5 ? " and \(summary.files.count - 5) more" : ""
+        return "⚠ left out of this answer: \(summary.positions) position(s) in \(summary.files.count) file(s) "
+            + "the index still records but that no longer exist — \(named)\(more). A build leaves the units "
+            + "of deleted sources in its store; `sextant index` removes them from the stores it builds."
+    }
+
     /// Degradation to textual occurrences when semantics find nothing. It is marked explicitly as
     /// NOT semantics, or the grep equivalent gets read as a list of references.
     public static func textual(

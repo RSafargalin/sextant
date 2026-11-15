@@ -110,11 +110,22 @@ public enum IndexBuild {
     }
 
     /// Umbrella cache directory for a project, kept outside the project so as not to litter it.
-    /// Keyed by the canonical root: `--project .` and the absolute path of the same directory are
-    /// one project with one umbrella, one store and one build log.
+    /// Named by `CanonicalPath.entryName`: `--project .` and the absolute path of the same
+    /// directory are one project with one umbrella, one store and one build log, and a root of
+    /// any depth has one.
     public static func umbrellaDirectory(forRoot root: String) -> URL {
         FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Caches/sextant/umbrella/\(CanonicalPath.fileName(of: root))")
+            .appendingPathComponent("Library/Caches/sextant/umbrella/\(CanonicalPath.entryName(of: root))")
+    }
+
+    /// Creates the umbrella directory of a project, if needed, with the record of the project it
+    /// belongs to — the only way the cache eviction can tell that the project is gone.
+    @discardableResult
+    public static func prepareUmbrellaDirectory(forRoot root: String) throws -> URL {
+        let umbrella = umbrellaDirectory(forRoot: root)
+        try FileManager.default.createDirectory(at: umbrella, withIntermediateDirectories: true)
+        CacheEviction.recordOwner(CanonicalPath.of(root), in: umbrella)
+        return umbrella
     }
 
     /// Whether a store lies in an umbrella build tree in the cache.
@@ -137,12 +148,11 @@ public enum IndexBuild {
 
     /// Writes the umbrella package to disk; throws a file-system error.
     public static func writeUmbrella(manifest: String, forRoot root: String) throws -> URL {
-        let umbrella = umbrellaDirectory(forRoot: root)
+        let umbrella = try prepareUmbrellaDirectory(forRoot: root)
         let sources = umbrella.appendingPathComponent("Sources/SextantUmbrella")
         try FileManager.default.createDirectory(at: sources, withIntermediateDirectories: true)
         try manifest.write(to: umbrella.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
         try "enum SextantUmbrella {}\n".write(to: sources.appendingPathComponent("Umbrella.swift"), atomically: true, encoding: .utf8)
-        CacheEviction.recordOwner(CanonicalPath.of(root), in: umbrella)
         return umbrella
     }
 

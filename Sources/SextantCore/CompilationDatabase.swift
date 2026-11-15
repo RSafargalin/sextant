@@ -223,10 +223,19 @@ public enum CompilationDatabase {
     ///
     /// The key is the canonical path, not the spelling: `sextant index --project ./pkg` and a
     /// later query with an absolute path are the same project, and keying on the raw string made
-    /// the second one report every file as having no flags.
+    /// the second one report every file as having no flags. The file keeps the
+    /// `compile_commands.json` name and shape; the entry beside it records the root.
     public static func path(forRoot root: String) -> URL {
-        directory.appendingPathComponent("\(CanonicalPath.fileName(of: root)).json")
+        entry(forRoot: root).appendingPathComponent(fileName)
     }
+
+    /// The cache entry of a project's database: a directory named by `CanonicalPath.entryName`,
+    /// holding the database and the record of the root it was stored for.
+    public static func entry(forRoot root: String) -> URL {
+        directory.appendingPathComponent(CanonicalPath.entryName(of: root), isDirectory: true)
+    }
+
+    static let fileName = "compile_commands.json"
 
     private static var directory: URL {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Caches/sextant/compile-db")
@@ -247,18 +256,25 @@ public enum CompilationDatabase {
     /// The databases `commands(forFilesUnder:)` reads its answer from, each with the entries it
     /// contributes; a database that contributes nothing is absent.
     static func databases(forFilesUnder root: String) -> [(url: URL, commands: [CompileCommand])] {
-        let own = CanonicalPath.fileName(of: root)
-        let names = ((try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? [])
-            .filter { $0.hasSuffix(".json") }
-            .map { String($0.dropLast(".json".count)) }
-            .filter { $0 == own || $0.hasPrefix(own + "_") || own.hasPrefix($0 + "_") }
+        let own = CanonicalPath.of(root)
+        // The roots are read from the entries' records — a hash names an entry, and only the
+        // record leads back to the root. An entry without a record is never read.
+        let roots = ((try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? [])
+            .filter(CanonicalPath.isEntryName)
+            .compactMap { name -> (root: String, url: URL)? in
+                let entry = directory.appendingPathComponent(name, isDirectory: true)
+                guard let data = FileManager.default.contents(atPath: entry.appendingPathComponent(CacheEviction.ownerFileName).path),
+                      let recorded = String(data: data, encoding: .utf8), recorded.hasPrefix("/") else { return nil }
+                return (recorded, entry.appendingPathComponent(fileName))
+            }
+            .filter { $0.root == own || $0.root.hasPrefix(own + "/") || own.hasPrefix($0.root + "/") }
             // The root itself first, then nearer roots before farther ones.
-            .sorted { ($0 == own ? 0 : 1, abs($0.count - own.count), $0) < ($1 == own ? 0 : 1, abs($1.count - own.count), $1) }
-        let prefix = CanonicalPath.of(root) + "/"
+            .sorted { ($0.root == own ? 0 : 1, abs($0.root.count - own.count), $0.root)
+                    < ($1.root == own ? 0 : 1, abs($1.root.count - own.count), $1.root) }
+        let prefix = own + "/"
         var seen: Set<String> = []
         var result: [(url: URL, commands: [CompileCommand])] = []
-        for name in names {
-            let url = directory.appendingPathComponent("\(name).json")
+        for (_, url) in roots {
             guard let data = try? Data(contentsOf: url),
                   let commands = try? JSONDecoder().decode([CompileCommand].self, from: data) else { continue }
             var contributed: [CompileCommand] = []
@@ -275,6 +291,7 @@ public enum CompilationDatabase {
     public static func save(_ commands: [CompileCommand], forRoot root: String) throws {
         let url = path(forRoot: root)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        CacheEviction.recordOwner(CanonicalPath.of(root), in: url.deletingLastPathComponent())
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try encoder.encode(commands).write(to: url, options: .atomic)

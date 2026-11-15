@@ -72,18 +72,23 @@ public enum CacheEviction {
         // Projects first: an umbrella that goes takes its store with it, and the store's database
         // and snapshot go in the passes after it.
         pass.removeEntries(in: "umbrella") { entry in
-            if let owner = Pass.owner(of: entry) { return !FileManager.default.fileExists(atPath: owner) }
-            // An umbrella from before owners were recorded: gone when none of its packages exist.
-            let packages = Pass.umbrellaPackages(entry)
-            return !packages.isEmpty && !packages.contains { FileManager.default.fileExists(atPath: $0) }
+            // An umbrella is named by a hash of its project's root; one under the earlier naming,
+            // the root's path with `/` turned into `_`, is never read again.
+            guard CanonicalPath.isEntryName(entry.lastPathComponent) else { return true }
+            guard let owner = Pass.owner(of: entry) else { return false }
+            return !FileManager.default.fileExists(atPath: owner)
         }
         pass.removeEntries(in: "gitdir") { entry in
             guard let owner = Pass.owner(of: entry) else { return true }
             return !FileManager.default.fileExists(atPath: owner)
         }
         pass.removeEntries(in: "compile-db") { entry in
+            // A database lives in an entry named by a hash of its root; a `<root>.json` under the
+            // earlier naming is never read again.
+            guard CanonicalPath.isEntryName(entry.lastPathComponent) else { return true }
+            if let owner = Pass.owner(of: entry), !FileManager.default.fileExists(atPath: owner) { return true }
             // Gone when the database names files and none of them exist any more.
-            let files = Pass.compiledFiles(entry)
+            let files = Pass.compiledFiles(entry.appendingPathComponent(CompilationDatabase.fileName))
             return !files.isEmpty && !files.contains { FileManager.default.fileExists(atPath: $0) }
         }
         pass.removeEntries(in: "index-db") { entry in
@@ -195,15 +200,6 @@ public enum CacheEviction {
                       let store = object["storePath"] as? String,
                       !FileManager.default.fileExists(atPath: store) else { continue }
                 remove(entry)
-            }
-        }
-
-        static func umbrellaPackages(_ entry: URL) -> [String] {
-            guard let manifest = try? String(contentsOf: entry.appendingPathComponent("Package.swift"), encoding: .utf8)
-            else { return [] }
-            return manifest.components(separatedBy: ".package(path: \"").dropFirst().compactMap { rest in
-                rest.components(separatedBy: "\")").first.map { $0.replacingOccurrences(of: "\\\"", with: "\"")
-                    .replacingOccurrences(of: "\\\\", with: "\\") }
             }
         }
 

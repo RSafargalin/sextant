@@ -11,8 +11,20 @@ public enum CanonicalPath {
         URL(fileURLWithPath: path, isDirectory: true).resolvingSymlinksInPath().standardizedFileURL.path
     }
 
-    /// The canonical path as one file-name component, for caches that keep one entry per project.
-    public static func fileName(of path: String) -> String {
-        of(path).replacingOccurrences(of: "/", with: "_")
+    /// The name of a cache entry kept for a path: a hash of the canonical path, so the name has a
+    /// fixed length however deep the path lies, two paths never share one, and two spellings of one
+    /// path do. An entry named this way records the path it belongs to
+    /// (`CacheEviction.recordOwner`), which is the only way back from the name to the path.
+    public static func entryName(of path: String) -> String {
+        String(ContentHash.of(of(path)).prefix(entryNameLength))
+    }
+
+    /// How many characters `entryName(of:)` has.
+    public static let entryNameLength = 24
+
+    /// Whether a cache entry's name has the form `entryName(of:)` gives.
+    public static func isEntryName(_ name: String) -> Bool {
+        name.utf8.count == entryNameLength
+            && name.utf8.allSatisfy { (UInt8(ascii: "0")...UInt8(ascii: "9")).contains($0) || (UInt8(ascii: "a")...UInt8(ascii: "f")).contains($0) }
     }
 }

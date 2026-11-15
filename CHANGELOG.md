@@ -168,6 +168,63 @@ Human-readable text output is not covered — parse `--json`, not prose.
 
 ### Fixed
 
+- **A source deleted before a build no longer stays in answers under a label that says "fresh".**
+  A build does not remove the unit of a deleted file from its store, so `callers target` after
+  deleting a caller's file and running `sextant index` still counted and listed the file, with
+  the trust label `fresh (compared against the snapshot …)`. Two changes:
+  - `sextant index`, after a successful build of its own tree (`.build/sextant-index`, or the
+    umbrella in the cache), removes from that store the units whose source file no longer exists —
+    the units only, never their records, never a unit for SDK code or a module, never a store
+    anything else writes — before it records the snapshot, and says which sources it removed them
+    for. A renamed or moved file loses the unit of its old path.
+  - Every symbol answer (`refs`, `defs`, `callers`, `callees`, `impls`, `supertypes`, `hierarchy`,
+    `context`, `blast`, `construct`, `body` and their MCP tools) leaves out a position the index
+    records in a file under the project root that no longer exists — the symbol, the reference or
+    the call it belongs to — so the text and `--json` totals do not count it, and names what it left
+    out: on stderr in the CLI (text and `--json` alike, beside the trust label), in the answer itself
+    in MCP (`⚠ left out of this answer: N position(s) in M file(s) the index still records but that
+    no longer exist — …`). This is what applies to a store sextant does not build (DerivedData, a
+    plain `.build`, `--index-store`), which keeps such units. A file outside the project root (an
+    SDK, a toolchain) is not judged; a file the stale-index layer already reports as deleted since
+    indexing keeps its `[unconfirmed: file deleted since indexing]` marking, with no second
+    statement. **Output changes** only where a position lay in a missing file; everywhere else it
+    is byte-for-byte what it was.
+- **A reused IndexStoreDB database no longer answers from a unit rewritten under its old
+  modification time.** IndexStoreDB re-reads a unit on open only when its modification time moved,
+  so a unit rewritten with its time put back (a restored backup, `touch -r`, a build that keeps
+  times) left a kept database answering from the unit as it was — measured: a removed function was
+  still found. The record a database keeps of its units (`sextant-units`) now holds each unit's
+  modification time (to the nanosecond, as IndexStoreDB compares it), size, inode and status change
+  time, and the database is built anew when a unit has the recorded modification time but a
+  different size, inode or status change time, as before when a recorded unit is gone. A unit
+  rewritten in place under the same modification time, size, inode and status change time is not
+  told apart — writing a file moves its status change time, so that takes a clock set back or a
+  file system that does not keep that time. A record in the earlier format (unit names only) has
+  the database built anew once. Units a long-lived process (`serve`, `mcp`) imported while open are
+  added to the record when it closes, so their later removal is noticed too. The check is a
+  directory listing plus one `lstat` per unit, and the record is written only when it changes: a
+  warm `refs SwiftSources --project .` on this repository takes 0.06–0.07 s as before; measured
+  alone (release build), the check costs 1.7 ms against 1.3 ms on this repository's 578 units, and
+  32 ms against 20 ms on a synthetic store of 10 000 units.
+- **`sextant serve` and `sextant mcp` keep their index database when stopped by a signal.** A daemon
+  stopped by SIGTERM or Ctrl-C left its database open under a per-process name, and the next command
+  imported the whole store again; `sextant mcp` was killed outright by SIGTERM and SIGINT. Both now
+  handle SIGINT, SIGTERM and SIGHUP on a dispatch queue (not in signal context): once the request in
+  progress is answered they close the index — the daemon also removes its socket, as before — and
+  exit with 0. The end of input already closed the index in `mcp`.
+- **The umbrella and the compile database of a deep or oddly named project are kept.** Their cache
+  entries were named by the project root with `/` replaced by `_`, the defect the IndexStoreDB
+  database had: a deep root failed with "File name too long", and `/a_b/c` and `/a/b_c` shared one
+  entry. `umbrella/` and `compile-db/` entries are now named by a hash of the canonical root and
+  record the root they belong to; a compile database is `compile-db/<hash>/compile_commands.json`,
+  and the flags of the roots around and inside a root are found by the roots the entries record.
+  Entries under the old names are never read again and are removed by the cache eviction. **Once
+  after upgrading**, a project indexed by an earlier version has its flags captured again: the next
+  `sextant index` rebuilds an umbrella from scratch, and reads the flags of a single package from
+  the build graph where SwiftPM's native build system writes one; where the flags come only from
+  what the build prints (SwiftPM's Swift Build system, Xcode), an incremental build prints none,
+  and `sextant index` says so and asks for a clean build (`swift package clean`, `xcodebuild clean`)
+  before it runs again.
 - **Robustness of the index layer.**
   - **A helper that hangs no longer hangs the query, and no helper reads the caller's input.**
     `git`, `xcrun` and `swift --version` are run with the null device as stdin (a helper reading

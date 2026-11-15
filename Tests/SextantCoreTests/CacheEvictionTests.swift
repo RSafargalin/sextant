@@ -92,24 +92,44 @@ struct CacheEvictionTests {
         try home.owned("gitdir/1111111111111111.git", by: liveProject.path)
         try home.owned("gitdir/2222222222222222.git", by: goneProject)
         try home.file("gitdir/3333333333333333.git/HEAD")                                  // no owner recorded
-        try home.owned("umbrella/live", by: liveProject.path)
-        try home.owned("umbrella/gone", by: goneProject)
-        try home.file("umbrella/old/Package.swift", ".package(path: \"\(goneProject)/A\"),\n.package(path: \"\(goneProject)/B\")")
+        try home.owned("umbrella/cccccccccccccccccccccccc", by: liveProject.path)
+        try home.owned("umbrella/dddddddddddddddddddddddd", by: goneProject)
+        try home.file("umbrella/eeeeeeeeeeeeeeeeeeeeeeee/swift-build.log")                // no owner recorded
+        // The earlier naming — the root with `/` turned into `_` — even for a project that exists.
+        try home.owned("umbrella/\(liveProject.path.replacingOccurrences(of: "/", with: "_"))", by: liveProject.path)
+        try home.file("umbrella/_Users_someone_old/Package.swift", ".package(path: \"\(goneProject)/A\")")
         let liveSource = liveProject.appendingPathComponent("a.c")
         try "int a;".write(to: liveSource, atomically: true, encoding: .utf8)
-        try home.file("compile-db/live.json", #"[{"directory":"/","file":"\#(liveSource.path)","arguments":[]}]"#)
+        try home.owned("compile-db/111111111111111111111111", by: liveProject.path)
+        try home.file("compile-db/111111111111111111111111/compile_commands.json",
+                      #"[{"directory":"/","file":"\#(liveSource.path)","arguments":[]}]"#)
+        try home.owned("compile-db/222222222222222222222222", by: goneProject)
+        try home.file("compile-db/222222222222222222222222/compile_commands.json", "[]")
+        try home.owned("compile-db/333333333333333333333333", by: liveProject.path)
+        try home.file("compile-db/333333333333333333333333/compile_commands.json",
+                      #"[{"directory":"/","file":"\#(goneProject)/a.c","arguments":[]}]"#)
+        try home.owned("compile-db/444444444444444444444444", by: liveProject.path)
+        try home.file("compile-db/444444444444444444444444/compile_commands.json", "[]")
+        // The earlier naming, a file per root, for a project that exists as for one that does not.
+        try home.file("compile-db/\(liveProject.path.replacingOccurrences(of: "/", with: "_")).json",
+                      #"[{"directory":"/","file":"\#(liveSource.path)","arguments":[]}]"#)
         try home.file("compile-db/gone.json", #"[{"directory":"/","file":"\#(goneProject)/a.c","arguments":[]}]"#)
-        try home.file("compile-db/empty.json", "[]")
         try home.file("index-snapshot/live.json", #"{"storePath":"\#(liveStore.path)","format":1}"#)
         try home.file("index-snapshot/gone.json", #"{"storePath":"\#(goneStore)","format":1}"#)
 
         CacheEviction.run(home: home.home)
-        for kept in ["index-db/aaaaaaaaaaaaaaaaaaaaaaaa", "gitdir/1111111111111111.git", "umbrella/live",
-                     "compile-db/live.json", "compile-db/empty.json", "index-snapshot/live.json"] {
+        for kept in ["index-db/aaaaaaaaaaaaaaaaaaaaaaaa", "gitdir/1111111111111111.git",
+                     "umbrella/cccccccccccccccccccccccc", "umbrella/eeeeeeeeeeeeeeeeeeeeeeee",
+                     "compile-db/111111111111111111111111", "compile-db/444444444444444444444444",
+                     "index-snapshot/live.json"] {
             #expect(home.exists(kept), "\(kept) was removed")
         }
         for gone in ["index-db/bbbbbbbbbbbbbbbbbbbbbbbb", "index-db/_Users_someone_.build_index_store",
-                     "gitdir/2222222222222222.git", "gitdir/3333333333333333.git", "umbrella/gone", "umbrella/old",
+                     "gitdir/2222222222222222.git", "gitdir/3333333333333333.git",
+                     "umbrella/dddddddddddddddddddddddd", "umbrella/_Users_someone_old",
+                     "umbrella/\(liveProject.path.replacingOccurrences(of: "/", with: "_"))",
+                     "compile-db/222222222222222222222222", "compile-db/333333333333333333333333",
+                     "compile-db/\(liveProject.path.replacingOccurrences(of: "/", with: "_")).json",
                      "compile-db/gone.json", "index-snapshot/gone.json"] {
             #expect(!home.exists(gone), "\(gone) was kept")
         }

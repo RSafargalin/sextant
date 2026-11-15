@@ -35,7 +35,7 @@ struct CompileFlagsFreshnessTests {
         try "int legacy(void) { return 1; }\n".write(toFile: source, atomically: true, encoding: .utf8)
         try CompilationDatabase.save([CompileCommand(directory: root, file: source, arguments: ["clang", source])],
                                      forRoot: root)
-        defer { try? FileManager.default.removeItem(at: CompilationDatabase.path(forRoot: root)) }
+        defer { try? FileManager.default.removeItem(at: CompilationDatabase.entry(forRoot: root)) }
 
         let captured = try #require(CompilationDatabase.capturedAt(forRoot: root))
         let store = try makeStore(newerThan: captured)
@@ -59,7 +59,7 @@ struct CompileFlagsFreshnessTests {
         try "int legacy(void) { return 1; }\n".write(toFile: source, atomically: true, encoding: .utf8)
         try CompilationDatabase.save([CompileCommand(directory: outer, file: source, arguments: ["clang", source])],
                                      forRoot: outer)
-        defer { try? FileManager.default.removeItem(at: CompilationDatabase.path(forRoot: outer)) }
+        defer { try? FileManager.default.removeItem(at: CompilationDatabase.entry(forRoot: outer)) }
         try #require(!CompilationDatabase.commands(forFilesUnder: inner).isEmpty)
 
         let captured = try #require(CompilationDatabase.capturedAt(forRoot: outer))
@@ -88,7 +88,7 @@ struct CompileFlagsFreshnessTests {
         Thread.sleep(forTimeInterval: 1.1)   // the capture lands after the build, as it does in practice
         try CompilationDatabase.save([CompileCommand(directory: root, file: source, arguments: ["clang", source])],
                                      forRoot: root)
-        defer { try? FileManager.default.removeItem(at: CompilationDatabase.path(forRoot: root)) }
+        defer { try? FileManager.default.removeItem(at: CompilationDatabase.entry(forRoot: root)) }
 
         #expect(CompilationDatabase.stalenessNote(forRoot: root, storePaths: [store.path]).isEmpty)
     }
@@ -106,7 +106,7 @@ struct CompileFlagsFreshnessTests {
             CompileCommand(directory: root, file: alive, arguments: ["clang", alive]),
             CompileCommand(directory: root, file: gone, arguments: ["clang", gone]),
         ], forRoot: root)
-        defer { try? FileManager.default.removeItem(at: CompilationDatabase.path(forRoot: root)) }
+        defer { try? FileManager.default.removeItem(at: CompilationDatabase.entry(forRoot: root)) }
 
         #expect(CompilationDatabase.load(forRoot: root).count == 2)
         try FileManager.default.removeItem(atPath: gone)

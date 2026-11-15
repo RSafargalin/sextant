@@ -110,7 +110,7 @@ struct CompilationDatabaseTests {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let root = directory.path
-        defer { try? FileManager.default.removeItem(at: CompilationDatabase.path(forRoot: root)) }
+        defer { try? FileManager.default.removeItem(at: CompilationDatabase.entry(forRoot: root)) }
 
         let commands = try CompilationDatabase.commands(inManifest: manifest, directory: "/pkg")
             .map { command -> CompileCommand in
@@ -131,6 +131,48 @@ struct CompilationDatabaseTests {
         #expect(CompilationDatabase.path(forRoot: "/tmp/sextant-project/") == canonical)
         // A relative path resolves against the working directory, as every other command does.
         #expect(CompilationDatabase.path(forRoot: ".") == CompilationDatabase.path(forRoot: FileManager.default.currentDirectoryPath))
+    }
+
+    /// Entries were named by the root with `/` turned into `_`: a deep root gave a name longer than
+    /// a file name may be, and `/a_b/c` and `/a/b_c` shared one entry.
+    @Test("Every root has an entry of its own whose name fits a file name, the umbrella's as the flags'")
+    func entryNamesAreBoundedAndDistinct() {
+        let deep = "/" + Array(repeating: String(repeating: "d", count: 60), count: 8).joined(separator: "/")
+        for path in [CompilationDatabase.path(forRoot: deep), IndexBuild.umbrellaDirectory(forRoot: deep)] {
+            #expect(path.pathComponents.allSatisfy { $0.utf8.count <= 255 }, "\(path.lastPathComponent.prefix(40))…")
+        }
+        #expect(CompilationDatabase.path(forRoot: "/a_b/c") != CompilationDatabase.path(forRoot: "/a/b_c"))
+        #expect(IndexBuild.umbrellaDirectory(forRoot: "/a_b/c") != IndexBuild.umbrellaDirectory(forRoot: "/a/b_c"))
+    }
+
+    /// The flags of a root are also read from the databases of the roots around it and inside it,
+    /// found by the root each entry records rather than by a prefix of its name.
+    @Test("Flags stored for a deep root are saved, and found from the roots around it and inside it")
+    func deepRootsAreStoredAndFound() throws {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("sextant-compile-db-deep-\(UUID().uuidString.prefix(8))").resolvingSymlinksInPath()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let outer = base.appendingPathComponent(Array(repeating: String(repeating: "d", count: 60), count: 4).joined(separator: "/"))
+        let nested = outer.appendingPathComponent("Nested/Pkg")
+        let sibling = URL(fileURLWithPath: outer.path + "_sibling")
+        var files: [URL] = []
+        for root in [nested, sibling] {
+            try FileManager.default.createDirectory(at: root.appendingPathComponent("Sources"), withIntermediateDirectories: true)
+            let file = root.appendingPathComponent("Sources/c.c")
+            try "int c;\n".write(to: file, atomically: true, encoding: .utf8)
+            files.append(file)
+            try CompilationDatabase.save([CompileCommand(directory: root.path, file: file.path,
+                                                         arguments: ["clang", "-c", file.path])], forRoot: root.path)
+        }
+        defer { for root in [nested, sibling] { try? FileManager.default.removeItem(at: CompilationDatabase.entry(forRoot: root.path)) } }
+        #expect(outer.path.replacingOccurrences(of: "/", with: "_").utf8.count > 255)
+
+        #expect(CompilationDatabase.load(forRoot: nested.path).map(\.file) == [files[0].path])
+        // From the root around it: the nested package's flags, not the sibling's.
+        #expect(CompilationDatabase.commands(forFilesUnder: outer.path).map(\.file) == [files[0].path])
+        // From a directory inside it: the flags stored for the root around that directory.
+        #expect(CompilationDatabase.commands(forFilesUnder: nested.appendingPathComponent("Sources").path).map(\.file) == [files[0].path])
+        #expect(CompilationDatabase.commands(forFilesUnder: sibling.path).map(\.file) == [files[1].path])
     }
 
     @Test("An unknown project has an empty database, not a crash")

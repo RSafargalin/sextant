@@ -230,7 +230,15 @@ func precheck(_ name: String, _ arguments: [String]) -> Int32? {
     return nil
 }
 
+/// Runs a command, then says what its answers left out (`reportLeftOut`) — in a terminal and in
+/// the daemon alike, where the output of this call is what the client receives.
 func dispatch(_ arguments: [String]) -> Int32 {
+    let code = runCommand(arguments)
+    reportLeftOut()
+    return code
+}
+
+private func runCommand(_ arguments: [String]) -> Int32 {
     let rest = Array(arguments.dropFirst())
     if let name = arguments.first, let code = precheck(name, rest) { return code }
     // Exclusions are set once per command, before anything walks the tree.
