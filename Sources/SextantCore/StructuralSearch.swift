@@ -13,9 +13,17 @@ public struct StructuralMatch: Sendable, Codable {
 ///
 /// Metavariables:
 /// - `$Name` is a single hole: it matches any subtree in that position; repeating a name
-///   requires the bound text to match.
-/// - `$$$` (or `$$$Name`) is variadic: inside a list (arguments, elements, members) it absorbs any
-///   number of elements. One variadic per list is supported.
+///   requires the bound text to match, whatever kind of position each occurrence is in.
+///   A hole stands for an expression, a type (`as! $T`, `Array<$T>`, `-> $R`), a binding
+///   pattern (`let $X =`, `for $X in`, `catch $P`), a name (`func $F`, `class $C`, a closure or
+///   argument label), or one whole parameter (`func $F($P)`).
+/// - `$$$` (or `$$$Name`) is variadic: inside a list (arguments, elements, statements,
+///   parameters) it absorbs any number of elements, and `{ $$$ }` as a type's body absorbs any
+///   members. One variadic per list.
+///
+/// A metavariable the matcher would never bind — inside a string literal or a comment, or a
+/// second variadic in one list — is refused when the pattern is compiled, never left to match
+/// nothing.
 public struct PatternSearch {
     public enum Failure: Error, Sendable, CustomStringConvertible {
         case emptyPattern
@@ -24,6 +32,15 @@ public struct PatternSearch {
         /// The parser recovered from the text instead of rejecting it — an unbalanced bracket, for
         /// example. The recovered tree matches nothing, so the answer would be "No matches."
         case unparsable
+        /// More than one statement: the matcher compares one node with one node, so everything
+        /// after the first statement would be ignored without a word.
+        case severalStatements
+        /// A metavariable written inside a string literal is text, not a hole.
+        case metavariableInStringLiteral(String)
+        /// A metavariable the matcher never reaches as a hole, with where it is.
+        case unbindableMetavariable(String, reason: String)
+        /// An operator whose precedence is not known, so the pattern's structure cannot be decided.
+        case unknownOperator(String)
 
         /// Whether clang might still be able to use this pattern. `[self feed]` is not Swift and
         /// is a perfectly good Objective-C pattern; an empty or bare-metavariable pattern is
@@ -31,7 +48,8 @@ public struct PatternSearch {
         public var mayBeCFamily: Bool {
             switch self {
             case .emptyPattern, .tooBroad: return false
-            case .notAnExpression, .unparsable: return true
+            case .notAnExpression, .unparsable, .severalStatements, .metavariableInStringLiteral,
+                 .unbindableMetavariable, .unknownOperator: return true
             }
         }
 
@@ -41,6 +59,17 @@ public struct PatternSearch {
             case .notAnExpression: return "the pattern is not an expression, statement or declaration"
             case .tooBroad: return "the pattern is a bare metavariable, which matches everything"
             case .unparsable: return "the pattern does not parse — check for an unbalanced bracket or quote"
+            case .severalStatements:
+                return "the pattern is several statements, and a pattern matches one expression, statement or "
+                    + "declaration — search for each statement separately"
+            case .metavariableInStringLiteral(let name):
+                return "the metavariable \(name) is inside a string literal, where it is plain text and cannot be "
+                    + "bound — an interpolation \"\\(\(name))\" matches an interpolated expression"
+            case .unbindableMetavariable(let name, let reason):
+                return "the metavariable \(name) cannot be bound: \(reason)"
+            case .unknownOperator(let name):
+                return "the pattern uses \(name), whose precedence is not known (only the standard operators are), "
+                    + "so how its expression is grouped cannot be decided"
             }
         }
     }
@@ -51,17 +80,37 @@ public struct PatternSearch {
     private let variadicSentinels: Set<String>
 
     public init(pattern: String) throws {
-        guard !pattern.trimmingCharacters(in: .whitespaces).isEmpty else { throw Failure.emptyPattern }
+        let trimmed = pattern.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw Failure.emptyPattern }
 
-        let substitution = Metavariable.substitute(pattern)
+        // A catch clause cannot stand alone, so it is parsed after an empty `do {}` and taken back
+        // out; without a body of its own it accepts any body.
+        let isCatchClause = trimmed.hasPrefix("catch") && !(trimmed.dropFirst(5).first.map(Metavariable.isIdentifierPart) ?? false)
+        let text = isCatchClause ? "do {} " + trimmed + (trimmed.hasSuffix("}") ? "" : " { $$$ }") : pattern
+
+        let substitution = Metavariable.substitute(text)
         let sentinelToName = substitution.singleByName
         let variadicSentinels = substitution.variadic
 
-        let tree = Parser.parse(source: substitution.text)
-        guard !tree.hasError else { throw Failure.unparsable }
+        let parsed = Parser.parse(source: substitution.text)
+        if parsed.hasError {
+            guard Self.isRecognisedRecovery(parsed, single: sentinelToName, variadic: variadicSentinels) else {
+                throw Failure.unparsable
+            }
+        }
+        // The pattern is matched against folded sources, so it is folded the same way.
+        let folded = OperatorFolding.fold(parsed)
+        if !folded.unknownOperators.isEmpty {
+            throw Failure.unknownOperator(folded.unknownOperators.joined(separator: ", "))
+        }
+        let tree = folded.tree
+        guard tree.statements.count <= 1 else { throw Failure.severalStatements }
         guard let item = tree.statements.first?.item else { throw Failure.notAnExpression }
         let root: Syntax
-        if let expression = item.as(ExprSyntax.self) {
+        if isCatchClause {
+            guard let clause = item.as(DoStmtSyntax.self)?.catchClauses.first else { throw Failure.unparsable }
+            root = Syntax(clause)
+        } else if let expression = item.as(ExprSyntax.self) {
             root = Syntax(expression)
         } else if let statement = item.as(StmtSyntax.self) {
             root = Syntax(statement)
@@ -78,6 +127,7 @@ public struct PatternSearch {
         self.patternRootKind = root.kind
         self.sentinelToName = sentinelToName
         self.variadicSentinels = variadicSentinels
+        try checkEveryMetavariableIsBound(in: tree)
     }
 
     /// Matches in a source file.
@@ -85,8 +135,14 @@ public struct PatternSearch {
         search(in: Parser.parse(source: source), fileName: fileName)
     }
 
-    /// Matches in an already parsed tree, without parsing it again.
+    /// Matches in an already parsed tree, without parsing it again. Operator sequences are folded
+    /// with the standard operators first.
     public func search(in tree: SourceFileSyntax, fileName: String) -> [StructuralMatch] {
+        search(inFolded: OperatorFolding.fold(tree).tree, fileName: fileName)
+    }
+
+    /// Matches in a tree `OperatorFolding` has already folded.
+    public func search(inFolded tree: SourceFileSyntax, fileName: String) -> [StructuralMatch] {
         let converter = SourceLocationConverter(fileName: fileName, tree: tree)
         var results: [StructuralMatch] = []
         walk(Syntax(tree), converter: converter, into: &results)
@@ -96,6 +152,12 @@ public struct PatternSearch {
     /// A single tree walk for several patterns (used by lint, instead of N separate walks).
     /// Returns the pattern index along with the match.
     public static func searchAll(_ searches: [PatternSearch], in tree: SourceFileSyntax, fileName: String) -> [(index: Int, match: StructuralMatch)] {
+        searchAll(searches, inFolded: OperatorFolding.fold(tree).tree, fileName: fileName)
+    }
+
+    /// `searchAll` over a tree `OperatorFolding` has already folded.
+    public static func searchAll(_ searches: [PatternSearch], inFolded tree: SourceFileSyntax,
+                                 fileName: String) -> [(index: Int, match: StructuralMatch)] {
         let converter = SourceLocationConverter(fileName: fileName, tree: tree)
         var results: [(index: Int, match: StructuralMatch)] = []
         func visit(_ node: Syntax) {
@@ -131,12 +193,20 @@ public struct PatternSearch {
     }
 
     private func matchNode(_ pattern: Syntax, _ candidate: Syntax, _ bindings: inout [String: String]) -> Bool {
-        if let name = singleMetavariableName(of: pattern) {
-            let text = candidate.trimmedDescription
-            if let previous = bindings[name] { return previous == text }
-            bindings[name] = text
+        if let sentinel = holeSentinel(of: pattern) {
+            let text: String
+            if pattern.is(TokenSyntax.self) {
+                // A name hole stands for a name: it binds a token, never a whole subtree.
+                guard let token = candidate.as(TokenSyntax.self) else { return false }
+                text = token.text
+            } else {
+                text = Self.coreText(of: candidate)
+            }
+            if let previous = bindings[sentinel] { return previous == text }
+            bindings[sentinel] = text
             return true
         }
+        if isMemberWildcard(pattern) { return candidate.is(MemberBlockSyntax.self) }
         guard pattern.kind == candidate.kind else { return false }
         if let patternToken = pattern.as(TokenSyntax.self) {
             return patternToken.text == candidate.as(TokenSyntax.self)?.text
@@ -173,13 +243,160 @@ public struct PatternSearch {
         return true
     }
 
-    private func singleMetavariableName(of node: Syntax) -> String? {
-        guard let reference = node.as(DeclReferenceExprSyntax.self) else { return nil }
-        return sentinelToName[reference.baseName.text]
+    // MARK: - Holes
+
+    /// The sentinel of a single hole, when the node is one.
+    ///
+    /// The outermost form of a hole is what binds, so it takes in its whole position: an
+    /// expression (a bare reference), a type (a bare type name), a binding pattern, one whole
+    /// parameter, or — for a name that is a token of a declaration, a closure parameter or a
+    /// label — the token itself.
+    private func holeSentinel(of node: Syntax) -> String? {
+        switch node.kind {
+        case .declReferenceExpr:
+            let reference = node.cast(DeclReferenceExprSyntax.self)
+            guard reference.argumentNames == nil else { return nil }
+            return single(reference.baseName)
+        case .identifierType:
+            let type = node.cast(IdentifierTypeSyntax.self)
+            guard type.genericArgumentClause == nil else { return nil }
+            return single(type.name)
+        case .identifierPattern:
+            return single(node.cast(IdentifierPatternSyntax.self).identifier)
+        case .expressionPattern:
+            // `catch $P`, `case $P:` — the hole stands for whatever pattern is written there.
+            return holeSentinel(of: Syntax(node.cast(ExpressionPatternSyntax.self).expression))
+        case .functionParameter:
+            guard let type = Self.parameterHoleType(node.cast(FunctionParameterSyntax.self)) else { return nil }
+            return single(type.name)
+        case .token:
+            return single(node.cast(TokenSyntax.self))
+        default:
+            return nil
+        }
+    }
+
+    private func single(_ token: TokenSyntax) -> String? {
+        guard case .identifier(let text) = token.tokenKind, sentinelToName[text] != nil else { return nil }
+        return text
+    }
+
+    /// The type of a parameter written as a bare metavariable, `func f($P)` or `func f($$$)`. The
+    /// parser reads it as a type with the label and colon missing; nothing else in it may be there.
+    private static func parameterHoleType(_ parameter: FunctionParameterSyntax) -> IdentifierTypeSyntax? {
+        guard parameter.firstName.presence == .missing, parameter.colon.presence == .missing,
+              parameter.secondName == nil, parameter.ellipsis == nil, parameter.defaultValue == nil,
+              parameter.attributes.isEmpty, parameter.modifiers.isEmpty,
+              let type = parameter.type.as(IdentifierTypeSyntax.self), type.genericArgumentClause == nil
+        else { return nil }
+        return type
+    }
+
+    /// `{ $$$ }` as the body of a type: the parser leaves the sentinel as unexpected text in an
+    /// otherwise empty member block.
+    private func isMemberWildcard(_ node: Syntax) -> Bool {
+        guard let block = node.as(MemberBlockSyntax.self) else { return false }
+        return Self.memberWildcardSentinel(block).map(variadicSentinels.contains) ?? false
+    }
+
+    private static func memberWildcardSentinel(_ block: MemberBlockSyntax) -> String? {
+        guard block.members.isEmpty, let unexpected = block.unexpectedBetweenMembersAndRightBrace,
+              unexpected.count == 1, let token = unexpected.first?.as(TokenSyntax.self),
+              case .identifier(let text) = token.tokenKind else { return nil }
+        return text
     }
 
     private func isVariadic(_ node: Syntax) -> Bool {
-        variadicSentinels.contains(Self.coreText(of: node))
+        // String content is text: a `$$$` there is not a hole.
+        guard !node.is(StringSegmentSyntax.self), !node.is(StringLiteralSegmentListSyntax.self) else { return false }
+        if let token = node.as(TokenSyntax.self), case .stringSegment = token.tokenKind { return false }
+        return variadicSentinels.contains(Self.coreText(of: node))
+    }
+
+    // MARK: - Compiling
+
+    /// Whether every error in a recovered tree is one of the shapes a metavariable leaves behind:
+    /// a parameter written as a bare metavariable, or `{ $$$ }` as a type's body.
+    private static func isRecognisedRecovery(_ tree: SourceFileSyntax, single: [String: String],
+                                             variadic: Set<String>) -> Bool {
+        let sentinels = Set(single.keys).union(variadic)
+        final class Check: SyntaxVisitor {
+            let sentinels: Set<String>
+            var recognised = true
+            init(sentinels: Set<String>) {
+                self.sentinels = sentinels
+                super.init(viewMode: .all)
+            }
+            override func visit(_ node: FunctionParameterSyntax) -> SyntaxVisitorContinueKind {
+                if let type = PatternSearch.parameterHoleType(node), sentinels.contains(type.name.text) {
+                    return .skipChildren
+                }
+                return .visitChildren
+            }
+            override func visit(_ node: MemberBlockSyntax) -> SyntaxVisitorContinueKind {
+                guard let sentinel = PatternSearch.memberWildcardSentinel(node) else { return .visitChildren }
+                if !sentinels.contains(sentinel) { recognised = false }
+                return .skipChildren
+            }
+            override func visit(_ node: UnexpectedNodesSyntax) -> SyntaxVisitorContinueKind {
+                recognised = false
+                return .skipChildren
+            }
+            override func visit(_ token: TokenSyntax) -> SyntaxVisitorContinueKind {
+                if token.presence == .missing { recognised = false }
+                return .skipChildren
+            }
+        }
+        let check = Check(sentinels: sentinels)
+        check.walk(tree)
+        return check.recognised
+    }
+
+    /// Refuses a pattern with a metavariable the matcher would never reach as a hole. It walks the
+    /// pattern the way matching does, so a position nobody anticipated fails here, loudly, instead
+    /// of producing an empty answer.
+    private func checkEveryMetavariableIsBound(in tree: SourceFileSyntax) throws {
+        var bound = Set<String>()
+        try collectBound(patternRoot, into: &bound)
+        let sentinels = Array(sentinelToName.keys) + Array(variadicSentinels)
+        for sentinel in sentinels.sorted() where !bound.contains(sentinel) {
+            let name = sentinelToName[sentinel].map { "$\($0)" }
+                ?? variadicSentinels.first { $0 == sentinel }.map(Self.variadicSpelling) ?? sentinel
+            let tokens = tree.tokens(viewMode: .sourceAccurate).filter { $0.text.contains(sentinel) }
+            if tokens.contains(where: { $0.ancestorOrSelf(mapping: { $0.as(StringLiteralExprSyntax.self) }) != nil }) {
+                throw Failure.metavariableInStringLiteral(name)
+            }
+            if tokens.isEmpty {
+                throw Failure.unbindableMetavariable(name, reason: "it is inside a comment")
+            }
+            throw Failure.unbindableMetavariable(
+                name, reason: "the matcher does not reach it as a hole in this position, so the pattern would match nothing")
+        }
+    }
+
+    private func collectBound(_ node: Syntax, into bound: inout Set<String>) throws {
+        if let sentinel = holeSentinel(of: node) { bound.insert(sentinel); return }
+        if isMemberWildcard(node), let block = node.as(MemberBlockSyntax.self),
+           let sentinel = Self.memberWildcardSentinel(block) {
+            bound.insert(sentinel); return
+        }
+        let children = meaningfulChildren(node)
+        let variadics = children.filter(isVariadic)
+        if variadics.count > 1 {
+            let spelled = Self.variadicSpelling(Self.coreText(of: variadics[1]))
+            throw Failure.unbindableMetavariable(
+                spelled, reason: "only one variadic is supported in one list, and a second one makes the pattern match nothing")
+        }
+        for child in children {
+            if isVariadic(child) { bound.insert(Self.coreText(of: child)); continue }
+            try collectBound(child, into: &bound)
+        }
+    }
+
+    /// `$$$` or `$$$Name`, from its sentinel.
+    private static func variadicSpelling(_ sentinel: String) -> String {
+        guard let separator = sentinel.firstIndex(of: "_") else { return "$$$" }
+        return "$$$" + sentinel[sentinel.index(after: separator)...]
     }
 
     /// A node's text without surrounding commas or spaces — used to recognise sentinels.

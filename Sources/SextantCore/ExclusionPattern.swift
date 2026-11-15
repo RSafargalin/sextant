@@ -8,17 +8,22 @@ import Foundation
 /// cannot subtract.
 ///
 /// The syntax is the small, predictable part of glob rather than gitignore: `*` inside one path
-/// component, `**` across components, and a pattern with no `/` matching the file's name anywhere.
+/// component, `**` across components, and a pattern with no `/` matching a name at any depth —
+/// a file's name, or a directory's, which takes everything under it, as in gitignore.
 /// Deliberately absent are negation and "last pattern wins" — a partial gitignore is worse than
 /// none, because nobody can predict where it stops (see the reasoning in issue #3).
 public struct ExclusionPattern: Sendable, Equatable {
     private let segments: [String]
-    /// A pattern without a separator matches a name at any depth: `*.pb.swift`.
+    /// A pattern without a separator matches a name at any depth: `*.pb.swift`, `vendor`.
     private let matchesNameOnly: Bool
+    /// A name with a trailing `/` (`vendor/`) matches directories only.
+    private let matchesDirectoriesOnly: Bool
 
     public init(_ pattern: String) {
         let trimmed = pattern.trimmingCharacters(in: .whitespaces)
-        matchesNameOnly = !trimmed.contains("/")
+        let withoutTrailingSlash = trimmed.hasSuffix("/") ? String(trimmed.dropLast()) : trimmed
+        matchesNameOnly = !withoutTrailingSlash.isEmpty && !withoutTrailingSlash.contains("/")
+        matchesDirectoriesOnly = trimmed.hasSuffix("/")
         segments = trimmed.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
     }
 
@@ -27,8 +32,10 @@ public struct ExclusionPattern: Sendable, Equatable {
     public func matches(relativePath path: String) -> Bool {
         let components = path.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
         if matchesNameOnly {
-            guard let name = components.last, let pattern = segments.first else { return false }
-            return Self.matches(name: name, pattern: pattern)
+            // Any component: the file's own name, or a directory on its path.
+            guard let pattern = segments.first else { return false }
+            let names = matchesDirectoriesOnly ? components.dropLast() : components[...]
+            return names.contains { Self.matches(name: $0, pattern: pattern) }
         }
         return Self.matches(components: components, patterns: segments, allowTrailing: true)
     }

@@ -2,9 +2,13 @@ import Foundation
 
 /// Metavariables in a structural pattern, shared by both engines.
 ///
-/// A real parser cannot read `$X`, so each metavariable is substituted for a plain identifier —
-/// a sentinel — which the matcher recognises back by name. The Swift and the C-family engines use
+/// clang cannot read `$X`, and SwiftParser reads it as an ordinary identifier (`$X` is how a
+/// projected value is spelled), so each metavariable is substituted for a plain identifier — a
+/// sentinel — which the matcher recognises back by name. The Swift and the C-family engines use
 /// the same substitution, so a pattern means the same thing in both.
+///
+/// A sentinel never collides with an identifier the user wrote: its prefix is extended until it
+/// occurs nowhere in the pattern, so `SEXTANTMETA_X` typed literally stays a literal name.
 public enum Metavariable {
     public struct Substitution: Sendable {
         /// The pattern with metavariables replaced by sentinel identifiers.
@@ -20,6 +24,8 @@ public enum Metavariable {
         var result = ""
         var single: [String: String] = [:]
         var variadic: Set<String> = []
+        let metaPrefix = uniquePrefix("SEXTANTMETA", in: pattern)
+        let variadicPrefix = uniquePrefix("SEXTANTVARIADIC", in: pattern)
         var index = 0
         while index < characters.count {
             guard characters[index] == "$" else {
@@ -31,7 +37,7 @@ public enum Metavariable {
                 while cursor < characters.count, isIdentifierPart(characters[cursor]) {
                     name.append(characters[cursor]); cursor += 1
                 }
-                let sentinel = name.isEmpty ? "SEXTANTVARIADIC" : "SEXTANTVARIADIC_\(name)"
+                let sentinel = name.isEmpty ? variadicPrefix : "\(variadicPrefix)_\(name)"
                 variadic.insert(sentinel)
                 result += sentinel
                 index = cursor
@@ -41,7 +47,7 @@ public enum Metavariable {
                 while cursor < characters.count, isIdentifierPart(characters[cursor]) {
                     name.append(characters[cursor]); cursor += 1
                 }
-                let sentinel = "SEXTANTMETA_\(name)"
+                let sentinel = "\(metaPrefix)_\(name)"
                 single[sentinel] = name
                 result += sentinel
                 index = cursor
@@ -50,6 +56,13 @@ public enum Metavariable {
             }
         }
         return Substitution(text: result, singleByName: single, variadic: variadic)
+    }
+
+    /// `base`, lengthened until it is not a substring of the pattern.
+    private static func uniquePrefix(_ base: String, in pattern: String) -> String {
+        var prefix = base
+        while pattern.contains(prefix) { prefix += "Q" }
+        return prefix
     }
 
     static func isIdentifierStart(_ character: Character) -> Bool {

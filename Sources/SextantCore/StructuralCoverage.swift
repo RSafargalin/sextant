@@ -9,6 +9,39 @@ public enum StructuralCoverage {
     /// The reason a command that reads Swift only gives for every other file.
     public static let swiftOnlyReason = "the rules run on Swift only"
 
+    /// Why a file that could not be opened is not part of the answer.
+    public static let unreadableReason = "could not be read (permissions?)"
+
+    /// Why a Swift file that is not UTF-8 text is not part of the answer.
+    public static let notUTF8Reason = "is not valid UTF-8 text, which the Swift parser cannot read"
+
+    /// The heading for files read with reservations: through the parser's recovery from errors, or
+    /// with an expression that could not be given its structure.
+    public static let recoveredHeading = "read with reservations"
+
+    /// Why the matches in such a file are not a complete answer about it.
+    public static let syntaxErrorReason = "the file has syntax errors and the parser recovered from them, so a match in it may be missing or wrong"
+
+    /// Why a directory the walk skips is not part of the answer.
+    public static let skippedDirectoryReason =
+        "a directory the walk skips as vendored, build output or a submodule — narrow the scope to it (--scope) to search it"
+
+    /// A Swift file the parser could not be given, named with its reason.
+    public static func unscanned(_ read: SourceParseCache.Read, file: String) -> UnscannedFile? {
+        switch read {
+        case .parsed: return nil
+        case .unreadable: return UnscannedFile(file: file, reason: unreadableReason)
+        case .notUTF8: return UnscannedFile(file: file, reason: notUTF8Reason)
+        }
+    }
+
+    /// Directories under the root that the walks skipped although they hold sources, one entry each.
+    /// Read after the command's walks: it reports what those walks left out.
+    public static func skippedDirectories(projectRoot: String) -> [UnscannedFile] {
+        SwiftSources.skippedSourceDirectories(under: URL(fileURLWithPath: projectRoot, isDirectory: true))
+            .map { UnscannedFile(file: $0 + "/", reason: skippedDirectoryReason) }
+    }
+
     /// Non-Swift sources under the root, with the reason they were skipped.
     public static func unscannedFiles(projectRoot: String, includeTests: Bool,
                                       reason: String = swiftOnlyReason) -> [UnscannedFile] {
@@ -30,16 +63,21 @@ public enum StructuralCoverage {
                 + "the answer does not cover them."]
     }
 
-    public static func report(_ files: [UnscannedFile], limit: Int = 10) -> [String] {
+    public static func report(_ files: [UnscannedFile], limit: Int = 10, heading: String = "not scanned") -> [String] {
         guard !files.isEmpty else { return [] }
         var lines: [String] = []
         for reason in orderedReasons(of: files) {
             let group = files.filter { $0.reason == reason }
-            lines.append("⚠ not scanned (\(group.count)) — \(reason):")
+            lines.append("⚠ \(heading) (\(group.count)) — \(reason):")
             lines += group.prefix(limit).map { "  \($0.file)" }
             if group.count > limit { lines.append("  … and \(group.count - limit) more") }
         }
         return lines
+    }
+
+    /// Report lines naming the files read with reservations; empty when there were none.
+    public static func recoveredReport(_ files: [UnscannedFile], limit: Int = 10) -> [String] {
+        report(files, limit: limit, heading: recoveredHeading)
     }
 
     /// What the C-family answer covers: the configuration those files were built in.

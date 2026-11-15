@@ -156,6 +156,53 @@ is. `--budget <tokens>` bounds it when you want that, and the header then states
 (`⚠ truncated: 1384 file(s) with 13778 declaration(s) left out by --budget 6000 tok`). Over MCP the
 budget does have a default — an agent reads the answer into a context window.
 
+### Pattern syntax (`search`, `lint`)
+
+A pattern is one expression, statement or declaration, written as code with holes in it.
+`$Name` is a hole for one subtree; the same name used twice must bind the same text, whatever
+kind of position each occurrence is in. `$$$` (or `$$$Name`) absorbs any number of elements of a
+list — arguments, statements, parameters — and `{ $$$ }` as a type's body absorbs any members; one
+per list. In Swift a hole may stand:
+
+| Position | Example |
+|---|---|
+| expression | `try? $X.save()`, `$X == $X`, `"\($X)"` (an interpolation is an expression) |
+| type | `$X as! $T`, `$X as? $T`, `$X is $T`, `let $N: $T = $V`, `Array<$T>`, `func $F(a: $T) -> $R { $$$ }` |
+| binding name | `let $X = $Y`, `var $X = $Y`, `if let $X = $Y { $$$ }`, `guard let $X = $Y else { $$$ }`, `for $X in $Y { $$$ }`, `{ $X in $$$ }`, `{ ($X: $T) in $$$ }` — a binding hole takes any pattern there, a tuple included |
+| catch clause | `catch let $E`, `catch $P { $$$ }` — a pattern may start with `catch`; without a body it accepts any body |
+| declaration name | `func $F() { $$$ }`, `class $C { $$$ }`, `struct $S: $P { $$$ }`, `enum $E { $$$ }`, `var $N: $T` |
+| parameter | `func $F($P) { $$$ }` is exactly one parameter, `func $F($$$) { $$$ }` any number |
+
+Operator expressions are matched with the compiler's grouping: SwiftParser leaves
+`y = a as! T` flat, so the pattern and every file are folded first by the standard precedences
+and those declared in the searched files — `$X * $Y` finds `b * c` in `a + b * c`, `$X as! $T`
+finds the cast inside an assignment. An expression with an operator of unknown precedence is
+compared as written, never folded on a guess, and its file is named; a pattern with one is
+refused.
+
+The match is structural: `func $F() {}` matches only an empty body, `class $C {}` only an empty
+class — write `{ $$$ }` for any. Refused with a usage error (exit `2`, an error result over MCP)
+instead of answering "No matches.":
+
+- a metavariable inside a string literal (`"$X"`, `"$$$"`) — there it is text;
+- a pattern that is several statements (`foo(); bar()`) — the matcher compares one node with one;
+- a metavariable the matcher never reaches as a hole — in a comment, a second `$$$` in one list, or
+  any other position — detected by walking the pattern the way matching does, so a position
+  nobody anticipated fails loudly.
+
+For Objective-C, C and C++ a hole binds only where an expression stands (`[$X reloadData]`,
+`$X * 2`); a pattern clang compiles with a metavariable elsewhere — `@selector($M)`, a type, a
+declared name — or that is several statements is refused for each file, with the reason, as is a
+pattern that does not compile there.
+
+What a structural answer does not cover is listed after it, never folded into "No matches.": a
+file that could not be read or is not UTF-8, a directory the walk skips although it holds sources
+(`vendor/`, `build/`, `Pods/`, a checked-out submodule — narrow `--scope` to it to search it), a
+header (only a translation unit's own code is matched), and — under `⚠ read with
+reservations` — a file the parser or clang read through errors, or one with a Swift operator
+whose precedence is not known, whose matches may be incomplete. `--json` carries the first ones
+in `notScanned` (a skipped directory ends in `/`) and the last in `readWithReservations`.
+
 ### Which index store answers
 
 A project routinely has more than one index store: `sextant index` writes one in a build tree of
@@ -280,6 +327,11 @@ the config list rather than adding to it):
 ```json
 { "exclude": ["Generated/**", "Sources/*/Legacy", "*.pb.swift"] }
 ```
+
+A pattern with a `/` is anchored at the project root (`Sources/*/Legacy` takes that folder and
+everything in it). A bare name, as in gitignore, matches at any depth — a file's name or a
+directory's, which takes everything under it: `*.pb.swift`, `Generated`, `vendor`. A trailing `/`
+(`Generated/`) keeps it to directories. `*` stays inside one path component, `**` crosses them.
 
 ## Installation
 

@@ -15,8 +15,9 @@ struct ExclusionPatternTests {
         #expect(excluded("*.pb.swift", "Sources/Api/user.pb.swift"))
         #expect(excluded("*.pb.swift", "user.pb.swift"))
         #expect(!excluded("*.pb.swift", "Sources/Api/user.swift"))
-        // The name, not a fragment of the path: a directory called `Generated` is not a file.
-        #expect(!excluded("Generated.swift", "Generated.swift/inner.swift"))
+        // A whole name, never a fragment of one; a directory of that name takes its contents.
+        #expect(!excluded("Generated.swift", "MyGenerated.swift"))
+        #expect(excluded("Generated.swift", "Generated.swift/inner.swift"))
     }
 
     @Test("`**` crosses path components, `*` stays inside one")

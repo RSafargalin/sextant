@@ -54,6 +54,10 @@ public final class ClangLibrary: @unchecked Sendable {
     let file: sx_getFile
     let skippedRanges: sx_getSkippedRanges
     let disposeSourceRangeList: sx_disposeSourceRangeList
+    /// Which operator a unary or binary operator cursor is. Optional: older toolchains lack them,
+    /// and the matcher then reads the operator from the source text instead.
+    let unaryOperatorKind: sx_getCursorOperatorKind?
+    let binaryOperatorKind: sx_getCursorOperatorKind?
 
     private init(path: String, handle: UnsafeMutableRawPointer) throws {
         func symbol<T>(_ name: String, _ type: T.Type) throws -> T {
@@ -88,6 +92,8 @@ public final class ClangLibrary: @unchecked Sendable {
         file = try symbol("clang_getFile", sx_getFile.self)
         skippedRanges = try symbol("clang_getSkippedRanges", sx_getSkippedRanges.self)
         disposeSourceRangeList = try symbol("clang_disposeSourceRangeList", sx_disposeSourceRangeList.self)
+        unaryOperatorKind = try? symbol("clang_getCursorUnaryOperatorKind", sx_getCursorOperatorKind.self)
+        binaryOperatorKind = try? symbol("clang_getCursorBinaryOperatorKind", sx_getCursorOperatorKind.self)
     }
 
     /// A Swift string from a CXString, whose buffer belongs to libclang and is released here.

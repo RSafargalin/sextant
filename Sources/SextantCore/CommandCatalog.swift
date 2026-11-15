@@ -176,7 +176,10 @@ public enum CommandCatalog {
             name: "search", argument: "<pattern>", summary: "structural search over the AST (a grep replacement)",
             group: navigationGroup,
             flags: [project, scope, maxFiles, exclude, includeTests, limit, json],
-            details: ["Metavariables: $X (an expression), variadic $$$. For example 'try? $X.save()'."],
+            details: ["Metavariables: $X (an expression, a type, a binding or declaration name, a parameter), "
+                      + "variadic $$$. For example 'try? $X.save()', '$X as! $T', 'func $F($$$) { $$$ }'.",
+                      "A metavariable that cannot be bound (in a string literal, in a comment) and a pattern "
+                      + "of several statements are refused rather than answered with no matches."],
             servedByDaemon: true
         ),
         CommandSpec(

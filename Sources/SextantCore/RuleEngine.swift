@@ -53,6 +53,13 @@ public enum RuleEngine {
         let message: String
     }
 
+    /// One file's cacheable result: its violations, and whether its tree was a recovery from errors.
+    private struct CachedFile: Codable {
+        let violations: [CachedViolation]
+        let hasSyntaxErrors: Bool
+        let unknownOperators: [String]
+    }
+
     /// What a lint run found, and what it could not look at. The second half is not a detail: a
     /// clean report over files that were never opened is a clean bill of health for unexamined code.
     public struct Outcome: Sendable {
@@ -64,6 +71,9 @@ public enum RuleEngine {
         /// Patterns that never compiled. They match nothing, so without naming them a clean report
         /// is produced by a rule set that partly did not run.
         public let broken: [BrokenPattern]
+        /// Files checked with reservations — through the parser's recovery from errors, or with an
+        /// operator expression that could not be folded: a violation in them may be missed.
+        public var recovered: [UnscannedFile] = []
     }
 
     /// A rule pattern the structural parser rejected.
@@ -73,12 +83,31 @@ public enum RuleEngine {
         public let reason: String
     }
 
-    /// The patterns in a rule set that do not compile.
-    public static func brokenPatterns(in rules: [Rule]) -> [BrokenPattern] {
+    /// The patterns in a rule set that no engine can use.
+    ///
+    /// A pattern is broken when Swift rejects it and the C family cannot use it either: a rule
+    /// written for one language rightly does not compile in the other. Without `cFamily` — no
+    /// C-family run — only what is knowable from the text counts: the C engine refusing it
+    /// outright. With it, a pattern clang compiled in some file is not broken, and one it never
+    /// got to try is named as such rather than declared broken or usable.
+    public static func brokenPatterns(in rules: [Rule], cFamily: CFamilyLint.Outcome? = nil) -> [BrokenPattern] {
         rules.flatMap { rule in
             rule.patterns.compactMap { pattern -> BrokenPattern? in
+                let swiftReason: String
                 do { _ = try PatternSearch(pattern: pattern); return nil }
-                catch { return BrokenPattern(ruleID: rule.id, pattern: pattern, reason: "\(error)") }
+                catch { swiftReason = "\(error)" }
+                let key = CFamilyLint.patternKey(ruleID: rule.id, pattern: pattern)
+                let cReason: String
+                do {
+                    _ = try ClangPatternSearch(pattern: pattern)
+                    guard let cFamily else { return BrokenPattern(ruleID: rule.id, pattern: pattern, reason: swiftReason) }
+                    if cFamily.compiledPatterns.contains(key) { return nil }
+                    cReason = cFamily.failedPatterns[key] ?? "no Objective-C, C or C++ file was checked with it"
+                } catch {
+                    cReason = "\(error)"
+                }
+                return BrokenPattern(ruleID: rule.id, pattern: pattern,
+                                     reason: "Swift: \(swiftReason); Objective-C, C and C++: \(cReason)")
             }
         }
     }
@@ -93,12 +122,16 @@ public enum RuleEngine {
     /// the directory being linted (`--scope` narrows the second, not the first).
     public static func run(rules: [Rule], projectRoot: String, lintRoot: String, includeTests: Bool,
                            cache: SourceParseCache = SourceParseCache(), fileLimit: Int? = nil) -> Outcome {
-        let violations = run(rules: rules, projectRoot: lintRoot, includeTests: includeTests, cache: cache,
+        let swift = runSwift(rules: rules, projectRoot: lintRoot, includeTests: includeTests, cache: cache,
                              fileLimit: fileLimit)
         let cFamily = CFamilyLint.run(rules: rules, lintRoot: lintRoot, projectRoot: projectRoot, includeTests: includeTests)
-        return Outcome(violations: violations + cFamily.violations, unscanned: cFamily.unscanned,
-                       inactive: cFamily.inactive, targets: cFamily.targets,
-                       broken: brokenPatterns(in: rules))
+        var outcome = Outcome(violations: swift.violations + cFamily.violations,
+                              unscanned: swift.unscanned + cFamily.unscanned
+                                + StructuralCoverage.skippedDirectories(projectRoot: lintRoot),
+                              inactive: cFamily.inactive, targets: cFamily.targets,
+                              broken: brokenPatterns(in: rules, cFamily: cFamily))
+        outcome.recovered = swift.recovered + cFamily.recovered
+        return outcome
     }
 
     /// Runs the rules over every Swift file in the project. A file is parsed once for all patterns.
@@ -106,6 +139,14 @@ public enum RuleEngine {
     /// rules, parsing and matching are skipped — linting a whole project on a warm cache is sub-second.
     public static func run(rules: [Rule], projectRoot: String, includeTests: Bool,
                            cache: SourceParseCache = SourceParseCache(), fileLimit: Int? = nil) -> [RuleViolation] {
+        runSwift(rules: rules, projectRoot: projectRoot, includeTests: includeTests, cache: cache,
+                 fileLimit: fileLimit).violations
+    }
+
+    /// The Swift half of a run, with the files it could not read and those it read through errors.
+    static func runSwift(rules: [Rule], projectRoot: String, includeTests: Bool, cache: SourceParseCache,
+                         fileLimit: Int?) -> (violations: [RuleViolation], unscanned: [UnscannedFile],
+                                              recovered: [UnscannedFile]) {
         let root = URL(fileURLWithPath: projectRoot, isDirectory: true)
         let compiled: [(rule: Rule, search: PatternSearch)] = rules.flatMap { rule in
             rule.patterns.compactMap { pattern in
@@ -115,35 +156,51 @@ public enum RuleEngine {
         let engines = compiled.map { $0.search }
 
         let rulesHash = rulesKey(rules)
-        let resultCache = PersistentCache<[CachedViolation]>(namespace: "lint-v1")
+        let resultCache = PersistentCache<CachedFile>(namespace: "lint-v3")
 
         var violations: [RuleViolation] = []
-        for file in SwiftSources.files(under: root, includeTests: includeTests, limit: fileLimit) {
+        var unscanned: [UnscannedFile] = []
+        var recovered: [UnscannedFile] = []
+        let files = SwiftSources.files(under: root, includeTests: includeTests, limit: fileLimit)
+        let folding = OperatorFolding.Session(files: files, cache: cache)
+        for file in files {
             let relative = SwiftSources.relativePath(of: file, root: root)
-            guard let contentHash = ContentHash.ofFile(file.path) else { continue }
-            let key = "\(contentHash)-\(rulesHash)"
+            let key = ContentHash.ofFile(file.path).map { "\($0)-\(rulesHash)" }
 
-            let fileViolations: [CachedViolation]
-            if let cached = resultCache.value(forKey: key) {
-                fileViolations = cached
+            let fileResult: CachedFile
+            if let key, let cached = resultCache.value(forKey: key) {
+                fileResult = cached
             } else {
-                guard let tree = cache.tree(atPath: file.path) else { continue }
+                let read = cache.read(atPath: file.path)
+                guard case .parsed(let tree) = read else {
+                    if let file = StructuralCoverage.unscanned(read, file: relative) { unscanned.append(file) }
+                    continue
+                }
                 // One tree walk for every pattern, instead of N walks.
                 var found: [CachedViolation] = []
-                for (index, match) in PatternSearch.searchAll(engines, in: tree, fileName: relative) {
+                let (folded, usedDeclaredOperators) = folding.fold(tree)
+                for (index, match) in PatternSearch.searchAll(engines, inFolded: folded.tree, fileName: relative) {
                     let rule = compiled[index].rule
                     found.append(CachedViolation(ruleID: rule.id, line: match.line, column: match.column, text: match.text, message: rule.message))
                 }
-                resultCache.set(found, forKey: key)
-                fileViolations = found
+                fileResult = CachedFile(violations: found, hasSyntaxErrors: tree.hasError,
+                                        unknownOperators: folded.unknownOperators)
+                // A result that relied on operators declared elsewhere is not this file's alone.
+                if let key, !usedDeclaredOperators { resultCache.set(fileResult, forKey: key) }
             }
-
-            for violation in fileViolations {
+            if fileResult.hasSyntaxErrors {
+                recovered.append(UnscannedFile(file: relative, reason: StructuralCoverage.syntaxErrorReason))
+            }
+            if !fileResult.unknownOperators.isEmpty {
+                recovered.append(UnscannedFile(file: relative, reason: OperatorFolding.reservation(fileResult.unknownOperators)))
+            }
+            for violation in fileResult.violations {
                 violations.append(RuleViolation(ruleID: violation.ruleID, file: relative, line: violation.line, column: violation.column, text: violation.text, message: violation.message))
             }
         }
         var seen = Set<String>()
-        return violations.filter { seen.insert("\($0.ruleID)|\($0.file)|\($0.line)|\($0.column)").inserted }
+        return (violations.filter { seen.insert("\($0.ruleID)|\($0.file)|\($0.line)|\($0.column)").inserted },
+                unscanned, recovered)
     }
 
     /// Deterministic cache key for a rule set: a canonical string form, NOT JSONEncoder — its output

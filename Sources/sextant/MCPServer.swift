@@ -457,27 +457,19 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
         catch let failure as PatternSearch.Failure where failure.mayBeCFamily { swiftRejection = failure.description }
         catch { return ("invalid pattern: \(error)", true) }
         let root = URL(fileURLWithPath: context.project, isDirectory: true)
-        let cache = SourceParseCache()
         let scanLimit = max(1, context.config?.maxFiles ?? 8000)   // clamped: 0 or negative would disable search
         let shownLimit = 200
         var lines: [String] = []
-        var scanned = 0
-        var swiftMatches = 0
-        var stopped = false
         // Matches past the first 200 are counted, not printed: the answer states the total it cut.
-        for file in SwiftSources.files(under: root, includeTests: false) {
-            guard let engine else { break }
-            scanned += 1
-            if scanned > scanLimit { stopped = true; break }
-            guard let tree = cache.tree(atPath: file.path) else { continue }
-            let relative = SwiftSources.relativePath(of: file, root: root)
-            for match in engine.search(in: tree, fileName: relative) {
-                swiftMatches += 1
-                if swiftMatches <= shownLimit { lines.append("\(relative):\(match.line):\(match.column): \(match.text)") }
-            }
-        }
-        if swiftMatches > shownLimit {
-            lines.append("… (first \(shownLimit) of \(swiftMatches)\(stopped ? "+" : "") Swift matches shown)")
+        let files = SwiftSources.files(under: root, includeTests: false)
+        let stopped = engine != nil && files.count > scanLimit
+        let swift = engine.map {
+            SwiftPatternScan.run($0, pattern: pattern, files: Array(files.prefix(scanLimit)), root: root,
+                                 cache: SourceParseCache())
+        } ?? SwiftPatternScan.Outcome()
+        lines += swift.hits.prefix(shownLimit).map { "\($0.file):\($0.line):\($0.column): \($0.text)" }
+        if swift.hits.count > shownLimit {
+            lines.append("… (first \(shownLimit) of \(swift.hits.count)\(stopped ? "+" : "") Swift matches shown)")
         }
         if stopped { lines.append("… (scanned \(scanLimit) files, search stopped — narrow the scope)") }
         // Objective-C, C and C++ go through clang, with the flags each file was built with.
@@ -487,9 +479,14 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
         if cFamily.hits.count > shownLimit {
             lines.append("… (first \(shownLimit) of \(cFamily.hits.count) C-family matches shown)")
         }
+        let unscanned = swift.unscanned + cFamily.unscanned
+            + StructuralCoverage.skippedDirectories(projectRoot: context.project)
         if let swiftRejection {
-            guard cFamily.scannedCount > 0 || !cFamily.unscanned.isEmpty else {
-                return ("invalid pattern: \(swiftRejection)", true)
+            // As in the CLI: only a C-family file actually searched shows the pattern reached
+            // anything. Without one, the pattern is refused, and whatever was not read is named.
+            guard cFamily.scannedCount > 0 else {
+                return ((["invalid pattern: \(swiftRejection)"] + StructuralCoverage.report(cFamily.unscanned))
+                    .joined(separator: "\n"), true)
             }
             lines.append("⚠ the pattern does not parse as Swift (\(swiftRejection)) — \(cFamily.scannedCount) "
                          + "C-family file(s) were searched, the Swift ones were not.")
@@ -497,7 +494,8 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
         if lines.isEmpty { lines.append("no matches") }
         lines += StructuralCoverage.inactiveReport(cFamily.inactive, targets: cFamily.targets)
         if cFamily.inactive.isEmpty { lines += StructuralCoverage.configurationNote(targets: cFamily.targets) }
-        lines += StructuralCoverage.report(cFamily.unscanned)
+        lines += StructuralCoverage.recoveredReport(swift.recovered + cFamily.recovered)
+        lines += StructuralCoverage.report(unscanned)
         return (lines.joined(separator: "\n"), false)
 
     case "lint":
@@ -515,6 +513,7 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
         let violations = outcome.violations
         let unscanned = StructuralCoverage.inactiveReport(outcome.inactive, targets: outcome.targets,
                                                           noun: "possible violation(s)")
+            + StructuralCoverage.recoveredReport(outcome.recovered)
             + StructuralCoverage.report(outcome.unscanned)
             + RuleEngine.brokenReport(outcome.broken)
             + scaleNoteMCP(context)

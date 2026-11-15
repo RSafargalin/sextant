@@ -195,39 +195,22 @@ func runSearch(arguments: [String]) -> Int32 {
     } catch let failure as PatternSearch.Failure where failure.mayBeCFamily {
         swiftRejection = failure.description
     } catch {
-        reportError("sextant search: invalid pattern (\(error)). Supported: an expression using $X and $$$.")
+        reportError("sextant search: invalid pattern (\(error)). "
+                    + "Supported: an expression, statement or declaration using $X and $$$.")
         return 2
     }
     let includeTests = arguments.contains("--include-tests")
     guard let rootPath = scopedRoot(in: arguments) else { return 2 }
     let fileLimit = scaleLimit(in: arguments)
     let root = URL(fileURLWithPath: rootPath, isDirectory: true)
-    let cache = SourceParseCache()
     // Result cache keyed by (file content hash + pattern): on an unchanged file with the same
-    // pattern, parsing and matching are skipped. CachedHit holds the path-independent part.
-    struct CachedHit: Codable { let line: Int; let column: Int; let text: String }
-    let patternHash = ContentHash.of(pattern)
-    let resultCache = PersistentCache<[CachedHit]>(namespace: "search-v1")
-    var hits: [SearchHit] = []
-    for file in SwiftSources.files(under: root, includeTests: includeTests, limit: fileLimit) {
-        let relative = SwiftSources.relativePath(of: file, root: root)
-        guard let contentHash = ContentHash.ofFile(file.path) else { continue }
-        let key = "\(contentHash)-\(patternHash)"
-
-        guard let engine else { break }
-        let fileHits: [CachedHit]
-        if let cached = resultCache.value(forKey: key) {
-            fileHits = cached
-        } else {
-            guard let tree = cache.tree(atPath: file.path) else { continue }
-            let found = engine.search(in: tree, fileName: relative).map { CachedHit(line: $0.line, column: $0.column, text: $0.text) }
-            resultCache.set(found, forKey: key)
-            fileHits = found
-        }
-        for hit in fileHits {
-            hits.append(SearchHit(file: relative, line: hit.line, column: hit.column, text: hit.text))
-        }
-    }
+    // pattern, parsing and matching are skipped.
+    let swiftFiles = SwiftSources.files(under: root, includeTests: includeTests, limit: fileLimit)
+    let swift = engine.map {
+        SwiftPatternScan.run($0, pattern: pattern, files: swiftFiles, root: root, cache: SourceParseCache(),
+                             resultCache: PersistentCache(namespace: SwiftPatternScan.cacheNamespace))
+    } ?? SwiftPatternScan.Outcome()
+    var hits = swift.hits.map { SearchHit(file: $0.file, line: $0.line, column: $0.column, text: $0.text) }
     // Objective-C, C and C++ are searched by clang, with the flags each file was built with.
     // Whatever it could not read is named: "No matches." over files that were never opened is a
     // confident wrong answer.
@@ -235,6 +218,9 @@ func runSearch(arguments: [String]) -> Int32 {
                                     projectRoot: projectRoot(in: arguments), includeTests: includeTests)
     hits += cFamily.hits.map { SearchHit(file: $0.file, line: $0.line, column: $0.column, text: $0.text) }
     hits.sort { ($0.file, $0.line, $0.column) < ($1.file, $1.line, $1.column) }
+    let unscanned = swift.unscanned + cFamily.unscanned
+        + StructuralCoverage.skippedDirectories(projectRoot: rootPath)
+    let recovered = swift.recovered + cFamily.recovered
 
     if let swiftRejection {
         // A file that was NOT scanned is not evidence that the pattern reached anything: counting
@@ -245,7 +231,7 @@ func runSearch(arguments: [String]) -> Int32 {
             let alsoUnscanned = cFamily.unscanned.isEmpty ? "" :
                 " \(cFamily.unscanned.count) C-family file(s) could not be searched either — see below."
             reportError("sextant search: invalid pattern (\(swiftRejection)). "
-                        + "Supported: an expression using $X and $$$.\(alsoUnscanned)")
+                        + "Supported: an expression, statement or declaration using $X and $$$.\(alsoUnscanned)")
             StructuralCoverage.report(cFamily.unscanned).forEach(reportError)
     CompilationDatabase.stalenessNote(forRoot: projectRoot(in: arguments),
                                       storePaths: resolveStorePaths(in: arguments)).forEach(reportError)
@@ -261,8 +247,11 @@ func runSearch(arguments: [String]) -> Int32 {
             let notScanned: [UnscannedFile]
             /// Textual only: occurrences in `#if` branches the build does not contain.
             let inactiveOccurrences: [StructuralHit]
+            /// Files read with reservations (syntax errors, an unfoldable operator): their matches may be incomplete.
+            let readWithReservations: [UnscannedFile]
         }
-        printJSON(SearchOutput(matches: hits, notScanned: cFamily.unscanned, inactiveOccurrences: cFamily.inactive))
+        printJSON(SearchOutput(matches: hits, notScanned: unscanned, inactiveOccurrences: cFamily.inactive,
+                               readWithReservations: recovered))
         return 0
     }
     // `--limit` shortens the list; the total keeps counting everything found, and the difference
@@ -275,7 +264,8 @@ func runSearch(arguments: [String]) -> Int32 {
     if cFamily.inactive.isEmpty {
         StructuralCoverage.configurationNote(targets: cFamily.targets).forEach(reportError)
     }
-    StructuralCoverage.report(cFamily.unscanned).forEach(reportError)
+    StructuralCoverage.recoveredReport(recovered).forEach(reportError)
+    StructuralCoverage.report(unscanned).forEach(reportError)
     CompilationDatabase.stalenessNote(forRoot: projectRoot(in: arguments),
                                       storePaths: resolveStorePaths(in: arguments)).forEach(reportError)
     StructuralCoverage.exclusionNote().forEach(reportError)
@@ -310,9 +300,11 @@ func runLint(arguments: [String]) -> Int32 {
             let inactiveOccurrences: [StructuralHit]
             /// Rule patterns that never compiled, so they matched nothing.
             let brokenRules: [String]
+            /// Files checked with reservations (syntax errors, an unfoldable operator): a violation may be missed.
+            let readWithReservations: [UnscannedFile]
         }
         printJSON(LintOutput(violations: violations, notScanned: unscanned, inactiveOccurrences: outcome.inactive,
-                             brokenRules: RuleEngine.brokenReport(outcome.broken)))
+                             brokenRules: RuleEngine.brokenReport(outcome.broken), readWithReservations: outcome.recovered))
         return violations.isEmpty ? 0 : 1
     }
     let inactive = StructuralCoverage.inactiveReport(outcome.inactive, targets: outcome.targets,
@@ -321,6 +313,7 @@ func runLint(arguments: [String]) -> Int32 {
         print("✅ No violations found — rules: \(ruleSet.origin)")
         inactive.forEach(reportError)
         RuleEngine.brokenReport(outcome.broken).forEach(reportError)
+        StructuralCoverage.recoveredReport(outcome.recovered).forEach(reportError)
         StructuralCoverage.report(unscanned).forEach(reportError)
     CompilationDatabase.stalenessNote(forRoot: projectRoot(in: arguments),
                                       storePaths: resolveStorePaths(in: arguments)).forEach(reportError)
@@ -334,6 +327,7 @@ func runLint(arguments: [String]) -> Int32 {
     print("\n❌ violations: \(violations.count)  ·  rules: \(ruleSet.origin)")
     inactive.forEach(reportError)
     RuleEngine.brokenReport(outcome.broken).forEach(reportError)
+    StructuralCoverage.recoveredReport(outcome.recovered).forEach(reportError)
     StructuralCoverage.report(unscanned).forEach(reportError)
     CompilationDatabase.stalenessNote(forRoot: projectRoot(in: arguments),
                                       storePaths: resolveStorePaths(in: arguments)).forEach(reportError)

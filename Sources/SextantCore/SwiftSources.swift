@@ -34,13 +34,70 @@ public enum SwiftSources {
     /// nil means the directory is not under git (falls back to FileManager). Works in a git worktree.
     /// Extra safety: `.build/` and `checkouts/` are dropped in case vendored code is not ignored.
     static func gitSwiftFiles(under root: URL, includeTests: Bool, extensions: [String] = ["swift"]) -> [URL]? {
-        let suffixes = extensions.map { ".\($0)" }
+        gitListing(under: root, includeTests: includeTests, extensions: extensions)?.files
+    }
+
+    /// The git list, with the directories it held sources in that the walk leaves out.
+    static func gitListing(under root: URL, includeTests: Bool, extensions: [String]) -> Listing? {
         let pathspecs = extensions.map { "*.\($0)" }
         guard let output = runGit(["-C", root.path, "ls-files", "-z",
                                    "--cached", "--others", "--exclude-standard", "--"] + pathspecs) else { return nil }
-        return output.split(separator: "\0").map(String.init)
-            .filter { isListedSource($0, suffixes: suffixes, includeTests: includeTests) }
-            .map { root.appendingPathComponent($0) }
+        var listing = listing(of: output, root: root, extensions: extensions, includeTests: includeTests)
+        listing.skipped.formUnion(submodules(under: root))
+        return listing
+    }
+
+    /// Files a walk found, and the skipped directories (relative to the root) that held sources.
+    struct Listing {
+        var files: [URL]
+        var skipped: Set<String>
+    }
+
+    /// Splits a NUL-separated path list into the project's files and the skipped directories.
+    private static func listing(of output: String, root: URL, extensions: [String], includeTests: Bool) -> Listing {
+        let suffixes = extensions.map { ".\($0)" }
+        var files: [URL] = []
+        var skipped: Set<String> = []
+        for path in output.split(separator: "\0").map(String.init) {
+            if isListedSource(path, suffixes: suffixes, includeTests: includeTests) {
+                files.append(root.appendingPathComponent(path))
+            } else if let directory = skippedDirectory(of: path, suffixes: suffixes, includeTests: includeTests) {
+                skipped.insert(directory)
+            }
+        }
+        return Listing(files: files, skipped: skipped)
+    }
+
+    /// The vendored or build directory a source sits in, when that is the only reason the walk
+    /// leaves it out. Hidden directories are not named: nobody keeps sources in `.build`.
+    static func skippedDirectory(of relativePath: String, suffixes: [String], includeTests: Bool) -> String? {
+        guard suffixes.contains(where: relativePath.hasSuffix) else { return nil }
+        let components = relativePath.split(separator: "/").map(String.init)
+        guard let last = components.last, !last.hasPrefix("."),
+              includeTests || !last.hasSuffix("Tests.swift") else { return nil }
+        let directories = components.dropLast()
+        guard !directories.contains(where: { $0.hasPrefix(".") }),
+              let index = directories.firstIndex(where: { skippedDirectories.contains($0) }) else { return nil }
+        return directories[...index].joined(separator: "/")
+    }
+
+    /// Submodule paths declared in the root's `.gitmodules` that are checked out. git lists a
+    /// submodule as one entry, never its files, so without this its sources vanish unnamed.
+    static func submodules(under root: URL) -> Set<String> {
+        guard let text = try? String(contentsOf: root.appendingPathComponent(".gitmodules"), encoding: .utf8)
+        else { return [] }
+        var paths: Set<String> = []
+        for line in text.split(separator: "\n") {
+            let parts = line.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+            guard parts.count == 2, parts[0] == "path", !parts[1].isEmpty else { continue }
+            var isDirectory: ObjCBool = false
+            let url = root.appendingPathComponent(parts[1])
+            if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue,
+               let contents = try? FileManager.default.contentsOfDirectory(atPath: url.path), !contents.isEmpty {
+                paths.insert(parts[1])
+            }
+        }
+        return paths
     }
 
     /// Whether a path git lists, relative to the root, is one of the project's files. The same
@@ -176,7 +233,32 @@ public enum SwiftSources {
     }
     private static let fileListMemo = FileListMemo()
 
-    public static func clearFileListMemo() { fileListMemo.clear() ; exclusionEffect.clear() }
+    public static func clearFileListMemo() { fileListMemo.clear() ; exclusionEffect.clear(); skippedEffect.clear() }
+
+    /// The directories the walks made so far left out although they hold sources, per root. A
+    /// project that keeps its real code in `vendor/` would otherwise get "no matches" and no hint.
+    private final class SkippedEffect: @unchecked Sendable {
+        private let lock = NSLock()
+        private var byRoot: [String: [String: Set<String>]] = [:]
+        func record(_ directories: Set<String>, root: String, walk: String) {
+            lock.withLock { byRoot[root, default: [:]][walk] = directories }
+        }
+        func clear() { lock.withLock { byRoot.removeAll() } }
+        func directories(root: String) -> Set<String> {
+            lock.withLock { byRoot[root]?.values.reduce(into: Set<String>()) { $0.formUnion($1) } ?? [] }
+        }
+    }
+    private static let skippedEffect = SkippedEffect()
+
+    /// Directories under the root, relative to it, that the walks made so far skipped although
+    /// they hold sources — vendored and build directories, and checked-out submodules. Sorted.
+    public static func skippedSourceDirectories(under root: URL) -> [String] {
+        let patterns = exclusions.current.patterns
+        return skippedEffect.directories(root: root.path)
+            // A directory the user excluded is not news to them; it is tested as the parent of an entry.
+            .filter { !patterns.exclude(relativePath: $0 + "/\u{1}") }
+            .sorted()
+    }
 
     /// How many files the exclusion patterns removed from the walks made so far, and which
     /// patterns are in force. An exclusion can empty an answer completely, and "nothing found" is
@@ -254,9 +336,11 @@ public enum SwiftSources {
         if let cached = fileListMemo.value(key) { return cached }
         // A repository answers for itself; a directory that is not one still gets git's own
         // gitignore rules, borrowed; only where git is unavailable does the plain walk run.
-        let discovered = gitSwiftFiles(under: root, includeTests: includeTests, extensions: extensions)
-            ?? borrowedGitFiles(under: root, includeTests: includeTests, extensions: extensions)
-            ?? enumeratedFiles(under: root, includeTests: includeTests, extensions: extensions)
+        let listing = gitListing(under: root, includeTests: includeTests, extensions: extensions)
+            ?? borrowedGitListing(under: root, includeTests: includeTests, extensions: extensions)
+            ?? enumeratedListing(under: root, includeTests: includeTests, extensions: extensions)
+        skippedEffect.record(listing.skipped, root: root.path, walk: key)
+        let discovered = listing.files
         // Sorted: when a walk is bounded by `--max-files`, the answer covers a prefix of this list,
         // and a prefix is only meaningful if the order is the same on every run. git already
         // returns its list sorted; the FileManager walk does not.
@@ -281,23 +365,23 @@ public enum SwiftSources {
     /// nil means git could not be borrowed (not installed, or the directory is unreadable), and
     /// the caller falls back to a plain walk.
     static func borrowedGitFiles(under root: URL, includeTests: Bool, extensions: [String]) -> [URL]? {
+        borrowedGitListing(under: root, includeTests: includeTests, extensions: extensions)?.files
+    }
+
+    static func borrowedGitListing(under root: URL, includeTests: Bool, extensions: [String]) -> Listing? {
         let gitDirectory = borrowedGitDirectory(for: root)
         if !FileManager.default.fileExists(atPath: gitDirectory.path) {
             try? FileManager.default.createDirectory(at: gitDirectory.deletingLastPathComponent(),
                                                      withIntermediateDirectories: true)
             guard runGit(["init", "-q", "--bare", gitDirectory.path]) != nil else { return nil }
         }
-        let suffixes = extensions.map { ".\($0)" }
         let pathspecs = extensions.map { "*.\($0)" }
         // `--others --exclude-standard`: everything untracked that gitignore does not exclude —
         // in a work tree with an empty index, that is every file the user would consider theirs.
         guard let output = runGit(["--git-dir", gitDirectory.path, "--work-tree", root.path,
                                    "-C", root.path, "ls-files", "-z", "--others", "--exclude-standard",
                                    "--"] + pathspecs) else { return nil }
-
-        return output.split(separator: "\0").map(String.init)
-            .filter { isListedSource($0, suffixes: suffixes, includeTests: includeTests) }
-            .map { root.appendingPathComponent($0) }
+        return listing(of: output, root: root, extensions: extensions, includeTests: includeTests)
     }
 
     /// The borrowed git dir for a project: in the cache, never inside the project. Writing a
@@ -310,25 +394,44 @@ public enum SwiftSources {
 
     /// FileManager fallback for non-git directories: a walk that skips hidden and service directories.
     static func enumeratedFiles(under root: URL, includeTests: Bool, extensions: [String] = ["swift"]) -> [URL] {
+        enumeratedListing(under: root, includeTests: includeTests, extensions: extensions).files
+    }
+
+    static func enumeratedListing(under root: URL, includeTests: Bool, extensions: [String]) -> Listing {
         guard let enumerator = FileManager.default.enumerator(
             at: root,
             includingPropertiesForKeys: [.isDirectoryKey],
             options: []
-        ) else { return [] }
+        ) else { return Listing(files: [], skipped: []) }
 
         let ignored = ignoredDirectoryNames(under: root)
         var result: [URL] = []
+        var skipped: Set<String> = []
         for case let url as URL in enumerator {
             let isDirectory = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
             if isDirectory {
-                if shouldSkip(directory: url.lastPathComponent, ignored: ignored) { enumerator.skipDescendants() }
+                let name = url.lastPathComponent
+                if shouldSkip(directory: name, ignored: ignored) {
+                    enumerator.skipDescendants()
+                    if !name.hasPrefix("."), skippedDirectories.contains(name), holdsSource(url, extensions: extensions) {
+                        skipped.insert(relativePath(of: url, root: root))
+                    }
+                }
                 continue
             }
             guard extensions.contains(url.pathExtension), !url.lastPathComponent.hasPrefix(".") else { continue }
             if !includeTests, url.lastPathComponent.hasSuffix("Tests.swift") { continue }
             result.append(url)
         }
-        return result
+        return Listing(files: result, skipped: skipped)
+    }
+
+    /// Whether a directory holds at least one file with one of the extensions, at any depth.
+    private static func holdsSource(_ directory: URL, extensions: [String]) -> Bool {
+        guard let enumerator = FileManager.default.enumerator(at: directory, includingPropertiesForKeys: nil)
+        else { return false }
+        for case let url as URL in enumerator where extensions.contains(url.pathExtension) { return true }
+        return false
     }
 
     /// Whether the Swift file count exceeds a limit. Under git this is an exact count, memoised so

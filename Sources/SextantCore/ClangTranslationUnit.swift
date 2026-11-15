@@ -18,6 +18,9 @@ public struct ClangNode: Sendable {
     public let endOffset: Int
     /// C++ access of a member: 1 public, 2 protected, 3 private; 0 where it does not apply.
     public let access: Int32
+    /// Which operator a unary, binary or compound-assignment operator is (libclang's operator
+    /// kind); 0 for every other node, or when the toolchain cannot say.
+    public let operatorKind: Int32
     public let children: [ClangNode]
 
     public var isPublic: Bool { access == 0 || access == 1 }
@@ -44,6 +47,8 @@ public struct ClangTranslationUnit {
     public struct Diagnostic: Sendable {
         public let text: String
         public let offset: Int
+        /// The file the error was raised in: the main file, or a header it includes.
+        public let file: String
     }
 
     /// The file's own top-level declarations. Cursors from included headers are left out: they
@@ -111,8 +116,11 @@ public struct ClangTranslationUnit {
             let diagnostic = library.diagnostic(unit, position)
             if library.diagnosticSeverity(diagnostic) >= 3 {   // error and fatal
                 var line: UInt32 = 0, column: UInt32 = 0, offset: UInt32 = 0
-                library.spellingLocation(library.diagnosticLocation(diagnostic), nil, &line, &column, &offset)
-                errors.append(Diagnostic(text: library.text(library.formatDiagnostic(diagnostic, 0)), offset: Int(offset)))
+                var errorFile: SXFile?
+                library.spellingLocation(library.diagnosticLocation(diagnostic), &errorFile, &line, &column, &offset)
+                let errorPath = errorFile.map { library.text(library.fileName($0)) } ?? ""
+                errors.append(Diagnostic(text: library.text(library.formatDiagnostic(diagnostic, 0)), offset: Int(offset),
+                                         file: errorPath))
             }
             library.disposeDiagnostic(diagnostic)
         }
@@ -193,10 +201,21 @@ public struct ClangTranslationUnit {
             startOffset: Int(startOffset),
             endOffset: Int(endOffset),
             access: library.accessSpecifier(cursor),
+            operatorKind: operatorKind(of: cursor, library: library),
             children: childCursors.map {
                 node(of: $0, library: library, keepingHeaders: keepingHeaders, names: names, insideKeptFile: true)
             }
         )
+    }
+
+    /// libclang's operator kind for an operator cursor, 0 otherwise. Cursor kinds: 112
+    /// UnaryOperator, 114 BinaryOperator, 115 CompoundAssignOperator.
+    private static func operatorKind(of cursor: SXCursor, library: ClangLibrary) -> Int32 {
+        switch cursor.kind {
+        case 112: return library.unaryOperatorKind.map { Int32($0(cursor)) } ?? 0
+        case 114, 115: return library.binaryOperatorKind.map { Int32($0(cursor)) } ?? 0
+        default: return 0
+        }
     }
 
     /// Immediate children of a cursor. The visitor is a C function pointer, so it captures

@@ -86,4 +86,8 @@ typedef SXFile (*sx_getFile)(SXTranslationUnit, const char *fileName);
 typedef SXSourceRangeList *(*sx_getSkippedRanges)(SXTranslationUnit, SXFile);
 typedef void (*sx_disposeSourceRangeList)(SXSourceRangeList *);
 
+// MARK: - Operators
+
+typedef int (*sx_getCursorOperatorKind)(SXCursor);
+
 #endif

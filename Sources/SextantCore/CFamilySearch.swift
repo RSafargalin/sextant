@@ -44,13 +44,26 @@ public enum CFamilySearch {
         /// Textual occurrences inside `#if` branches this build does not contain. Not structurally
         /// verified — but leaving them out would answer for part of the sources as if it were all.
         public let inactive: [StructuralHit]
+        /// Files clang reported errors in: searched, but through its recovery from them.
+        public var recovered: [UnscannedFile] = []
+    }
+
+    /// Why the matches in a C-family file clang reported errors in are not a complete answer.
+    public static let compileErrorReason =
+        "clang reported errors (the file does not compile with its recorded flags), so a match in it may be missing or wrong"
+
+    /// Headers, each named as not scanned. Only a translation unit's own declarations are matched,
+    /// so what a header contains is never searched, whichever unit includes it.
+    public static func unscannedHeaders(root: String, includeTests: Bool) -> [UnscannedFile] {
+        let rootURL = URL(fileURLWithPath: root, isDirectory: true)
+        return headerFiles(searchRoot: root, includeTests: includeTests)
+            .map { UnscannedFile(file: relative($0, rootURL), reason: "a header is not a compilation unit") }
     }
 
     public static func run(pattern: String, searchRoot: String, projectRoot: String, includeTests: Bool) -> Outcome {
         let root = URL(fileURLWithPath: searchRoot, isDirectory: true)
         let sources = CompilationDatabase.compilableSources(projectRoot: searchRoot, includeTests: includeTests)
-        let headers = headerFiles(searchRoot: searchRoot, includeTests: includeTests)
-            .map { UnscannedFile(file: relative($0, root), reason: "a header is not a compilation unit") }
+        let headers = unscannedHeaders(root: searchRoot, includeTests: includeTests)
         guard !sources.isEmpty else { return Outcome(hits: [], unscanned: headers, scannedCount: 0, targets: [], inactive: []) }
 
         let engine: ClangPatternSearch
@@ -82,6 +95,7 @@ public enum CFamilySearch {
         var scanned = 0
         var targets: Set<String> = []
         var inactive: [StructuralHit] = []
+        var recovered: [UnscannedFile] = []
         for source in sources {
             // A file nobody could open is not a file that was checked. clang reports its own
             // failure as diagnostics and returns an empty unit, which counts as "scanned, clean".
@@ -104,6 +118,9 @@ public enum CFamilySearch {
                     library: library
                 )
                 scanned += 1
+                if !outcome.fileErrors.isEmpty {
+                    recovered.append(UnscannedFile(file: relative(source, root), reason: compileErrorReason))
+                }
                 if let target = CompilationDatabase.target(of: command) { targets.insert(target) }
                 hits += outcome.matches.map {
                     StructuralHit(file: relative(source, root), line: $0.match.line,
@@ -122,15 +139,16 @@ public enum CFamilySearch {
                 unscanned.append(UnscannedFile(file: relative(source, root), reason: reason(of: error)))
             }
         }
-        return Outcome(hits: hits, unscanned: unscanned, scannedCount: scanned, targets: targets, inactive: inactive)
+        return Outcome(hits: hits, unscanned: unscanned, scannedCount: scanned, targets: targets, inactive: inactive,
+                       recovered: recovered)
     }
 
     /// Headers, listed separately: they carry no compile command of their own, so the search
-    /// reaches them only through the files that include them.
-    private static func headerFiles(searchRoot: String, includeTests: Bool) -> [String] {
+    /// reaches them only through the files that include them. The same walk as the sources'.
+    static func headerFiles(searchRoot: String, includeTests: Bool) -> [String] {
         let root = URL(fileURLWithPath: searchRoot, isDirectory: true)
-        return SwiftSources.files(under: root, includeTests: includeTests,
-                                  extensions: Array(IndexDeclarations.headerExtensions))
+        return SwiftSources.files(under: root, includeTests: includeTests, extensions: IndexDeclarations.clangExtensions)
+            .filter { IndexDeclarations.headerExtensions.contains($0.pathExtension) }
             .map { $0.resolvingSymlinksInPath().path }
             .sorted()
     }

@@ -55,6 +55,8 @@ public struct ClangPatternSearch {
     private let statement: String
     private let sentinelNames: [String]
     private let sentinels: Set<String>
+    /// Sentinel → the metavariable as the user wrote it (`$X`), for naming it in a refusal.
+    private let spelledNames: [String: String]
 
     /// Identifiers the pattern spells out, metavariables excluded — `[$X reloadData]` anchors on
     /// `reloadData`. They are what a textual look into code the build skipped can go on.
@@ -70,6 +72,7 @@ public struct ClangPatternSearch {
         let names = substitution.singleByName.keys.sorted()
         sentinelNames = names
         sentinels = Set(names)
+        spelledNames = substitution.singleByName.mapValues { "$\($0)" }
         statement = substitution.text.hasSuffix(";") ? substitution.text : substitution.text + ";"
         anchors = Self.identifiers(in: substitution.text).filter { !names.contains($0) }
     }
@@ -95,6 +98,9 @@ public struct ClangPatternSearch {
         public let matches: [(index: Int, match: StructuralMatch)]
         /// Byte ranges the preprocessor skipped — the `#if` branches this build does not contain.
         public let skippedRanges: [Range<Int>]
+        /// Errors clang reported for the file itself or what it includes, outside the appended
+        /// patterns. The tree is clang's recovery from them, so matches in it may be incomplete.
+        public let fileErrors: [String]
     }
 
     /// Matches in one file, compiled with the flags it was built with.
@@ -117,7 +123,7 @@ public struct ClangPatternSearch {
                                  library: ClangLibrary,
                                  notCompiled: ((Int, [String]) -> Void)?) throws -> FileOutcome {
         guard !searches.isEmpty, let sourceData = FileManager.default.contents(atPath: file) else {
-            return FileOutcome(matches: [], skippedRanges: [])
+            return FileOutcome(matches: [], skippedRanges: [], fileErrors: [])
         }
         // clang is given the decoded text, so every offset it reports indexes THAT byte sequence.
         // A byte that is not valid UTF-8 decodes to U+FFFD, which is three bytes wide, so slicing
@@ -134,21 +140,35 @@ public struct ClangPatternSearch {
 
         let unit = try ClangTranslationUnit.parse(file: file, arguments: arguments, library: library, overlay: overlay)
         let wrappers = Self.probeWrappers(in: unit.root)
-        // The diagnostics that matter are the ones raised inside the appended text; errors the
-        // file already had are the build's business, not the search's.
-        let probeErrors = unit.errors(in: sourceBytes.count..<overlayData.count).map { $0.text }
+        // Errors raised inside the appended text decide whether a pattern compiled; errors
+        // anywhere else mean the file's own tree is clang's recovery, which the caller reports.
+        let overlayRange = sourceBytes.count..<overlayData.count
+        let mainFile = URL(fileURLWithPath: file).standardizedFileURL.path
+        let inOverlay: (ClangTranslationUnit.Diagnostic) -> Bool = {
+            overlayRange.contains($0.offset) && URL(fileURLWithPath: $0.file).standardizedFileURL.path == mainFile
+        }
+        let probeDiagnostics = unit.errors.filter(inOverlay)
+        let probeErrors = probeDiagnostics.map { $0.text }
+        let fileErrors = unit.errors.filter { !inOverlay($0) }.map { $0.text }
 
         var roots: [(index: Int, node: ClangNode)] = []
+        var firstFailure: [String]?
         for (position, search) in searches.enumerated() {
-            if let root = search.patternRoot(position: position, wrappers: wrappers, errors: unit.errors) {
+            let failure: [String]
+            switch search.patternRoot(position: position, wrappers: wrappers, errors: probeDiagnostics) {
+            case .root(let root):
                 roots.append((position, root))
-            } else {
-                notCompiled?(position, probeErrors.isEmpty ? unit.errors.map { $0.text } : probeErrors)
+                continue
+            case .notCompiled(let own):
+                failure = !own.isEmpty ? own : probeErrors.isEmpty ? unit.errors.map { $0.text } : probeErrors
+            case .unbindable(let reason):
+                failure = [reason]
             }
+            notCompiled?(position, failure)
+            if firstFailure == nil { firstFailure = failure }
         }
         guard !roots.isEmpty else {
-            throw Failure.patternNotCompiled(file: file,
-                                             diagnostics: probeErrors.isEmpty ? unit.errors.map { $0.text } : probeErrors)
+            throw Failure.patternNotCompiled(file: file, diagnostics: firstFailure ?? [])
         }
 
         let sourceLength = sourceBytes.count
@@ -173,10 +193,19 @@ public struct ClangPatternSearch {
             node.children.forEach(visit)
         }
         visit(unit.root)
-        return FileOutcome(matches: results, skippedRanges: unit.skippedRanges)
+        return FileOutcome(matches: results, skippedRanges: unit.skippedRanges, fileErrors: fileErrors)
     }
 
     // MARK: - Matching
+
+    /// What compiling one pattern in one file gave.
+    private enum ProbeResult {
+        case root(ClangNode)
+        /// No probe compiled cleanly into a usable tree; the errors raised inside its probes.
+        case notCompiled([String])
+        /// A probe compiled, but the pattern cannot be matched as written; the reason says why.
+        case unbindable(String)
+    }
 
     /// The pattern expression: the first probe that compiled cleanly and left a usable tree.
     ///
@@ -185,21 +214,47 @@ public struct ClangPatternSearch {
     /// compiled — the exact confident wrong answer this layer exists to avoid. So a probe with an
     /// error anywhere inside it is passed over, as is one whose expression came back as clang's
     /// residue (`UnexposedExpr`, an unresolved overload).
+    ///
+    /// A probe that compiled is still refused when the pattern is several statements (only one
+    /// would be matched) or when a metavariable did not become a reference the matcher binds — a
+    /// selector, a type or a declared name: such a pattern would match nothing, silently.
     private func patternRoot(position: Int, wrappers: [String: ClangNode],
-                             errors: [ClangTranslationUnit.Diagnostic]) -> ClangNode? {
+                             errors: [ClangTranslationUnit.Diagnostic]) -> ProbeResult {
+        var ownErrors: [String] = []
         for probe in Self.probes {
             guard let wrapper = wrappers[Self.wrapperName(position: position, probe: probe.name)],
-                  let body = wrapper.children.last(where: { $0.kindName == "CompoundStmt" }),
-                  // The declarations of the metavariables come first; the pattern is the statement.
-                  let statement = body.children.last(where: { $0.kindName != "DeclStmt" })
+                  let body = wrapper.children.last(where: { $0.kindName == "CompoundStmt" })
             else { continue }
             let probeRange = wrapper.startOffset..<max(wrapper.endOffset, wrapper.startOffset + 1)
-            guard !errors.contains(where: { probeRange.contains($0.offset) }) else { continue }
+            let inProbe = errors.filter { probeRange.contains($0.offset) }.map { $0.text }
+            guard inProbe.isEmpty else {
+                ownErrors += inProbe.filter { !ownErrors.contains($0) }
+                continue
+            }
+            // The declarations of the metavariables come first; the pattern is the statement.
+            let statements = body.children.filter { $0.kindName != "DeclStmt" }
+            guard let statement = statements.last else { continue }
+            if statements.count > 1 {
+                return .unbindable("the pattern is several statements, and a pattern matches one statement")
+            }
             let candidate = Self.transparent(statement)
             guard Self.isUsable(candidate) else { continue }
-            return candidate
+            var referenced = Set<String>()
+            Self.collectReferences(candidate, into: &referenced)
+            if let unbound = sentinelNames.first(where: { !referenced.contains($0) }) {
+                return .unbindable("the metavariable \(spelledNames[unbound] ?? unbound) is not in an expression "
+                                   + "position — the Objective-C, C and C++ matcher binds metavariables only where "
+                                   + "an expression stands, so the pattern would match nothing")
+            }
+            return .root(candidate)
         }
-        return nil
+        return .notCompiled(ownErrors)
+    }
+
+    /// Names of the references in a subtree — where a metavariable can bind.
+    private static func collectReferences(_ node: ClangNode, into names: inout Set<String>) {
+        if node.kindName == "DeclRefExpr" { names.insert(node.spelling) }
+        node.children.forEach { collectReferences($0, into: &names) }
     }
 
     /// Every probe function in the tree, by name.
@@ -249,6 +304,12 @@ public struct ClangPatternSearch {
         }
 
         guard pattern.kind == candidate.kind, pattern.spelling == candidate.spelling else { return false }
+        // An operator has no name of its own, so `!x` and `-x` are the same kind with the same
+        // children; which operator it is has to be compared separately.
+        if Self.operatorKinds.contains(pattern.kindName),
+           Self.operatorSpelling(of: pattern, in: patternSource) != Self.operatorSpelling(of: candidate, in: candidateSource) {
+            return false
+        }
 
         // A leaf carries no name of its own — a literal, for instance — so its text decides.
         // Without this, `foo(1)` would match `foo(2)`.
@@ -265,6 +326,28 @@ public struct ClangPatternSearch {
                         bindings: &bindings) { return false }
         }
         return true
+    }
+
+    private static let operatorKinds: Set<String> = ["UnaryOperator", "BinaryOperator", "CompoundAssignOperator"]
+
+    /// Which operator a node is: libclang's operator kind when the toolchain provides it,
+    /// otherwise the node's own text with its operands cut out (`!`, `+=`, a postfix `++`).
+    static func operatorSpelling(of node: ClangNode, in source: Data) -> String {
+        if node.operatorKind != 0 { return "kind \(node.operatorKind)" }
+        guard node.startOffset >= 0, node.endOffset <= source.count, node.startOffset < node.endOffset else { return "" }
+        var bytes: [UInt8] = []
+        var cursor = node.startOffset
+        for child in node.children.sorted(by: { $0.startOffset < $1.startOffset })
+        where child.startOffset >= cursor && child.endOffset <= node.endOffset {
+            bytes += source[cursor..<child.startOffset]
+            bytes.append(0x20)
+            cursor = child.endOffset
+        }
+        bytes += source[cursor..<node.endOffset]
+        let text = String(decoding: bytes, as: UTF8.self)
+        // A unary operator whose operand comes first is postfix (`x++`), not prefix (`++x`).
+        let postfix = node.kindName == "UnaryOperator" && text.first == " "
+        return (postfix ? "postfix " : "") + text.filter { !$0.isWhitespace }
     }
 
     /// Identifiers in a pattern, in order of appearance.

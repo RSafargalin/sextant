@@ -39,6 +39,20 @@ Human-readable text output is not covered — parse `--json`, not prose.
   64 MB in all) `sextant index` keeps a copy in `~/Library/Caches/sextant/index-snapshot-text/`,
   addressed by its blob hash and pruned when no snapshot refers to it — never in the project.
 
+- **Metavariables in Swift patterns stand in type, binding, catch and declaration positions, not
+  only where an expression can.** `$X as! $T`, `$X as? $T`, `$X is $T`, `let $N: $T = $V`,
+  `Array<$T>`, parameter and return types in a `func` pattern; binding names in `let`/`var`,
+  `if let`, `guard let`, `for … in` and closure parameters (a binding hole takes any pattern there,
+  a tuple included); `catch let $E` and `catch $P` (a pattern may now start with `catch`, and one
+  without a body accepts any body); declaration names (`func $F`, `class $C`, `struct $S: $P`,
+  `enum $E`, `var $N: $T`); and a parameter written as a bare metavariable — `func $F($P)` is
+  exactly one parameter and `func $F($$$)` any number, the same rule as `$X` and `$$$` in an
+  argument list. `{ $$$ }` as a type's body absorbs any members. A name repeated across position
+  kinds binds the same text (`register($T.self, $X as! $T)`). An interpolation, `"\($X)"`, matches
+  an interpolated expression. The placeholder a metavariable becomes before parsing can no longer
+  collide with a name the pattern spells out: `SEXTANTMETA_X` written literally used to act as a
+  hole.
+
 ### Changed
 
 - **Input the tool does not understand is refused with a message naming it, never replaced by a
@@ -97,6 +111,73 @@ Human-readable text output is not covered — parse `--json`, not prose.
   input schemas and the `-32601` for an unknown method are unchanged.
 
 ### Fixed
+
+- **`search` and `lint` name what they could not really check instead of passing it off as "checked,
+  no matches".**
+  - **A pattern the matcher could not bind is refused.** **Behaviour change** — each of these used
+    to answer "No matches." (exit 0; in MCP a successful empty answer) and is now a usage error
+    naming the reason (exit `2`; an error result in MCP; a rule with one is reported broken by
+    `lint`): a metavariable inside a string literal (`"$X"`, `"$$$"`); a pattern of several
+    statements (`foo(); bar()` used to match `foo()` alone and ignore the rest); a metavariable in
+    a comment; a second `$$$` in one list (`f($$$, $$$)`); and any other metavariable the matcher
+    never reaches as a hole — found by walking the pattern the way matching does, not from a list
+    of cases. For Objective-C, C and C++ a pattern clang compiles with a metavariable outside an
+    expression position (`@selector($M)`, which used to report "No matches.") or with several
+    statements (only the last was matched) is refused for each file with the reason, so with no
+    Swift reading either the command exits `2`.
+  - **Other inputs that now mean something different.** **Behaviour change**: a Swift pattern
+    with an operator whose precedence is not a standard one (`$X |> $Y`) is a usage error naming
+    the operator — it used to match only a flat sequence of exactly that shape; and `$F(a:)` (a
+    metavariable with argument labels) binds only the base name and compares the labels — it used
+    to be a hole for any whole expression, labels ignored.
+  - **MCP `structural_search` refuses a pattern that is not Swift when no C-family file could be
+    searched with it**, as the CLI already did. **Behaviour change**: it used to return a
+    successful answer listing the unsearched files.
+  - **A Swift file that cannot be read, or is not UTF-8, is listed as not scanned**, with the
+    reason; it used to be skipped without a word, in `search`, `lint` and MCP `structural_search`.
+  - **A file read through errors is named.** A Swift file with syntax errors, and a C-family file
+    clang reports errors in (it used to count as scanned), is still searched — its matches are
+    kept — and listed under `⚠ read with reservations`, since a match in it may be missing or
+    wrong. `--json` of `search` and `lint` gains `readWithReservations`.
+  - **Directories the walk skips are named when they hold sources** — `vendor`, `build`, `Pods`,
+    `Carthage`, `node_modules`, `checkouts`, `DerivedData` and checked-out submodules from
+    `.gitmodules` — as not scanned, with how to search them (`--scope`). Which directories are
+    walked has not changed. In `--json` they are `notScanned` entries whose `file` ends in `/`.
+  - **`lint` lists headers as not scanned**, as `search` does: what a header contains is never
+    matched, only a translation unit's own code.
+  - **`lint`'s check for broken patterns knows both languages.** It compiled every pattern as Swift
+    only, so a valid Objective-C rule was reported broken and a C-family pattern that never compiled
+    was not. A pattern is now broken when Swift rejects it and clang either refuses it or compiled
+    it in none of the files it tried; the reason names both halves, and says so when no C-family
+    file was checked with it.
+- **The C-family matcher tells operators apart.** `!$X` matched `-x`, and any unary operator any
+  other, since the operator was not compared; prefix and postfix `++` were one shape too. The
+  operator is now compared for unary, binary and compound-assignment expressions (libclang's
+  operator kind, or the source text where the toolchain lacks it).
+- **`body` (and MCP `body`) finds a declaration with an attribute on the line above it**
+  (`@MainActor` or `@objc` on a line of its own): the index records the line of the name, and the
+  declaration was looked for only where its attribute starts.
+- **A bare name in `exclude` takes a directory of that name, at any depth.** `--exclude vendor`
+  excluded only a file named `vendor`, which nobody has, and so nothing. A pattern without `/`
+  now matches any path component, gitignore-like, and a trailing `/` (`Generated/`) keeps it to
+  directories; the README states the rule. **Behaviour change**: a bare-name pattern now also
+  excludes directories of that name (`Legacy*` excludes `LegacyKit/…`, which it used to keep).
+- **A Swift operator pattern matches inside a larger expression.** SwiftParser leaves
+  `y = value as! Int` as one flat sequence, so `$X as! $T`, `$X + 1`, `$X ?? $Y`, `$X == nil`,
+  `$A = $B` and a ternary matched nothing inside an assignment, a longer chain of operators or
+  `try? a ?? b`, and said "No matches." Both the pattern and the searched file are now folded with
+  the precedence the compiler uses (`a + b * c` is `a + (b * c)`: `$X * $Y` matches `b * c`, and
+  `$X + $Y` matches the whole with `$Y` bound to `b * c`). Operators declared in the searched
+  files are folded with their declared precedence. An expression with an operator whose
+  precedence is still unknown is not folded on a guess: it is compared as written, the rest of
+  the file matches as usual, and the file is listed under `⚠ read with reservations` naming the
+  operator. On this repository `$X == nil` finds 56
+  instead of 40 and `$X ?? $Y` 319 instead of 271, every earlier match position still among them;
+  `try? $X` finds the same 124, of which 10 now show the whole expression the `try?` covers
+  (`try? x as? T`), as the compiler reads it.
+- Per-file result caches move to `search-v3` and `lint-v3`, since a cached result now also records
+  whether the file had syntax errors or an expression that could not be folded, and results
+  themselves change with folding.
 
 - **`api` left out part of the public surface, and `changed` stayed quiet about changes to it.**
   An omission there is a wrong answer, not a shorter one. Each of these is now read and compared:

@@ -19,18 +19,35 @@ public final class SourceParseCache: @unchecked Sendable {
 
     public init() {}
 
+    /// What reading a file gave: its tree, or why there is none.
+    public enum Read {
+        case parsed(SourceFileSyntax)
+        /// The file could not be opened.
+        case unreadable
+        /// The file is not UTF-8 text, so the parser cannot be given it.
+        case notUTF8
+    }
+
     /// The file's parsed tree — from the cache when the mtime is unchanged, otherwise parsed anew.
     public func tree(atPath path: String) -> SourceFileSyntax? {
+        guard case .parsed(let tree) = read(atPath: path) else { return nil }
+        return tree
+    }
+
+    /// The file's parsed tree, or the reason it could not be parsed — a file that was never read
+    /// must be named by its caller, not dropped from the answer.
+    public func read(atPath path: String) -> Read {
         let modified = (try? FileManager.default.attributesOfItem(atPath: path)[.modificationDate]) as? Date
         if let modified, let entry = lock.withLock({ entries[path] }), entry.modified == modified {
-            return entry.tree
+            return .parsed(entry.tree)
         }
-        guard let source = try? String(contentsOfFile: path, encoding: .utf8) else { return nil }
+        guard let data = FileManager.default.contents(atPath: path) else { return .unreadable }
+        guard let source = String(data: data, encoding: .utf8) else { return .notUTF8 }
         // Parsing happens outside the lock: it is expensive, and repeating it on a race is safer
         // than holding the lock.
         let tree = Parser.parse(source: source)
         if let modified { lock.withLock { entries[path] = Entry(modified: modified, tree: tree) } }
-        return tree
+        return .parsed(tree)
     }
 
     public var count: Int { lock.withLock { entries.count } }

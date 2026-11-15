@@ -21,7 +21,7 @@ public enum SourceBody {
     public static func declaration(atLine line: Int, inFile path: String, named: String? = nil) -> String? {
         guard let source = try? String(contentsOfFile: path, encoding: .utf8) else { return nil }
         let text = path.hasSuffix(".swift")
-            ? swiftDeclaration(atLine: line, inFile: path, source: source)
+            ? swiftDeclaration(atLine: line, inFile: path, source: source, named: named)
             : delimitedDeclaration(atLine: line, source: source)
         guard let text, let named else { return text }
         return declaresName(named, in: text) ? text : nil
@@ -50,33 +50,52 @@ public enum SourceBody {
         "no declaration of that name on the recorded line — the file has changed since it was indexed. "
         + "Rebuild the project or run `sextant index`."
 
-    /// Whether the extracted text declares that name — a word match on the first line, which is
-    /// where a declaration states what it is called.
+    /// Whether the extracted text declares that name — a word match on the line that states what
+    /// the declaration is called. Attributes on lines of their own (`@MainActor`, `@objc`) come
+    /// first in the text and are read past, up to the first line that is not an attribute.
     static func declaresName(_ name: String, in text: String) -> Bool {
-        guard let header = text.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false).first
-        else { return false }
-        return WordBoundary.contains(name, in: header)
+        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            if WordBoundary.contains(name, in: String(line)) { return true }
+            guard line.trimmingCharacters(in: .whitespaces).hasPrefix("@") else { return false }
+        }
+        return false
     }
 
-    private static func swiftDeclaration(atLine line: Int, inFile path: String, source: String) -> String? {
+    private static func swiftDeclaration(atLine line: Int, inFile path: String, source: String, named: String?) -> String? {
         let tree = Parser.parse(source: source)
         let converter = SourceLocationConverter(fileName: path, tree: tree)
-        var best: DeclSyntax?
-        find(in: Syntax(tree), targetLine: line, converter: converter, best: &best)
-        return best?.trimmedDescription
+        var candidates: [DeclSyntax] = []
+        find(in: Syntax(tree), targetLine: line, converter: converter, into: &candidates)
+        // The innermost declaration on that line; of those, one that declares the name asked for.
+        let ordered = candidates.sorted { $0.description.utf8.count < $1.description.utf8.count }
+        let named = named.flatMap { name in ordered.first { declaresName(name, in: $0.trimmedDescription) } }
+        return (named ?? ordered.first)?.trimmedDescription
     }
 
-    /// The declaration starting exactly on targetLine; if several do, the innermost one.
-    private static func find(in node: Syntax, targetLine: Int, converter: SourceLocationConverter, best: inout DeclSyntax?) {
+    /// Declarations whose head spans targetLine: from the first attribute to the keyword after the
+    /// attributes and modifiers. The index records the line of the name, which is below an
+    /// attribute written on a line of its own.
+    private static func find(in node: Syntax, targetLine: Int, converter: SourceLocationConverter,
+                             into candidates: inout [DeclSyntax]) {
         if let decl = node.as(DeclSyntax.self) {
             let startLine = converter.location(for: decl.positionAfterSkippingLeadingTrivia).line
-            if startLine == targetLine {
-                if best == nil || decl.description.utf8.count < best!.description.utf8.count { best = decl }
-            }
+            let keyword = introducer(of: decl)
+            let keywordLine = keyword.map { converter.location(for: $0.positionAfterSkippingLeadingTrivia).line } ?? startLine
+            if startLine <= targetLine, targetLine <= max(startLine, keywordLine) { candidates.append(decl) }
         }
         for child in node.children(viewMode: .sourceAccurate) {
-            find(in: child, targetLine: targetLine, converter: converter, best: &best)
+            find(in: child, targetLine: targetLine, converter: converter, into: &candidates)
         }
+    }
+
+    /// The first token of a declaration after its attributes and modifiers.
+    private static func introducer(of decl: DeclSyntax) -> TokenSyntax? {
+        let modifiers = decl.asProtocol(WithModifiersSyntax.self)?.modifiers
+        let attributes = decl.asProtocol(WithAttributesSyntax.self)?.attributes
+        if let last = modifiers?.lastToken(viewMode: .sourceAccurate) ?? attributes?.lastToken(viewMode: .sourceAccurate) {
+            return last.nextToken(viewMode: .sourceAccurate)
+        }
+        return decl.firstToken(viewMode: .sourceAccurate)
     }
 
     // MARK: - C family
