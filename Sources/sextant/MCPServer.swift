@@ -583,6 +583,7 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
             change.result.removed.forEach { lines.append("  − \($0.diffHeader)") }
             change.result.changed.forEach { lines.append("  ~ \($0.old.diffHeader)  →  \($0.new.diffHeader)") }
         }
+        lines += changes.partialReport
         // Named, not dropped: a model reading this must not conclude a file is unchanged when it
         // was never compared.
         if !changes.notDiffed.isEmpty {

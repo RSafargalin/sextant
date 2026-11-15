@@ -35,40 +35,82 @@ public enum ClangDeclarations {
 
     private static func declarations(of node: ClangNode, source: Data?,
                                      publicOnly: Bool, access: Access) -> [Declaration] {
-        // A namespace has no surface of its own, but what it holds does.
-        if node.kindName == "Namespace" {
+        // A namespace has no surface of its own, but what it holds does; so does an
+        // `extern "C" { … }` block, which only changes how its declarations link.
+        if node.kindName == "Namespace" || node.kindName == "LinkageSpec" {
             return declarations(of: node.children, source: source, publicOnly: publicOnly, access: access)
         }
         if publicOnly, !node.isPublic { return [] }
-        guard !node.spelling.isEmpty, let kind = listedKinds[node.kindName] else { return [] }
+        guard let kind = listedKinds[node.kindName], let name = name(of: node) else { return [] }
         return [Declaration(
             kind: kind,
             header: header(of: node, source: source),
             access: access,
-            members: declarations(of: node.children, source: source, publicOnly: publicOnly, access: access)
+            members: declarations(of: node.children, source: source, publicOnly: publicOnly, access: access),
+            name: kind == .initializer ? nil : name
         )]
+    }
+
+    /// The name a declaration is matched and filtered by: its spelling, and for an Objective-C
+    /// category the class it extends — a class extension (`@interface Foo ()`) has no spelling of
+    /// its own, and a category's members belong to the class, not to the category's label.
+    private static func name(of node: ClangNode) -> String? {
+        if node.kindName == "ObjCCategoryDecl" || node.kindName == "ObjCCategoryImplDecl" {
+            let extended = node.children.first { $0.kindName == "ObjCClassRef" }?.spelling ?? ""
+            return extended.isEmpty ? (node.spelling.isEmpty ? nil : node.spelling) : extended
+        }
+        return node.spelling.isEmpty ? nil : node.spelling
     }
 
     /// The declaration's signature.
     ///
     /// C and C++ spell it up to the body's brace: taking the first line instead would report a
-    /// template as `template <typename T>` and name no type at all. Objective-C needs both
-    /// bounds — `@implementation Foo` opens no brace of its own and is followed by its methods,
-    /// so the line ends it; a method written on one line does open a brace, and without that
-    /// bound its body would land in the signature and every edit to it would read as an API change.
+    /// template as `template <typename T>` and name no type at all. Objective-C needs more bounds
+    /// than the brace — `@implementation Foo` opens no brace of its own and is followed by its
+    /// methods — so there it ends at the first of: the brace, the first member, `@end`. A header
+    /// written over several lines (a protocol list, a method's keywords) is read whole, with its
+    /// comments and preprocessor lines left out.
     static func header(of node: ClangNode, source: Data?) -> String {
         let fallback = "\(listedKinds[node.kindName]?.rawValue ?? "") \(node.spelling)"
             .trimmingCharacters(in: .whitespaces)
         guard let source, node.startOffset < node.endOffset, node.endOffset <= source.count else { return fallback }
 
-        let text = String(decoding: source[node.startOffset..<node.endOffset], as: UTF8.self)
-        let signature = node.kindName.hasPrefix("ObjC")
-            ? text.prefix { $0 != "{" && !$0.isNewline }
-            : text.prefix { $0 != "{" }
+        var end = node.endOffset
+        if node.kindName.hasPrefix("ObjC") {
+            let firstMember = node.children
+                .filter { listedKinds[$0.kindName] != nil && $0.startOffset > node.startOffset }
+                .map(\.startOffset).min()
+            if let firstMember, firstMember < end { end = firstMember }
+            if let range = source[node.startOffset..<end].firstRange(of: Data("@end".utf8)) {
+                end = range.lowerBound
+            }
+        }
+        let text = String(decoding: source[node.startOffset..<end], as: UTF8.self)
+        let signature = withoutComments(String(text.prefix { $0 != "{" }))
         let collapsed = signature
             .split(whereSeparator: { $0.isWhitespace })
             .joined(separator: " ")
             .trimmingCharacters(in: CharacterSet(charactersIn: "; {"))
         return collapsed.isEmpty ? fallback : collapsed
+    }
+
+    /// Text without `//` and `/* */` comments and without preprocessor lines.
+    private static func withoutComments(_ text: String) -> String {
+        var result = "", index = text.startIndex
+        while index < text.endIndex {
+            let rest = text[index...]
+            if rest.hasPrefix("//") {
+                index = rest.firstIndex(where: \.isNewline) ?? text.endIndex
+            } else if rest.hasPrefix("/*") {
+                index = rest.range(of: "*/").map(\.upperBound) ?? text.endIndex
+                result.append(" ")
+            } else {
+                result.append(text[index])
+                index = text.index(after: index)
+            }
+        }
+        return result.split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("#") }
+            .joined(separator: "\n")
     }
 }

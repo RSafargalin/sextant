@@ -4,7 +4,7 @@ import Foundation
 /// A shared layer for `map` and `api`. It survives sessions and worktrees, since the key is a content hash.
 public enum DeclarationCache {
     public static func makeStore() -> PersistentCache<[Declaration]> {
-        PersistentCache<[Declaration]>(namespace: "declarations-v3")
+        PersistentCache<[Declaration]>(namespace: "declarations-v5")
     }
 
     public static func declarations(

@@ -98,6 +98,65 @@ Human-readable text output is not covered — parse `--json`, not prose.
 
 ### Fixed
 
+- **`api` left out part of the public surface, and `changed` stayed quiet about changes to it.**
+  An omission there is a wrong answer, not a shorter one. Each of these is now read and compared:
+  - **A property with a restricted setter was taken for private.** `private(set) public var x`,
+    `internal(set) public var`, a bare `private(set) var` — the setter's modifier was read as the
+    declaration's access level, so a public property vanished from `api`. The getter's level
+    decides now, and the setter's restriction is part of the signature
+    (`private(set) var x: Int`), so narrowing it is a change.
+  - **Text `api` printed two levels of nesting and no conformance-only extension.** A public type
+    nested inside a nested type, and its members, were missing from the text while `--json`
+    carried them; `extension Foo: Equatable {}` was missing from both. Every level is printed now,
+    and a conformance is listed — unless the files declare the extended type, or every protocol in
+    it, without making it public. On this repository: 924 → 1124 declarations in the text, the
+    same 1124 as `--json` (which gains the two conformances).
+  - **Two `extension Foo` blocks, or overloads, were compared as one key.** Changes inside the
+    second block were missed or attributed to the first. Declarations sharing a name are now
+    matched by identical signature (among identical blocks, by the members they share), then by
+    argument labels when that is unambiguous, then by shared members; only what is left is
+    reported as added or removed.
+  - **Parts of the contract were not in the compared signature**, so changing them read as "no
+    change": attributes (`@available`, `@discardableResult`, `@MainActor`, `@objc`, `@frozen`, …,
+    compared as a set, so reordering is not a change; optimisation hints such as `@inline` are
+    left out); a typealias's right-hand side; a property's or subscript's accessors (`{ get }`
+    against `{ get set }`, with their effects — observers and bodies are not part of it, and a
+    stored property shows none); `open` against `public`; `final`, `required`, `convenience`,
+    `mutating`, `nonisolated` and the other modifiers that change what a caller may do; `where`
+    on an initializer or subscript; an enum case's raw value; and `associatedtype` and `macro`
+    declarations, which were not extracted at all. A `deinit` stays out: nothing can call it.
+  - **A type whose header changed hid the changes to its members.** Its members are compared
+    whatever happened to the header.
+  - **A case under `#if` lost its condition** (and its attributes and doc summary) when the enum's
+    access was given to it, and a case list re-wrapped across lines (`case a, b` → two lines) read
+    as a change. Cases are compared one by one, each with its condition.
+  - **Objective-C, C and C++:** declarations inside `extern "C" { … }` and Objective-C class
+    extensions (`@interface Foo ()`) were dropped; a header written over several lines
+    (`@interface Foo : Base <P1,` / `P2>`, a method's keywords) was cut at the first newline. A
+    C-family file renamed in the range was read at its new path in the old revision, so all of it
+    looked added; it is read at its previous path, as Swift files already were. A change under a
+    preprocessor branch the build does not compile is invisible to clang: the file is now named as
+    compared only in part, with the lines.
+
+  **Visible changes in output** (`--json` only gains keys and values; no key changes meaning):
+  - headers carry more of the signature, in `api`, `changed` and `map` alike —
+    `var share: Double?` → `var share: Double? { get }`, `class ClangLibrary` →
+    `final class ClangLibrary`,
+    `typealias T` → `typealias T = Int`, ``case `private` `` → ``case `private` = 0``;
+  - in `changed`, an `open` declaration reads `open class A`, no longer `public class A`;
+  - `api` and `changed` list declarations they used to miss (above), and enum cases carry their
+    doc summaries;
+  - `api --json`: every declaration gains a `name` key, and `kind` can be `associatedtype` or
+    `macro`;
+  - `changed --json` gains `partiallyDiffed` (`[{file, reason}]`), and the text and the `changed`
+    MCP tool add `⚠ compared in part (N) — code the build does not compile changed:` with one line
+    per file;
+  - members of a type whose header changed are listed after it, and output with equal names is
+    ordered by header, so it no longer varies between runs.
+
+  The declaration caches move to new namespaces (`declarations-v5`, `drift-declarations-v2`), so
+  nothing extracted under the old rules is read as current.
+
 - **`--reindex --json` printed the build's progress into the JSON, and a failed rebuild answered
   from the old index.** With `--json` the progress of the rebuild now goes to stderr and stdout
   carries the JSON document alone. A rebuild that fails ends the command with exit `1` — what

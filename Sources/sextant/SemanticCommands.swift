@@ -390,6 +390,7 @@ func runChanged(arguments: [String]) -> Int32 {
         struct Report: Encodable {
             let files: [FileChanges]
             let notDiffed: [UnscannedFile]
+            let partiallyDiffed: [UnscannedFile]
         }
         printJSON(Report(
             files: changes.files.map { change in
@@ -400,7 +401,8 @@ func runChanged(arguments: [String]) -> Int32 {
                     changed: change.result.changed.map { ["old": $0.old.diffHeader, "new": $0.new.diffHeader] }
                 )
             },
-            notDiffed: changes.notDiffed
+            notDiffed: changes.notDiffed,
+            partiallyDiffed: changes.partiallyDiffed
         ))
         return 0
     }
@@ -412,6 +414,10 @@ func runChanged(arguments: [String]) -> Int32 {
         for declaration in change.result.added { print("  + \(declaration.diffHeader)") }
         for declaration in change.result.removed { print("  − \(declaration.diffHeader)") }
         for (old, new) in change.result.changed { print("  ~ \(old.diffHeader)  →  \(new.diffHeader)") }
+    }
+    if !changes.partiallyDiffed.isEmpty {
+        print("")
+        changes.partialReport.forEach { print($0) }
     }
     printNotDiffed(changes.notDiffed)
     return 0
