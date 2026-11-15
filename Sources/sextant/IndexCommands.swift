@@ -418,7 +418,7 @@ func runIndex(arguments: [String]) -> Int32 {
         print("▶ swift \(build.joined(separator: " ")): \(package.lastPathComponent)")
         let log = IndexBuild.buildLog(forRoot: rootPath)
         // Recorded before the build reads them: a file edited while it runs then reads as changed.
-        let sources = IndexSnapshot.sources(ofProject: rootPath)
+        let sources = captureSources(ofProject: rootPath)
         let status = runSwiftBuild(build, in: package, log: log)
         let built = IndexStoreLocator.storePaths(inBuildDirectory: scratch)
         let candidates = IndexStoreLocator.candidates(under: root)
@@ -483,7 +483,7 @@ func runIndex(arguments: [String]) -> Int32 {
                                                buildTests: testsBuilt)
     print("▶ umbrella build (\(packages.count) packages, one pass): swift \(build.joined(separator: " "))")
     let log = IndexBuild.buildLog(forRoot: rootPath)
-    let sources = IndexSnapshot.sources(ofProject: rootPath)
+    let sources = captureSources(ofProject: rootPath)
     let status = runSwiftBuild(build, in: umbrella, log: log)
     let umbrellaStore = IndexBuild.umbrellaStorePath(forRoot: rootPath)
     if let umbrellaStore {
@@ -502,6 +502,17 @@ func runIndex(arguments: [String]) -> Int32 {
     reportTestCoverage(ofStore: store, root: rootPath, arguments: arguments, isXcode: false)
     captureCompileDatabase(root: rootPath, stores: [store], buildLog: log)
     return 0
+}
+
+/// The sources as they are before a build, with a copy of every one git cannot give back later —
+/// what was dirty, or everything outside git — so that an answer over the store can still be
+/// mapped onto the sources once they change.
+func captureSources(ofProject rootPath: String) -> Result<SourceSnapshot, SourceSnapshot.CaptureFailure> {
+    let sources = IndexSnapshot.sources(ofProject: rootPath)
+    if case .success(let snapshot) = sources {
+        IndexedText.keepCopies(of: snapshot, projectRoot: rootPath)
+    }
+    return sources
 }
 
 /// Records what the store a build just left was built from, so that freshness can later be
@@ -524,6 +535,7 @@ func recordSnapshot(store: String, root: String, sources captured: Result<Source
                                                   toolchain: ToolchainIdentity.currentWithVersion()) else { return }
     do {
         try snapshot.save()
+        IndexedText.prune()
     } catch {
         reportError("⚠ sextant index: the snapshot of the sources could not be written (\(error)) — "
                     + "freshness will be judged by build time.")
@@ -561,6 +573,20 @@ private let indexMemo = IndexMemo()
 /// `quiet` подавляет сообщение об отсутствии стора: вызывающий сам объяснит, что именно
 /// потеряно. Две строки об одном и том же читаются как две разные проблемы.
 func openIndex(_ arguments: [String], label: String, listen: Bool = false, quiet: Bool = false) -> IndexStoreSet? {
+    openIndexReporting(arguments, label: label, listen: listen, quiet: quiet)?.set
+}
+
+/// The index every symbol command answers from: the opened stores, stated against the sources as
+/// they are now. The freshness report the label was printed from is the one the answer is mapped
+/// by, so the label and the answer cannot disagree.
+func openTranslatedIndex(_ arguments: [String], label: String) -> TranslatedIndex? {
+    guard let (set, report) = openIndexReporting(arguments, label: label) else { return nil }
+    return TranslatedIndex(set, drift: report.flatMap { IndexDrift(report: $0, projectRoot: projectRoot(in: arguments)) })
+}
+
+/// `openIndex`, together with the freshness report its label was printed from.
+func openIndexReporting(_ arguments: [String], label: String, listen: Bool = false,
+                        quiet: Bool = false) -> (set: IndexStoreSet, report: IndexFreshness.Report?)? {
     ensureFreshIndex(arguments)
     let (resolution, source) = resolveStores(in: arguments)
     let storePaths = resolution.chosen.map(\.path)
@@ -579,7 +605,8 @@ func openIndex(_ arguments: [String], label: String, listen: Bool = false, quiet
     }
     // Provenance on stderr — the single place that marks source and freshness, which is what
     // keeps the tool from being quietly wrong.
-    reportError(indexProvenance(resolution, source: source, arguments: arguments).summary)
+    let provenance = indexProvenance(resolution, source: source, arguments: arguments)
+    reportError(provenance.summary)
     // The decision itself, whenever there was one to make: how many stores were in reach, which
     // are being read, and what the others were left out for.
     if resolution.policy != nil || resolution.decidedByOwnStoreRule {
@@ -591,9 +618,10 @@ func openIndex(_ arguments: [String], label: String, listen: Bool = false, quiet
         .appendingPathComponent("Library/Caches/sextant/index-db").path
     let root = projectRoot(in: arguments)
     do {
-        return try indexMemo.set(forKey: "\(storePaths.joined(separator: ":"))|\(libraryPath)|\(listen)|\(root)") {
+        let set = try indexMemo.set(forKey: "\(storePaths.joined(separator: ":"))|\(libraryPath)|\(listen)|\(root)") {
             try IndexStoreSet(storePaths: storePaths, libraryPath: libraryPath, databaseRoot: databaseRoot, listenToUnitEvents: listen, projectRoot: root)
         }
+        return (set, provenance.report)
     } catch {
         reportError("sextant \(label): could not open the index: \(error)")
         return nil

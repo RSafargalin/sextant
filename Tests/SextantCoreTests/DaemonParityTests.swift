@@ -236,4 +236,25 @@ struct DaemonParityTests {
         #expect(!setDirect.errorOutput.contains("no store policy is set"), "\(setDirect)")
         #expect(setViaDaemon == setDirect)
     }
+
+    /// An answer over a stale index is mapped onto the current text per request, never from
+    /// anything the daemon kept: through it, the same edit gives the same unconfirmed position.
+    @Test("A stale answer is mapped the same way through the daemon", .timeLimit(.minutes(5)))
+    func staleAnswerParity() throws {
+        let binary = try #require(BuildProducts.sextantBinary(under: Self.packageRoot), "sextant is not built")
+        let sandbox = try Sandbox()
+        let project = try sandbox.package(named: "stale")
+        let use = project.appendingPathComponent("Sources/parity/use.swift")
+        try "func use() {\n    Kept().work()\n}\n".write(to: use, atomically: true, encoding: .utf8)
+        let index = try sextant(["index", "--project", project.path], in: project, sandbox: sandbox, daemon: false)
+        try #require(index.exitCode == 0, "\(index)")
+        let daemon = try Daemon(binary: binary, project: project, sandbox: sandbox)
+        defer { daemon.stop() }
+
+        try "// moved\nfunc use() {\n    _ = 1; Kept().work()\n}\n".write(to: use, atomically: true, encoding: .utf8)
+        let (viaDaemon, direct) = try bothWays(["refs", "work", "--full"], in: project, sandbox: sandbox)
+        #expect(daemon.answered("refs"), "the daemon never answered:\n\(daemon.text)")
+        #expect(direct.output.contains("Sources/parity/use.swift:2:12  [unconfirmed"), "\(direct)")
+        #expect(viaDaemon == direct)
+    }
 }

@@ -13,7 +13,38 @@ Human-readable text output is not covered — parse `--json`, not prose.
 
 ## [Unreleased]
 
+### Added
+
+- **An answer over a stale index is stated against the sources as they are now, and says exactly
+  where it cannot be.** When the index `sextant index` built is stale against its snapshot, every
+  symbol answer — `refs`, `defs`, `callers`, `callees`, `impls`, `supertypes`, `hierarchy`,
+  `context`, `blast`, `construct`, `body` and their MCP tools — passes through one layer that maps
+  each position in a changed file onto the current text by a line diff against the text the store
+  was built from. A position on a line the edit left intact is reported at its current line, as
+  confirmed; one on a line that was modified or deleted, or in a deleted file, is kept at the line
+  as indexed and marked `[unconfirmed]`, never dropped and never moved to a guess. Places in the
+  changed files where the name is now written that no index occurrence accounts for are listed
+  apart, as candidates the index does not confirm (a text match: same name, possibly another
+  symbol) and never added to a count — identifier tokens in Swift, so comments and string literals
+  do not match; a lexical identifier match outside comments and literals in Objective-C, C and
+  C++. When a changed Swift file's declarations changed (added, removed, signature) — or a C-family
+  header changed — the answer says that uses elsewhere may now resolve differently and names the
+  files; a body-only edit says nothing of the kind. `--json` only gains keys: `indexedLine` and
+  `unconfirmed` on a position, and a `staleness` object (`changedFiles`, `declarationsChanged`,
+  `candidates`, `candidateCount`, `candidateMatching`) on each hit of `refs`/`defs`/`callers`, on
+  `context` and on `blast` (which also gains `unconfirmedFiles`); for the commands whose JSON is a
+  plain array the note goes to stderr. On a fresh index, and for every store judged by build time,
+  output is byte-for-byte what it was. The text of a file clean in git at index time is read back
+  from the repository's objects; for a file dirty then (and for every source outside git, up to
+  64 MB in all) `sextant index` keeps a copy in `~/Library/Caches/sextant/index-snapshot-text/`,
+  addressed by its blob hash and pruned when no snapshot refers to it — never in the project.
+
 ### Fixed
+
+- **Positions in a file edited since indexing could be dropped as macro duplicates.** The check
+  that drops a second position a macro records on one line read the file as it is now at the
+  columns the index recorded for the old text, and could drop a real reference that had merely
+  moved. It now reads the text the positions were recorded in.
 
 - **`sextant index` found no index on a toolchain whose SwiftPM defaults to the Swift Build
   system (Swift 6.4).** That build system writes the store to

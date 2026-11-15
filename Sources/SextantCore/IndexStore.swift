@@ -97,6 +97,12 @@ public final class IndexStore {
 
     /// Symbols with the given name: the definition plus occurrences of the requested kind.
     public func lookup(name: String, query: SymbolQuery, limit: Int = 1000) -> [SymbolHit] {
+        lookup(name: name, query: query, limit: limit, indexedText: nil)
+    }
+
+    /// `lookup`, with the text each file was indexed from for files that changed since: the
+    /// positions are checked against the text they were recorded in.
+    func lookup(name: String, query: SymbolQuery, limit: Int, indexedText: ((String) -> [String]?)?) -> [SymbolHit] {
         let definitions = resolveOccurrences(forName: name)
 
         var definitionByUSR: [String: SymbolOccurrence] = [:]
@@ -146,7 +152,8 @@ public final class IndexStore {
             // A macro records the same reference twice — where it is written and where it was
             // expanded from — so the positions the source does not carry are dropped before
             // anything is counted.
-            let carried = ReferencePositions.verified(locations, name: definitionOccurrence.symbol.name)
+            let carried = ReferencePositions.verified(locations, name: definitionOccurrence.symbol.name,
+                                                      indexedText: indexedText)
             return SymbolHit(
                 name: definitionOccurrence.symbol.name,
                 usr: usr,
@@ -157,6 +164,23 @@ public final class IndexStore {
             )
         }
         .sorted { $0.usr < $1.usr }
+    }
+
+    /// Every position the index records for symbols with this name — definitions, declarations
+    /// and references alike.
+    func positions(forName name: String) -> [SourceLocation] {
+        var usrs = Set<String>()
+        for occurrence in resolveOccurrences(forName: name) where isInScope(occurrence.location) {
+            usrs.insert(occurrence.symbol.usr)
+        }
+        var result: [SourceLocation] = []
+        for usr in usrs.sorted() {
+            for occurrence in database.occurrences(ofUSR: usr, roles: [.definition, .declaration, .reference])
+            where isInScope(occurrence.location) {
+                result.append(SourceLocation(occurrence))
+            }
+        }
+        return result
     }
 
     /// Related symbols for a name (callees, implementations) through the index relations.

@@ -13,9 +13,15 @@ public struct BlastRadius: Sendable, Codable {
     /// How many distinct symbols share the name and were added together into these counts. The
     /// kind is the first one's. Text output states it; the JSON shape does not carry it.
     public var symbolCount = 1
+    /// Present only over an index that is stale against its snapshot.
+    public var staleness: Staleness?
+    /// Over a stale index, the affected files every occurrence in which is unconfirmed against the
+    /// current text (a deleted file, lines changed since indexing). nil otherwise.
+    public var unconfirmedFiles: [String]?
 
     private enum CodingKeys: String, CodingKey {
         case symbol, kind, definitions, referenceCount, callerCount, affectedFiles, implementations
+        case staleness, unconfirmedFiles
     }
 
     /// The line that says the radius is a sum over several symbols, or nil for a single one.
@@ -26,7 +32,7 @@ public struct BlastRadius: Sendable, Codable {
     }
 }
 
-public extension IndexStoreSet {
+public extension SemanticIndex {
     func blastRadius(forName name: String) -> BlastRadius? {
         // No cap: the counts and the file set are totals, and a capped lookup would present the
         // cap as the count and leave out every file past it.
@@ -48,7 +54,7 @@ public extension IndexStoreSet {
             referenceCount: referenceHits.reduce(0) { $0 + $1.totalReferences },
             callerCount: callerHits.reduce(0) { $0 + $1.totalReferences },
             affectedFiles: files.sorted(),
-            implementations: related(toName: name, query: .implementations).map { $0.name }
+            implementations: related(toName: name, query: .implementations, limit: 1000).map { $0.name }
         )
         radius.symbolCount = Set(referenceHits.map(\.usr) + callerHits.map(\.usr)).count
         return radius

@@ -115,8 +115,11 @@ public enum SymbolReport {
         // the text is withheld.
         var shifted = 0
         func located(_ location: SourceLocation, symbolName: String) -> String {
-            if !FileManager.default.fileExists(atPath: location.path) { vanished.insert(path(location.path)) }
             let position = style.showsColumns ? "\(location.line):\(location.column)" : "\(location.line)"
+            // An unconfirmed position is stated as the index recorded it; the current text at that
+            // line is someone else's, so no snippet is quoted.
+            guard location.isConfirmed else { return "\(path(location.path)):\(position)\(location.marker)" }
+            if !FileManager.default.fileExists(atPath: location.path) { vanished.insert(path(location.path)) }
             var text = ""
             if let line = snippet(location) {
                 if WordBoundary.contains(baseName(symbolName), in: line) {
@@ -161,10 +164,19 @@ public enum SymbolReport {
                 let label = query == .callers ? "calls" : "usages"
                 if style.compact {
                     // A histogram by file without snippets — exact, every occurrence is grouped.
-                    let histogram = ReferenceHistogram.byFile(hit.references) { path($0.path) }
-                    lines.append("\(style.level1)\(label): \(counted(hit)) in \(histogram.count) file(s)")
+                    // Unconfirmed positions are grouped apart: their numbers are lines as indexed,
+                    // and mixing them with current ones would put two coordinate systems in one list.
+                    let confirmed = hit.references.filter(\.isConfirmed)
+                    let unconfirmed = hit.references.filter { !$0.isConfirmed }
+                    let histogram = ReferenceHistogram.byFile(confirmed) { path($0.path) }
+                    let files = Set(hit.references.map { path($0.path) }).count
+                    lines.append("\(style.level1)\(label): \(counted(hit)) in \(files) file(s)")
                     for entry in histogram {
                         lines.append("\(style.level2)\(entry.file): \(entry.lines.map(String.init).joined(separator: ", "))")
+                    }
+                    for entry in ReferenceHistogram.byFile(unconfirmed, path: { path($0.path) }) {
+                        lines.append("\(style.level2)\(entry.file): \(entry.lines.map(String.init).joined(separator: ", "))"
+                                     + "  [unconfirmed — lines as indexed, changed since]")
                     }
                     if let hint = style.fullHint { lines.append("\(style.level2)\(hint)") }
                 } else {
@@ -179,6 +191,10 @@ public enum SymbolReport {
             }
             if style.separatesHits { lines.append("") }
         }
+
+        lines += staleness(hits.first?.staleness,
+                           locations: shown.flatMap { $0.references + [$0.definition].compactMap { $0 } },
+                           symbol: symbol, style: style, path: path)
 
         if shown.count < hits.count {
             let hidden = hits.count - shown.count
@@ -223,6 +239,7 @@ public enum SymbolReport {
         snippet: (SourceLocation) -> String?
     ) -> [String] {
         func located(_ location: SourceLocation) -> String {
+            guard location.isConfirmed else { return "\(path(location.path)):\(location.line)\(location.marker)" }
             let text = snippet(location).map { "  \($0)" } ?? ""
             return "\(path(location.path)):\(location.line)\(text)"
         }
@@ -240,7 +257,7 @@ public enum SymbolReport {
         if !context.callees.isEmpty {
             lines.append("\(style.level1)calls: \(context.callees.count)")
             for callee in context.callees.prefix(sampleLimit) {
-                lines.append("\(style.level2)→ \(callee.name) [\(callee.kind)]  \(path(callee.location.path)):\(callee.location.line)")
+                lines.append("\(style.level2)→ \(callee.name) [\(callee.kind)]  \(path(callee.location.path)):\(callee.location.line)\(callee.location.marker)")
             }
         }
         if !context.implementations.isEmpty {
@@ -249,7 +266,53 @@ public enum SymbolReport {
         if !context.supertypes.isEmpty {
             lines.append("\(style.level1)bases and protocols: " + context.supertypes.map { $0.name }.joined(separator: ", "))
         }
+        let shownCallees = context.callees.prefix(sampleLimit).map(\.location)
+        lines += staleness(context.staleness,
+                           locations: context.definitions + context.references + context.callers + shownCallees,
+                           symbol: context.name, style: style, path: path)
         return lines
+    }
+
+    /// The section an answer over a stale index ends with: what was mapped, what could not be
+    /// confirmed, where the name is written that the index does not know, and which changed files
+    /// changed declarations. Empty when there is no note, or nothing in it bears on this answer.
+    public static func staleness(_ note: Staleness?, locations: [SourceLocation], symbol: String,
+                                 style: Style, path: (String) -> String, extra: [String] = []) -> [String] {
+        guard let note else { return [] }
+        let mapped = locations.filter { location in
+            location.isConfirmed && location.indexedLine.map { $0 != location.line } == true
+        }.count
+        let unconfirmed = locations.filter { !$0.isConfirmed }.count
+        var body: [String] = extra.map { "\(style.level1)\($0)" }
+        if mapped > 0 {
+            body.append("\(style.level1)\(mapped) position(s) moved to their current lines "
+                        + "(the lines themselves are unchanged since indexing)")
+        }
+        if unconfirmed > 0 {
+            body.append("\(style.level1)\(unconfirmed) position(s) unconfirmed, marked [unconfirmed]: their line "
+                        + "changed or their file is gone since indexing — not verifiable against the current text")
+        }
+        if note.candidateCount > 0 {
+            body.append("\(style.level1)not in the index — '\(IndexDrift.baseName(symbol))' written in changed files "
+                        + "(text match only: same name, possibly another symbol; not counted above): \(note.candidateCount)")
+            for candidate in note.candidates {
+                let position = style.showsColumns ? "\(candidate.line):\(candidate.column)" : "\(candidate.line)"
+                body.append("\(style.level2)? \(path(candidate.path)):\(position)  \(candidate.text)")
+            }
+            if note.candidateCount > note.candidates.count {
+                body.append("\(style.level2)… \(note.candidateCount - note.candidates.count) more")
+            }
+        }
+        if !note.declarationsChanged.isEmpty {
+            let named = note.declarationsChanged.prefix(5).joined(separator: ", ")
+            let more = note.declarationsChanged.count > 5 ? " and \(note.declarationsChanged.count - 5) more" : ""
+            body.append("\(style.level1)declarations changed since indexing in \(named)\(more) — uses elsewhere may now "
+                        + "resolve to a different symbol (overloads, shadowing), which the index cannot show")
+        }
+        guard !body.isEmpty else { return [] }
+        let header = "\(style.headerPrefix)⚠ stale index: \(note.changedFiles.count) file(s) changed since it was built; "
+            + "positions are stated against the current text — run `sextant index` to refresh"
+        return [header] + body + (style.separatesHits ? [""] : [])
     }
 
     /// Degradation to textual occurrences when semantics find nothing. It is marked explicitly as

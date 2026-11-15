@@ -61,15 +61,48 @@ func runMCP(arguments: [String]) -> Int32 {
         }
 
         let opened = index
-        let context = makeToolContext(project: project, index: index, provenance: {
+        // One freshness report per call: the label appended to the answer and the mapping of the
+        // answer onto the current text come from the same one.
+        let provenance = CallProvenance {
             guard opened != nil else { return nil }
             let (resolution, source) = resolveStores(in: arguments)
             guard !resolution.chosen.isEmpty else { return nil }
-            return indexProvenance(resolution, source: source, arguments: arguments).summary
-        }, indexProblem: { indexUnavailableReason(arguments) }, warnedInvalidConfig: &configWarned)
+            return indexProvenance(resolution, source: source, arguments: arguments)
+        }
+        let translated = index.map { set in
+            LazyTranslatedIndex { TranslatedIndex(set, drift: provenance.value?.report.flatMap { IndexDrift(report: $0, projectRoot: project) }) }
+        }
+        let context = makeToolContext(project: project, index: index, translated: translated,
+                                      provenance: { provenance.value?.summary },
+                                      indexProblem: { indexUnavailableReason(arguments) }, warnedInvalidConfig: &configWarned)
         handleMCP(method: method, id: id, params: message["params"] as? [String: Any] ?? [:], context: context)
     }
     return 0
+}
+
+/// Computed once, on first use, within one call.
+private final class CallProvenance {
+    private let make: () -> IndexProvenance?
+    private var computed = false
+    private var stored: IndexProvenance?
+
+    init(_ make: @escaping () -> IndexProvenance?) { self.make = make }
+
+    var value: IndexProvenance? {
+        if !computed { stored = make(); computed = true }
+        return stored
+    }
+}
+
+/// The translated index of one call, built on first use: a tool that does not read the index
+/// does not pay for the freshness report.
+private final class LazyTranslatedIndex {
+    private let make: () -> TranslatedIndex
+    private lazy var stored: TranslatedIndex = make()
+
+    init(_ make: @escaping () -> TranslatedIndex) { self.make = make }
+
+    var value: TranslatedIndex { stored }
 }
 
 /// Per-call environment: the root with `scope` from the config applied, the config itself, the
@@ -82,6 +115,8 @@ private struct ToolContext {
     let scopeProblem: String?
     let config: ProjectConfig?
     let index: IndexStoreSet?
+    /// The index the symbol tools answer from: the same stores, stated against the current text.
+    let translated: LazyTranslatedIndex?
     let reader: SourceLineReader
     /// The trust label the CLI prints on stderr. An MCP client logs stderr at best, so without
     /// this the agent — the main consumer — never sees where the answer came from or that the
@@ -94,7 +129,8 @@ private struct ToolContext {
     let indexProblem: () -> String
 }
 
-private func makeToolContext(project: String, index: IndexStoreSet?, provenance: @escaping () -> String?,
+private func makeToolContext(project: String, index: IndexStoreSet?, translated: LazyTranslatedIndex?,
+                             provenance: @escaping () -> String?,
                              indexProblem: @escaping () -> String,
                              warnedInvalidConfig: inout Bool) -> ToolContext {
     var config: ProjectConfig?
@@ -130,7 +166,8 @@ private func makeToolContext(project: String, index: IndexStoreSet?, provenance:
     SwiftSources.setExclusions(config?.exclude ?? [])
 
     return ToolContext(project: scoped, projectRoot: project, scopeProblem: scopeProblem,
-                       config: config, index: index, reader: SourceLineReader(), provenance: provenance,
+                       config: config, index: index, translated: translated, reader: SourceLineReader(),
+                       provenance: provenance,
                        indexProblem: indexProblem)
 }
 
@@ -292,68 +329,89 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
     switch name {
     case "context":
         guard let symbol = symbol() else { return ("the symbol parameter is required", true) }
-        return contextText(symbol, index, reader: context.reader, problem: context.indexProblem)
+        return contextText(symbol, context.translated?.value, reader: context.reader, problem: context.indexProblem)
 
     case "body":
         guard let symbol = symbol() else { return ("the symbol parameter is required", true) }
-        guard let set = index else { return (context.indexProblem(), true) }
-        let definitions = set.lookup(name: symbol, query: .definitions).compactMap { $0.definition }
+        guard let set = context.translated?.value else { return (context.indexProblem(), true) }
+        let hits = set.lookup(name: symbol, query: .definitions)
+        let definitions = hits.compactMap { $0.definition }
         guard !definitions.isEmpty else { return ("definition not found: \(symbol) (symbol outside the index? try find_references)", true) }
-        let bodies = SourceBody.bodies(of: symbol, at: definitions)
+        let bodies = SourceBody.bodies(of: symbol, at: definitions.filter(\.isConfirmed))
+        let staleness = SymbolReport.staleness(
+            hits.first?.staleness, locations: definitions, symbol: symbol, style: .mcp, path: shorten,
+            extra: definitions.filter { !$0.isConfirmed }.map {
+                "definition at \(shorten($0.path)):\($0.line)\($0.marker) — not extracted"
+            })
         guard !bodies.isEmpty else {
-            return ("could not extract the body of '\(symbol)': \(SourceBody.unextractableReason)", true)
+            guard !staleness.isEmpty else {
+                return ("could not extract the body of '\(symbol)': \(SourceBody.unextractableReason)", true)
+            }
+            return ((["could not extract the body of '\(symbol)' from the current text"] + staleness).joined(separator: "\n"), false)
         }
-        return (bodies.map { "── \(shorten($0.file)):\($0.line)\n\($0.text)" }.joined(separator: "\n\n"), false)
+        return ((bodies.map { "── \(shorten($0.file)):\($0.line)\n\($0.text)" } + (staleness.isEmpty ? [] : [staleness.joined(separator: "\n")]))
+                    .joined(separator: "\n\n"), false)
 
     case "blast_radius":
         guard let symbol = symbol() else { return ("the symbol parameter is required", true) }
-        guard let set = index else { return (context.indexProblem(), true) }
+        guard let set = context.translated?.value else { return (context.indexProblem(), true) }
         guard let radius = set.blastRadius(forName: symbol) else { return ("symbol not found: \(symbol)", true) }
         var lines = ["blast radius: \(radius.symbol) [\(radius.kind)]",
                      "touches: \(radius.affectedFiles.count) files · \(radius.referenceCount) usages · \(radius.callerCount) calls"]
         if let note = radius.mergeNote { lines.append(note) }
         if !radius.implementations.isEmpty { lines.append("implementations: " + radius.implementations.joined(separator: ", ")) }
-        radius.affectedFiles.forEach { lines.append("  \(shorten($0))") }
+        let unconfirmed = Set(radius.unconfirmedFiles ?? [])
+        radius.affectedFiles.forEach {
+            lines.append("  \(shorten($0))\(unconfirmed.contains($0) ? "  [unconfirmed: nothing recorded here can be confirmed against the current text]" : "")")
+        }
+        lines += SymbolReport.staleness(radius.staleness, locations: radius.definitions, symbol: symbol, style: .mcp, path: shorten,
+                                        extra: unconfirmed.isEmpty ? [] : ["\(unconfirmed.count) affected file(s) hold only unconfirmed occurrences, marked [unconfirmed]"])
         return (lines.joined(separator: "\n"), false)
 
     case "who_defines":
-        return lookupText(symbol(), index, query: .definitions, project: context.project, reader: context.reader, problem: context.indexProblem)
+        return lookupText(symbol(), context.translated?.value, query: .definitions, project: context.project, reader: context.reader, problem: context.indexProblem)
     case "find_references":
-        return lookupText(symbol(), index, query: .references, project: context.project, reader: context.reader, problem: context.indexProblem)
+        return lookupText(symbol(), context.translated?.value, query: .references, project: context.project, reader: context.reader, problem: context.indexProblem)
     case "find_callers":
-        return lookupText(symbol(), index, query: .callers, project: context.project, reader: context.reader, problem: context.indexProblem)
+        return lookupText(symbol(), context.translated?.value, query: .callers, project: context.project, reader: context.reader, problem: context.indexProblem)
 
     case "list_implementations":
         guard let symbol = symbol() else { return ("the symbol parameter is required", true) }
-        guard let set = index else { return (context.indexProblem(), true) }
+        guard let set = context.translated?.value else { return (context.indexProblem(), true) }
         // "No implementations" is a statement about a symbol that exists. For one the index has
         // never heard of, it is a made-up answer — the other six symbol tools say so.
         guard !set.resolveSymbols(forName: symbol).isEmpty else { return ("symbol not found: \(symbol)", true) }
         let related = set.related(toName: symbol, query: .implementations, limit: .max)
-        guard !related.isEmpty else { return ("no implementations found: \(symbol)", false) }
+        let staleness = SymbolReport.staleness(set.staleness(forName: symbol, query: .references),
+                                               locations: related.map(\.location), symbol: symbol, style: .mcp, path: shorten)
+        guard !related.isEmpty else {
+            return ((["no implementations found: \(symbol)"] + staleness).joined(separator: "\n"), false)
+        }
         let shownLimit = 1000
-        var lines = related.prefix(shownLimit).map { "\($0.name) [\($0.kind)]  \(shorten($0.location.path)):\($0.location.line)" }
+        var lines = related.prefix(shownLimit).map { "\($0.name) [\($0.kind)]  \(shorten($0.location.path)):\($0.location.line)\($0.location.marker)" }
         if related.count > shownLimit { lines.append("… (first \(shownLimit) of \(related.count) shown)") }
-        return (lines.joined(separator: "\n"), false)
+        return ((lines + staleness).joined(separator: "\n"), false)
 
     case "call_hierarchy":
         guard let symbol = symbol() else { return ("the symbol parameter is required", true) }
-        guard let set = index else { return (context.indexProblem(), true) }
+        guard let set = context.translated?.value else { return (context.indexProblem(), true) }
         let direction: CallDirection = (args["direction"] as? String) == "callers" ? .callers : .callees
         let depth = max(1, (args["depth"] as? Int) ?? 3)
         let roots = set.resolveSymbols(forName: symbol)
         guard !roots.isEmpty else { return ("symbol not found: \(symbol)", true) }
         var visited = Set<String>()
         var lines: [String] = []
+        var positions: [SourceLocation] = []
         // As in the CLI: where the symbol is defined and where the call was written are two facts,
         // and the answer states which is which.
         func walk(_ usr: String, _ label: String, _ location: SourceLocation, _ callSite: SourceLocation?,
                   _ definitionKnown: Bool, _ remaining: Int, _ indent: Int) {
-            var line = String(repeating: "  ", count: indent) + "\(label)  \(shorten(location.path)):\(location.line)"
+            positions += [location] + [callSite].compactMap { $0 }
+            var line = String(repeating: "  ", count: indent) + "\(label)  \(shorten(location.path)):\(location.line)\(location.marker)"
             if !definitionKnown {
                 line += " — that is the call site; the index has no definition for it (external or system symbol)"
             } else if let callSite {
-                line += "  · called at \(shorten(callSite.path)):\(callSite.line)"
+                line += "  · called at \(shorten(callSite.path)):\(callSite.line)\(callSite.marker)"
             }
             lines.append(line)
             guard remaining > 0, visited.insert(usr).inserted else { return }
@@ -367,6 +425,8 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
             }
         }
         for root in roots { walk(root.usr, "\(root.name) [\(root.kind)]", root.location, nil, true, depth, 0) }
+        lines += SymbolReport.staleness(set.staleness(forName: symbol, query: .references), locations: positions,
+                                        symbol: symbol, style: .mcp, path: shorten)
         return (lines.joined(separator: "\n"), false)
 
     case "repo_map":
@@ -545,7 +605,7 @@ private func repoMapText(budget requested: Int?, context: ToolContext) -> String
 }
 
 /// Symbol summary text (for the `context` tool and the `sextant://symbol/{name}` resource).
-private func contextText(_ symbol: String, _ index: IndexStoreSet?, reader: SourceLineReader,
+private func contextText(_ symbol: String, _ index: TranslatedIndex?, reader: SourceLineReader,
                          problem: () -> String) -> (String, Bool) {
     guard let set = index else { return (problem(), true) }
     guard let context = set.context(forName: symbol) else { return ("symbol not found: \(symbol)", true) }
@@ -571,7 +631,7 @@ private func readResource(uri: String, context: ToolContext) -> (text: String, o
         let raw = String(uri.dropFirst(prefix.count))
         let name = raw.removingPercentEncoding ?? raw
         guard !name.isEmpty else { return ("empty symbol name", false) }
-        let (text, isError) = contextText(name, context.index, reader: context.reader, problem: context.indexProblem)
+        let (text, isError) = contextText(name, context.translated?.value, reader: context.reader, problem: context.indexProblem)
         return (text, !isError)
     }
     return ("unknown resource: \(uri)", false)
@@ -588,7 +648,7 @@ private func textualFallback(_ symbol: String, project: String) -> (String, Bool
     return (lines.joined(separator: "\n"), false)
 }
 
-private func lookupText(_ symbol: String?, _ index: IndexStoreSet?, query: SymbolQuery, project: String,
+private func lookupText(_ symbol: String?, _ index: TranslatedIndex?, query: SymbolQuery, project: String,
                         reader: SourceLineReader, problem: () -> String) -> (String, Bool) {
     guard let symbol, !symbol.isEmpty else { return ("the symbol parameter is required", true) }
     guard let set = index else { return (problem(), true) }

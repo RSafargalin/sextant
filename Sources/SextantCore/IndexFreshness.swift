@@ -49,6 +49,10 @@ public enum IndexFreshness {
         public let testsSkipped: Bool
         /// Why the snapshot basis was not used although a snapshot exists.
         public let snapshotProblem: String?
+        /// On the snapshot basis, for each changed file that existed when the store was built, the
+        /// blob hash of the content it was built from — what `IndexDrift` reads the indexed text
+        /// by. A changed file absent here did not exist then.
+        public var indexedContent: [String: String] = [:]
 
         public init(state: State, basis: Basis, changedFiles: [String] = [], changedManifests: [String] = [],
                     toolchain: IndexSnapshot.ToolchainChange? = nil, failedBuildStatus: Int32? = nil,
@@ -162,11 +166,15 @@ public enum IndexFreshness {
                 let manifests = Set(differences.flatMap(\.changedManifests)).sorted()
                 let toolchainChange = differences.compactMap(\.toolchain).first
                 let stale = !changed.isEmpty || !manifests.isEmpty || toolchainChange != nil || failed != nil
-                return Report(state: stale ? .stale : .fresh, basis: .snapshot, changedFiles: changed,
-                              changedManifests: manifests, toolchain: toolchainChange,
-                              failedBuildStatus: failed?.build.exitStatus,
-                              filesWithErrors: failed?.build.filesWithErrors ?? [],
-                              testsSkipped: snapshots.contains { !$0.build.testsBuilt })
+                var report = Report(state: stale ? .stale : .fresh, basis: .snapshot, changedFiles: changed,
+                                    changedManifests: manifests, toolchain: toolchainChange,
+                                    failedBuildStatus: failed?.build.exitStatus,
+                                    filesWithErrors: failed?.build.filesWithErrors ?? [],
+                                    testsSkipped: snapshots.contains { !$0.build.testsBuilt })
+                for difference in differences {
+                    report.indexedContent.merge(difference.indexedContent) { first, _ in first }
+                }
+                return report
             }
         }
 

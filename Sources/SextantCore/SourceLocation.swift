@@ -6,6 +6,13 @@ public struct SourceLocation: Hashable, Sendable, Codable {
     public let line: Int
     public let column: Int
     public let isDefinition: Bool
+    /// Set only when the file changed since the index was built and this position was mapped onto
+    /// its current text: the line the index recorded. `line` is then the line it is on now.
+    public var indexedLine: Int?
+    /// Set when the position cannot be confirmed against the current text — `line-changed` (the
+    /// line was modified or deleted since indexing), `file-deleted`, or `no-indexed-text` (the
+    /// text the index was built from is not available). `line` is then the line as indexed.
+    public var unconfirmed: String?
 
     init(_ occurrence: SymbolOccurrence) {
         self.path = occurrence.location.path
@@ -14,11 +21,32 @@ public struct SourceLocation: Hashable, Sendable, Codable {
         self.isDefinition = occurrence.roles.contains(.definition)
     }
 
-    init(path: String, line: Int, column: Int, isDefinition: Bool) {
+    init(path: String, line: Int, column: Int, isDefinition: Bool,
+         indexedLine: Int? = nil, unconfirmed: String? = nil) {
         self.path = path
         self.line = line
         self.column = column
         self.isDefinition = isDefinition
+        self.indexedLine = indexedLine
+        self.unconfirmed = unconfirmed
+    }
+
+    /// Whether the position stands against the current text: everything but an unconfirmed one.
+    public var isConfirmed: Bool { unconfirmed == nil }
+
+    /// The text marker an answer prints after an unconfirmed position; empty for a confirmed one.
+    public var marker: String {
+        guard let unconfirmed else { return "" }
+        return "  [unconfirmed: \(Self.reasonText(unconfirmed))]"
+    }
+
+    /// An unconfirmed reason in words.
+    public static func reasonText(_ reason: String) -> String {
+        switch reason {
+        case IndexDrift.Reason.lineChanged: return "line changed since indexing, line number as indexed"
+        case IndexDrift.Reason.fileDeleted: return "file deleted since indexing"
+        default: return "file changed since indexing and its indexed text is unavailable, line number as indexed"
+        }
     }
 
     /// Deterministic ordering: path, then line, then column.
@@ -67,6 +95,9 @@ public struct SymbolHit: Sendable, Codable {
     /// when nothing was dropped; larger when it was, so the answer can say so instead of
     /// presenting the cap as the total.
     public let totalReferences: Int
+    /// Present only over an index that is stale against its snapshot: what changed, and text
+    /// matches of the name the index does not confirm. Every hit of one answer carries the same note.
+    public var staleness: Staleness?
 
     public init(name: String, usr: String, kind: String, definition: SourceLocation?,
                 references: [SourceLocation], totalReferences: Int? = nil) {
@@ -86,5 +117,6 @@ public struct SymbolHit: Sendable, Codable {
         definition = try container.decodeIfPresent(SourceLocation.self, forKey: .definition)
         references = try container.decode([SourceLocation].self, forKey: .references)
         totalReferences = try container.decodeIfPresent(Int.self, forKey: .totalReferences) ?? references.count
+        staleness = try container.decodeIfPresent(Staleness.self, forKey: .staleness)
     }
 }

@@ -8,7 +8,7 @@ breaking something invisible.
 ## Build and verify
 
 ```bash
-swift build && swift test          # 441 tests
+swift build && swift test          # 475 tests
 make ci                            # build + test + self-lint — run this before committing
 swift test --filter "<suite name>" # one suite
 ```
@@ -87,6 +87,18 @@ wrong answer rather than a crash.
   Selecting or judging a store by directory mtime is the specific bug that made semantic queries
   go blind; if you need a freshness signal, call this layer. Nothing about freshness may be
   memoised across requests in `serve` or `mcp`.
+- **`TranslatedIndex`** is the only place a symbol answer is stated against the current text. Every
+  index-backed command and MCP tool opens it (`openTranslatedIndex`, or the per-call one in
+  `mcp`); none reads `IndexStoreSet` for positions directly. Over an index stale against its
+  snapshot it consumes the report `IndexFreshness` gave — it never judges freshness again — and
+  through `IndexDrift` maps each position in a changed file onto the current text by a line diff
+  against the indexed text (git's object for a file clean at index time, otherwise the copy
+  `sextant index` keeps in `~/Library/Caches/sextant/index-snapshot-text/`), marks what cannot be
+  mapped `unconfirmed` (never drops it), lists text matches the index does not confirm as
+  candidates (never counted), and notes changed declarations. `ReferencePositions.verified` runs
+  before the mapping, against the indexed text. On a fresh index, or on the build-time basis, it is
+  a pass-through, and the output must stay byte-for-byte what it was — `StaleAnswerTests` and the
+  JSON-key test in `IndexDriftTests` guard that.
 - **`StoreSelection.resolve`** is the only place that decides which stores answer: the rule that a
   store `sextant index` built goes first when no policy is set, then the configuration filter,
   then the policy. Callers print `explanation(of:)`; they do not re-derive the decision.

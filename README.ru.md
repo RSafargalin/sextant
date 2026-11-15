@@ -242,6 +242,49 @@ sextant store use coverage    # тот, который собран из бол�
 Сравнение содержимого стоит двух процессов `git` на запрос (около 16 мс на этом репозитории против
 около 8,4 мс у проверки по времени сборки).
 
+На основании снимка устаревший индекс всё равно отвечает настолько верно, насколько может, и
+говорит, где не может. Каждый ответ о символе — `refs`, `defs`, `callers`, `callees`, `impls`,
+`supertypes`, `hierarchy`, `context`, `blast`, `construct`, `body` и их MCP-инструменты — переносит
+каждую позицию в изменённом файле на текущий текст построчным диффом против текста, из которого
+собран стор: позиция на строке, которую правка не тронула, называется на её текущей строке; позиция
+на изменённой или удалённой строке, или в удалённом файле, остаётся на строке, как она
+проиндексирована, с пометкой `[unconfirmed]` — её не выбрасывают и не переносят наугад. Если имя
+теперь написано в изменённом файле там, где этого не объясняет ни одно вхождение из индекса, место
+перечисляется отдельно как кандидат, которого индекс не подтверждает, и никогда не входит в счёт:
+
+```
+── work()  [instanceMethod]
+   def: Sources/snap/Kept.swift:3:17  public func work() {}
+   usages: 2
+     • Sources/snap/Use.swift:5:10  kept.work()
+     • Sources/snap/Use.swift:7:12  [unconfirmed: line changed since indexing, line number as indexed]
+
+── ⚠ stale index: 2 file(s) changed since it was built; positions are stated against the current text — run `sextant index` to refresh
+   1 position(s) moved to their current lines (the lines themselves are unchanged since indexing)
+   1 position(s) unconfirmed, marked [unconfirmed]: their line changed or their file is gone since indexing — not verifiable against the current text
+   not in the index — 'work' written in changed files (text match only: same name, possibly another symbol; not counted above): 3
+     ? Sources/snap/New.swift:1:23  func fresh() { Kept().work() }
+     ? Sources/snap/Use.swift:9:12  Kept().work(); Kept().work()
+     ? Sources/snap/Use.swift:9:27  Kept().work(); Kept().work()
+   declarations changed since indexing in Sources/snap/New.swift — uses elsewhere may now resolve to a different symbol (overloads, shadowing), which the index cannot show
+```
+
+Кандидаты — это токены-идентификаторы в Swift (комментарий или строковый литерал не совпадает) и
+лексическое совпадение идентификатора вне комментариев и литералов в Objective-C, C и C++. Заметка
+об изменившихся объявлениях появляется, когда в изменённом Swift-файле объявление добавлено, удалено
+или сменило сигнатуру, или когда изменился заголовок C-семейства; правка внутри тел её не вызывает.
+`--json` приобретает `indexedLine` и `unconfirmed` у позиции и объект `staleness` у каждого
+результата (у `context` и `blast` тоже); больше ничего не меняется, и на свежем индексе вывод байт в
+байт такой же, как без этого. Текст, из которого файл проиндексирован, берётся из объектов git для
+файла, чистого на момент индексации; для грязного (и для каждого исходника вне git) `sextant index`
+хранит копию в `~/Library/Caches/sextant/index-snapshot-text/`. Сторы, которые судят по времени
+сборки, сохраняют простую метку: без снимка нет проиндексированного текста, против которого
+переносить.
+
+Замерено на этом репозитории (release-сборка, медиана из 7): свежий индекс стоит столько же, сколько
+раньше; с 1 изменённым файлом запрос дороже до ~90 мс, с 10 — на ~100 мс: один `git cat-file --batch`
+за проиндексированными текстами и разбор изменённых файлов, где встречается имя.
+
 ## Установка
 
 Три пути; Swift-тулчейн нужен только третьему.

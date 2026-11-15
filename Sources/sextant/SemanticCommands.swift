@@ -139,12 +139,12 @@ func runSemantic(_ query: SymbolQuery, arguments: [String]) -> Int32 {
         reportError("sextant: expected <symbol>, for example sextant refs MyType")
         return 2
     }
-    guard let set = openIndex(arguments, label: "query") else { return 1 }
-    let ordered = SymbolReport.orderedByUsage(set.lookup(name: symbol, query: query))
+    guard let index = openTranslatedIndex(arguments, label: "query") else { return 1 }
+    let ordered = SymbolReport.orderedByUsage(index.lookup(name: symbol, query: query))
 
     crossCheck(symbol: symbol, query: query, hits: ordered, arguments: arguments)
 
-    if ordered.isEmpty { return degradeToTextual(symbol: symbol, arguments: arguments, index: set) }
+    if ordered.isEmpty { return degradeToTextual(symbol: symbol, arguments: arguments, index: index.base) }
     if arguments.contains("--json") { printJSON(ordered); return 0 }
 
     let fullPaths = arguments.contains("--full-paths")
@@ -174,9 +174,9 @@ func runContext(arguments: [String]) -> Int32 {
         reportError("sextant context: expected <symbol>, for example sextant context MyType")
         return 2
     }
-    guard let set = openIndex(arguments, label: "context") else { return 1 }
+    guard let index = openTranslatedIndex(arguments, label: "context") else { return 1 }
     let sampleLimit = max(1, optionValue("--limit", in: arguments).flatMap(Int.init) ?? 10)
-    guard let context = set.context(forName: symbol, sampleLimit: sampleLimit) else {
+    guard let context = index.context(forName: symbol, sampleLimit: sampleLimit) else {
         if arguments.contains("--json") { printNotFoundJSON(symbol: symbol, command: "context"); return 0 }
         print("Symbol '\(symbol)' not found in the index.")
         return 0
@@ -202,8 +202,8 @@ func runBlast(arguments: [String]) -> Int32 {
         reportError("sextant blast: expected <symbol>, for example sextant blast MyRepository")
         return 2
     }
-    guard let set = openIndex(arguments, label: "blast") else { return 1 }
-    guard let radius = set.blastRadius(forName: symbol) else {
+    guard let index = openTranslatedIndex(arguments, label: "blast") else { return 1 }
+    guard let radius = index.blastRadius(forName: symbol) else {
         if arguments.contains("--json") { printNotFoundJSON(symbol: symbol, command: "blast"); return 0 }
         print("Symbol '\(symbol)' not found in the index.")
         return 0
@@ -216,7 +216,14 @@ func runBlast(arguments: [String]) -> Int32 {
     if !radius.implementations.isEmpty {
         print("   implementations (also affected): \(radius.implementations.joined(separator: ", "))")
     }
-    for file in radius.affectedFiles { print("     \(shorten(file))") }
+    let unconfirmed = Set(radius.unconfirmedFiles ?? [])
+    for file in radius.affectedFiles {
+        print("     \(shorten(file))\(unconfirmed.contains(file) ? "  [unconfirmed: nothing recorded here can be confirmed against the current text]" : "")")
+    }
+    SymbolReport.staleness(radius.staleness, locations: radius.definitions, symbol: symbol,
+                           style: .cli(compact: true, referenceLimit: 40), path: shorten,
+                           extra: unconfirmed.isEmpty ? [] : ["\(unconfirmed.count) affected file(s) hold only unconfirmed occurrences, marked [unconfirmed]"])
+        .forEach { print($0) }
     return 0
 }
 
@@ -227,20 +234,39 @@ func runBody(arguments: [String]) -> Int32 {
         reportError("sextant body: expected <symbol>, for example sextant body myFunction")
         return 2
     }
-    guard let set = openIndex(arguments, label: "body") else { return 1 }
+    guard let index = openTranslatedIndex(arguments, label: "body") else { return 1 }
     let json = arguments.contains("--json")
     let limit = max(1, optionValue("--limit", in: arguments).flatMap(Int.init) ?? 10)
-    let definitions = set.lookup(name: symbol, query: .definitions).compactMap { $0.definition }.prefix(limit)
+    let hits = index.lookup(name: symbol, query: .definitions)
+    let definitions = hits.compactMap { $0.definition }.prefix(limit)
 
-    let bodies = SourceBody.bodies(of: symbol, at: Array(definitions))
+    // A definition whose line changed since indexing has no confirmed place to extract from; it is
+    // named in the staleness section rather than read from whatever the line holds now.
+    let bodies = SourceBody.bodies(of: symbol, at: definitions.filter(\.isConfirmed))
+    let staleness = SymbolReport.staleness(
+        hits.first?.staleness, locations: Array(definitions), symbol: symbol,
+        style: .cli(compact: true, referenceLimit: limit), path: shorten,
+        extra: definitions.filter { !$0.isConfirmed }.map {
+            "definition at \(shorten($0.path)):\($0.line)\($0.marker) — not extracted"
+        })
 
     // The JSON branch comes first: a --json consumer gets [] for a missing symbol, not prose.
-    if json { printJSON(bodies); return 0 }
-    guard !definitions.isEmpty else { print("Definition of '\(symbol)' not found (symbol outside the index? try `refs \(symbol)`)."); return 0 }
-    guard !bodies.isEmpty else {
-        print("Could not extract the body of '\(symbol)': \(SourceBody.unextractableReason)")
+    if json {
+        printJSON(bodies)
+        staleness.forEach(reportError)
         return 0
     }
+    guard !definitions.isEmpty else { print("Definition of '\(symbol)' not found (symbol outside the index? try `refs \(symbol)`)."); return 0 }
+    guard !bodies.isEmpty else {
+        if staleness.isEmpty {
+            print("Could not extract the body of '\(symbol)': \(SourceBody.unextractableReason)")
+        } else {
+            print("Could not extract the body of '\(symbol)' from the current text.")
+            staleness.forEach { print($0) }
+        }
+        return 0
+    }
+    defer { staleness.forEach { print($0) } }
     // Surrounding lines, on request. Measured on someone else's tool: 18.4 % of symbol queries were
     // followed by a plain read of the same file, and in four fifths of those the body had already
     // been delivered — the agent had the declaration and was reaching for what sits around it. The
@@ -275,9 +301,10 @@ func runConstruct(arguments: [String]) -> Int32 {
         reportError("sextant construct: expected <type>, for example sextant construct MyType")
         return 2
     }
-    guard let set = openIndex(arguments, label: "construct") else { return 1 }
+    guard let index = openTranslatedIndex(arguments, label: "construct") else { return 1 }
     let limit = max(1, optionValue("--limit", in: arguments).flatMap(Int.init) ?? 40)
-    let references = set.lookup(name: symbol, query: .references).flatMap { $0.references }
+    let hits = index.lookup(name: symbol, query: .references)
+    let references = hits.flatMap { $0.references }
     let reader = SourceLineReader()
 
     struct Site: Encodable {
@@ -286,17 +313,27 @@ func runConstruct(arguments: [String]) -> Int32 {
         let text: String
         /// Confidence tier: a heuristic over the line text, not index semantics.
         let confidence = "heuristic"
+        /// Set over a stale index when the line changed since indexing: `line` and `text` are then
+        /// as indexed, and the site is not verifiable against the current text.
+        var unconfirmed: String?
     }
     // The shape of construction depends on the language of the file the reference is in:
     // Objective-C sends `alloc` or `new` to the class rather than calling the type.
     // Two constructions on one line are one place in the source, and the count answers "in how
     // many places", so a position is kept once.
     var seen: Set<String> = []
+    var siteLocations: [SourceLocation] = []
     let allSites = references.compactMap { location -> Site? in
-        guard let text = reader.line(location.line, inFile: location.path),
+        // An unconfirmed position is judged by the line the index recorded, which the current
+        // text no longer holds.
+        let recorded = location.isConfirmed
+            ? reader.line(location.line, inFile: location.path)
+            : index.drift?.indexedLineText(of: location)?.trimmingCharacters(in: .whitespaces)
+        guard let text = recorded,
               ConstructionSite.isConstruction(line: text, of: symbol, inFile: location.path) else { return nil }
-        guard seen.insert("\(location.path):\(location.line)").inserted else { return nil }
-        return Site(file: location.path, line: location.line, text: text)
+        guard seen.insert("\(location.path):\(location.line):\(location.unconfirmed ?? "")").inserted else { return nil }
+        siteLocations.append(location)
+        return Site(file: location.path, line: location.line, text: text, unconfirmed: location.unconfirmed)
     }
     let sites = allSites.prefix(limit)
 
@@ -304,14 +341,29 @@ func runConstruct(arguments: [String]) -> Int32 {
         .sorted().joined(separator: ", ")
     let shown = heuristic.isEmpty ? ConstructionSite.description(of: symbol, inFile: "x.swift") : heuristic
 
-    if arguments.contains("--json") { printJSON(Array(sites)); return 0 }
+    // Text matches the index does not confirm are offered only where they read as a construction.
+    let note = hits.first?.staleness?.keepingCandidates {
+        ConstructionSite.isConstruction(line: $0.text, of: symbol, inFile: $0.path)
+    }
+    let staleness = SymbolReport.staleness(
+        note, locations: siteLocations, symbol: symbol, style: .cli(compact: true, referenceLimit: limit), path: shorten)
+    if arguments.contains("--json") {
+        printJSON(Array(sites))
+        staleness.forEach(reportError)
+        return 0
+    }
     guard !sites.isEmpty else {
         print("No construction sites found for '\(symbol)' (heuristic \(shown)).")
+        staleness.forEach { print($0) }
         return 0
     }
     print("── \(symbol): construction and injection (heuristic \(shown)), \(allSites.count):")
-    for site in sites { print("     \(shorten(site.file)):\(site.line)  \(site.text)") }
+    for site in sites {
+        let marker = site.unconfirmed.map { "  [unconfirmed: \(SourceLocation.reasonText($0)); text as indexed]" } ?? ""
+        print("     \(shorten(site.file)):\(site.line)  \(site.text)\(marker)")
+    }
     if allSites.count > sites.count { print("     … \(allSites.count - sites.count) more (--limit \(limit))") }
+    staleness.forEach { print($0) }
     return 0
 }
 
@@ -392,9 +444,14 @@ struct CallNode: Encodable {
     /// How many callees or callers this node has in all; more than `children.count` when the
     /// breadth bound cut them. Text output states the cut; the JSON shape does not carry it.
     var childTotal = 0
+    /// Over a stale index, why `line` (the definition) or `calledAtLine` cannot be confirmed
+    /// against the current text; both lines are then as indexed. Absent otherwise.
+    var unconfirmed: String?
+    var calledAtUnconfirmed: String?
 
     private enum CodingKeys: String, CodingKey {
         case name, kind, file, line, calledAtFile, calledAtLine, definitionKnown, children
+        case unconfirmed, calledAtUnconfirmed
     }
 }
 
@@ -403,11 +460,12 @@ func runHierarchy(arguments: [String]) -> Int32 {
         reportError("sextant hierarchy: expected <symbol>, for example sextant hierarchy run --callees")
         return 2
     }
-    guard let set = openIndex(arguments, label: "hierarchy") else { return 1 }
+    guard let set = openTranslatedIndex(arguments, label: "hierarchy") else { return 1 }
     let direction: CallDirection = arguments.contains("--callers") ? .callers : .callees
     let depth = max(1, optionValue("--depth", in: arguments).flatMap(Int.init) ?? 3)
 
     var visited = Set<String>()
+    var positions: [SourceLocation] = []
     func build(usr: String, name: String, kind: String, location: SourceLocation,
                callSite: SourceLocation?, definitionKnown: Bool, remaining: Int) -> CallNode {
         var children: [CallNode] = []
@@ -421,9 +479,11 @@ func runHierarchy(arguments: [String]) -> Int32 {
                                       remaining: remaining - 1))
             }
         }
+        positions += [location] + [callSite].compactMap { $0 }
         return CallNode(name: name, kind: kind, file: shorten(location.path), line: location.line,
                         calledAtFile: callSite.map { shorten($0.path) }, calledAtLine: callSite?.line,
-                        definitionKnown: definitionKnown, children: children, childTotal: childTotal)
+                        definitionKnown: definitionKnown, children: children, childTotal: childTotal,
+                        unconfirmed: location.unconfirmed, calledAtUnconfirmed: callSite?.unconfirmed)
     }
 
     let roots = set.resolveSymbols(forName: symbol)
@@ -437,19 +497,28 @@ func runHierarchy(arguments: [String]) -> Int32 {
               callSite: nil, definitionKnown: true, remaining: depth)
     }
 
-    if arguments.contains("--json") { printJSON(trees); return 0 }
+    let staleness = SymbolReport.staleness(set.staleness(forName: symbol, query: .references), locations: positions,
+                                           symbol: symbol, style: .cli(compact: true, referenceLimit: 40), path: shorten)
+    if arguments.contains("--json") {
+        printJSON(trees)
+        staleness.forEach(reportError)
+        return 0
+    }
+    func marker(_ reason: String?) -> String {
+        reason.map { "  [unconfirmed: \(SourceLocation.reasonText($0))]" } ?? ""
+    }
     func printNode(_ node: CallNode, indent: Int) {
         // Two positions, and they are not interchangeable: where the symbol lives, and where the
         // edge into it was written. A line that shows one of them without saying which is the
         // defect this rendering exists to avoid.
         var line = String(repeating: "  ", count: indent) + "\(node.name) [\(node.kind)]  "
         if node.definitionKnown {
-            line += "\(node.file):\(node.line)"
+            line += "\(node.file):\(node.line)\(marker(node.unconfirmed))"
             if let file = node.calledAtFile, let called = node.calledAtLine {
-                line += "  · called at \(file):\(called)"
+                line += "  · called at \(file):\(called)\(marker(node.calledAtUnconfirmed))"
             }
         } else {
-            line += "\(node.file):\(node.line) — that is the call site; the index has no definition "
+            line += "\(node.file):\(node.line)\(marker(node.unconfirmed)) — that is the call site; the index has no definition "
                   + "for it (external or system symbol)"
         }
         print(line)
@@ -460,6 +529,7 @@ func runHierarchy(arguments: [String]) -> Int32 {
     }
     print("# call hierarchy (\(direction == .callers ? "← callers" : "→ callees"), depth \(depth))")
     for tree in trees { printNode(tree, indent: 0) }
+    staleness.forEach { print($0) }
     return 0
 }
 
@@ -470,11 +540,22 @@ func runRelated(_ query: RelationQuery, label: String, arguments: [String]) -> I
         reportError("sextant \(label): expected <symbol>, for example sextant \(label) MyType")
         return 2
     }
-    guard let set = openIndex(arguments, label: label) else { return 1 }
+    guard let set = openTranslatedIndex(arguments, label: label) else { return 1 }
     let limit = max(1, optionValue("--limit", in: arguments).flatMap(Int.init) ?? 1000)
     let related = set.related(toName: symbol, query: query)
-    if arguments.contains("--json") { printJSON(Array(related.prefix(limit))); return 0 }
-    guard !related.isEmpty else { print("Nothing found for '\(symbol)'."); return 0 }
+    let staleness = SymbolReport.staleness(set.staleness(forName: symbol, query: .references),
+                                           locations: related.map(\.location), symbol: symbol,
+                                           style: .cli(compact: true, referenceLimit: 40), path: shorten)
+    if arguments.contains("--json") {
+        printJSON(Array(related.prefix(limit)))
+        staleness.forEach(reportError)
+        return 0
+    }
+    guard !related.isEmpty else {
+        print("Nothing found for '\(symbol)'.")
+        staleness.forEach { print($0) }
+        return 0
+    }
 
     // Grouped by symbol, because the count in the header answers "how many callees", not "how
     // many call sites": a method called twice on one line was reported as two callees.
@@ -495,12 +576,15 @@ func runRelated(_ query: RelationQuery, label: String, arguments: [String]) -> I
     print("── \(symbol): \(header)")
     for usr in shownOrder {
         guard let group = sites[usr], let first = group.first else { continue }
-        let snippet = reader.line(first.location.line, inFile: first.location.path).map { "  \($0)" } ?? ""
+        let snippet = first.location.isConfirmed
+            ? reader.line(first.location.line, inFile: first.location.path).map { "  \($0)" } ?? ""
+            : first.location.marker
         print("   • \(first.name) [\(first.kind)]  \(shorten(first.location.path)):\(first.location.line)\(snippet)")
         for extra in group.dropFirst() {
-            print("     also \(shorten(extra.location.path)):\(extra.location.line):\(extra.location.column)")
+            print("     also \(shorten(extra.location.path)):\(extra.location.line):\(extra.location.column)\(extra.location.marker)")
         }
     }
     if order.count > shownOrder.count { print("   … \(order.count - shownOrder.count) more (--limit \(limit))") }
+    staleness.forEach { print($0) }
     return 0
 }

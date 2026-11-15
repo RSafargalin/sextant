@@ -788,6 +788,11 @@ run, reflected it immediately: 27 references instead of 25, the new symbol found
 `workspace/symbol` in 0.0 s. sextant answered 25, marked the answer `⚠ STALE`, and on the new symbol
 degraded to a textual match saying "the index is stale — run `sextant index`". Honest, and wrong.
 
+> Later (unreleased): over an index stale against its snapshot, the answer now maps the indexed
+> positions onto the current text, marks what cannot be confirmed, and lists the new uses of the
+> name as candidates the index does not confirm — still not counted, and still a text match. Checked
+> on a synthetic package by `StaleAnswerTests` (L5); this Alamofire run has not been repeated.
+
 The same run repeated on a fresh clone behaved differently: the server did **not** see the new symbol
 within 300 s and kept answering 25. So its advantage here is real but not dependable — which is worth
 knowing before either tool's freshness is described as a property rather than a tendency.

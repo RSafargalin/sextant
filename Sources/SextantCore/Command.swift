@@ -38,6 +38,28 @@ public enum Command {
         return String(data: data, encoding: .utf8)
     }
 
+    /// stdout of a successful command fed `input` on stdin, as bytes; nil on a non-zero code. The
+    /// input is written from another thread, so a command that answers while it reads cannot fill
+    /// its output pipe and stall.
+    public static func successData(_ launchPath: String, _ arguments: [String], input: Data) -> Data? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: launchPath)
+        process.arguments = arguments
+        let output = Pipe(), stdin = Pipe()
+        process.standardOutput = output
+        process.standardInput = stdin
+        process.standardError = FileHandle.nullDevice
+        do { try process.run() } catch { return nil }
+        let writer = Thread {
+            stdin.fileHandleForWriting.write(input)
+            try? stdin.fileHandleForWriting.close()
+        }
+        writer.start()
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return process.terminationStatus == 0 ? data : nil
+    }
+
     /// Runs with inherited stdio so long builds show progress; returns the exit code, or -1 if the process failed to start.
     @discardableResult
     public static func status(_ launchPath: String, _ arguments: [String], in directory: URL? = nil) -> Int32 {

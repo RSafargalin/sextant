@@ -52,8 +52,10 @@ public struct SourceSnapshot: Codable, Sendable, Equatable {
 
     /// The outcome of comparing the sources now with a snapshot.
     public enum Comparison: Sendable, Equatable {
-        /// The sources whose content differs from the snapshot, relative to the project root, sorted.
-        case compared(changed: [String])
+        /// The sources whose content differs from the snapshot, relative to the project root, sorted,
+        /// and for each of them that existed when the snapshot was taken, the blob hash of the
+        /// content it had then. A changed path absent from `indexed` did not exist then.
+        case compared(changed: [String], indexed: [String: String] = [:])
         /// The comparison cannot be made, and why.
         case incomparable(String)
     }
@@ -62,17 +64,29 @@ public struct SourceSnapshot: Codable, Sendable, Equatable {
     /// Tests substitute one that fails on purpose; everything else uses `system`.
     public struct GitRunner: Sendable {
         let run: @Sendable ([String]) -> String?
+        /// Runs git with bytes on stdin and returns its stdout as bytes; nil when this runner has
+        /// no such mode, and callers then fall back to `run`, one process per question.
+        let runWithInput: (@Sendable ([String], Data) -> Data?)?
 
         public init(_ run: @escaping @Sendable ([String]) -> String?) {
             self.run = run
+            self.runWithInput = nil
+        }
+
+        init(run: @escaping @Sendable ([String]) -> String?,
+             runWithInput: @escaping @Sendable ([String], Data) -> Data?) {
+            self.run = run
+            self.runWithInput = runWithInput
         }
 
         /// The installed git, run with `--no-optional-locks`: a read such as `git status` otherwise
         /// refreshes the repository's index file as a side effect, which would be a write into the
         /// user's repository made by a question about it.
-        public static let system = GitRunner { arguments in
-            Command.successOutput("/usr/bin/env", ["git", "--no-optional-locks"] + arguments)
-        }
+        public static let system = GitRunner(
+            run: { arguments in Command.successOutput("/usr/bin/env", ["git", "--no-optional-locks"] + arguments) },
+            runWithInput: { arguments, input in
+                Command.successData("/usr/bin/env", ["git", "--no-optional-locks"] + arguments, input: input)
+            })
     }
 
     /// Why the sources could not be recorded.
@@ -144,12 +158,16 @@ public struct SourceSnapshot: Codable, Sendable, Equatable {
             return .incomparable("git could not read the tree of \(git.head.prefix(10))")
         }
         var changed: [String] = []
+        var indexed: [String: String] = [:]
         for path in candidates {
             let expected = files[path].map(\.hash) ?? tree[path]
             let current = Self.blobHash(ofFile: projectRoot.appendingPathComponent(path).path)
-            if expected != current { changed.append(path) }
+            if expected != current {
+                changed.append(path)
+                if let expected { indexed[path] = expected }
+            }
         }
-        return .compared(changed: changed.sorted())
+        return .compared(changed: changed.sorted(), indexed: indexed)
     }
 
     private func compareEveryFile(projectRoot: URL) -> Comparison {
@@ -176,7 +194,9 @@ public struct SourceSnapshot: Codable, Sendable, Equatable {
         for (path, recorded) in files where recorded.hash != nil && !seen.contains(path) {
             changed.append(path)
         }
-        return .compared(changed: changed.sorted())
+        var indexed: [String: String] = [:]
+        for path in changed { if let hash = files[path]?.hash { indexed[path] = hash } }
+        return .compared(changed: changed.sorted(), indexed: indexed)
     }
 
     // MARK: - Content identity

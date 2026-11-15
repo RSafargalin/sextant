@@ -122,6 +122,9 @@ public struct IndexSnapshot: Codable, Sendable, Equatable {
         public let changedManifests: [String]
         /// The toolchain the store was built with and the one in use now, when they differ.
         public let toolchain: ToolchainChange?
+        /// For each changed file that existed when the store was built, the blob hash of the
+        /// content it was built from.
+        public var indexedContent: [String: String] = [:]
 
         public var isEmpty: Bool { changedFiles.isEmpty && changedManifests.isEmpty && toolchain == nil }
     }
@@ -138,12 +141,13 @@ public struct IndexSnapshot: Codable, Sendable, Equatable {
         switch sources.changes(projectRoot: root, git: git) {
         case .incomparable(let reason):
             return .failure(ComparisonFailure(reason: reason))
-        case .compared(let changed):
+        case .compared(let changed, let indexed):
             let manifests = BuildRecord.manifestHashes(projectRoot: root)
             let changedManifests = Set(manifests.keys).union(build.manifests.keys)
                 .filter { manifests[$0] != build.manifests[$0] }.sorted()
             return .success(Difference(changedFiles: changed, changedManifests: changedManifests,
-                                       toolchain: toolchainChange(current: currentToolchain())))
+                                       toolchain: toolchainChange(current: currentToolchain()),
+                                       indexedContent: indexed))
         }
     }
 

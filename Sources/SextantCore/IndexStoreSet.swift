@@ -81,8 +81,18 @@ public final class IndexStoreSet {
     }
 
     public func lookup(name: String, query: SymbolQuery, limit: Int = 1000) -> [SymbolHit] {
+        lookup(name: name, query: query, limit: limit, indexedText: nil)
+    }
+
+    /// `lookup`, checking positions against the text each changed file was indexed from.
+    func lookup(name: String, query: SymbolQuery, limit: Int, indexedText: ((String) -> [String]?)?) -> [SymbolHit] {
         // Per store without truncation (.max), so the limit applies deterministically after merging.
-        Self.merge(stores.map { $0.lookup(name: name, query: query, limit: .max) }, limit: limit)
+        Self.merge(stores.map { $0.lookup(name: name, query: query, limit: .max, indexedText: indexedText) }, limit: limit)
+    }
+
+    /// Every position the stores record for symbols with this name, any role.
+    func positions(forName name: String) -> [SourceLocation] {
+        stores.flatMap { $0.positions(forName: name) }
     }
 
     /// Merges results from several stores: definitions deduplicated by USR, occurrences by

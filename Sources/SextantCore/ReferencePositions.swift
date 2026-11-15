@@ -13,8 +13,13 @@ import Foundation
 /// symbol's name **and** another position on the same line does. A position with no verified
 /// sibling is kept, because the name may be written in a form this check cannot see (`Self`, a
 /// typealias, a selector) and losing a real location is worse than counting one twice.
+///
+/// Positions are checked against the text they were recorded in. For a file changed since the
+/// index was built that is its indexed text, which `indexedText` supplies; reading the current
+/// text at a recorded column would drop real references that merely moved.
 enum ReferencePositions {
-    static func verified(_ locations: [SourceLocation], name: String) -> [SourceLocation] {
+    static func verified(_ locations: [SourceLocation], name: String,
+                         indexedText: ((String) -> [String]?)? = nil) -> [SourceLocation] {
         guard locations.count > 1 else { return locations }
         let needle = Array(baseName(of: name).utf8)
         guard !needle.isEmpty else { return locations }
@@ -29,8 +34,12 @@ enum ReferencePositions {
         var lines: [String: [String]] = [:]
         func carriesName(_ location: SourceLocation) -> Bool {
             if lines[location.path] == nil {
-                let content = (try? String(contentsOfFile: location.path, encoding: .utf8)) ?? ""
-                lines[location.path] = content.components(separatedBy: "\n")
+                if let indexed = indexedText?(location.path) {
+                    lines[location.path] = indexed
+                } else {
+                    let content = (try? String(contentsOfFile: location.path, encoding: .utf8)) ?? ""
+                    lines[location.path] = content.components(separatedBy: "\n")
+                }
             }
             guard let file = lines[location.path], location.line >= 1, location.line <= file.count else {
                 return true   // unreadable: not evidence of anything, so nothing is dropped

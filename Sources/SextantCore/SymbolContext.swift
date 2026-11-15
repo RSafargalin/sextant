@@ -11,6 +11,8 @@ public struct SymbolContext: Sendable, Codable {
     public let callees: [RelatedSymbol]
     public let implementations: [RelatedSymbol]
     public let supertypes: [RelatedSymbol]
+    /// Present only over an index that is stale against its snapshot.
+    public var staleness: Staleness?
 }
 
 extension IndexStore: SemanticIndex {}

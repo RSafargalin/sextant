@@ -230,6 +230,47 @@ Every answer says whether the index is fresh, and on what basis:
 The content comparison costs two `git` processes per query (about 16 ms on this repository, against
 about 8.4 ms for the build-time check).
 
+On the snapshot basis a stale index still answers as correctly as it can, and says where it cannot.
+Every symbol answer — `refs`, `defs`, `callers`, `callees`, `impls`, `supertypes`, `hierarchy`,
+`context`, `blast`, `construct`, `body`, and their MCP tools — maps each position in a changed file
+onto the current text by a line diff against the text the store was built from: a position on a
+line the edit left intact is given at its current line; one on a modified or deleted line, or in a
+deleted file, stays at the line as indexed and is marked `[unconfirmed]` — never dropped, never
+moved to a guess. Where the name is now written in a changed file and no index occurrence accounts
+for it, the place is listed apart as a candidate the index does not confirm, and never counted:
+
+```
+── work()  [instanceMethod]
+   def: Sources/snap/Kept.swift:3:17  public func work() {}
+   usages: 2
+     • Sources/snap/Use.swift:5:10  kept.work()
+     • Sources/snap/Use.swift:7:12  [unconfirmed: line changed since indexing, line number as indexed]
+
+── ⚠ stale index: 2 file(s) changed since it was built; positions are stated against the current text — run `sextant index` to refresh
+   1 position(s) moved to their current lines (the lines themselves are unchanged since indexing)
+   1 position(s) unconfirmed, marked [unconfirmed]: their line changed or their file is gone since indexing — not verifiable against the current text
+   not in the index — 'work' written in changed files (text match only: same name, possibly another symbol; not counted above): 3
+     ? Sources/snap/New.swift:1:23  func fresh() { Kept().work() }
+     ? Sources/snap/Use.swift:9:12  Kept().work(); Kept().work()
+     ? Sources/snap/Use.swift:9:27  Kept().work(); Kept().work()
+   declarations changed since indexing in Sources/snap/New.swift — uses elsewhere may now resolve to a different symbol (overloads, shadowing), which the index cannot show
+```
+
+Candidates are identifier tokens in Swift (a comment or a string literal does not match) and a
+lexical identifier match outside comments and literals in Objective-C, C and C++. The note about
+changed declarations appears when a changed Swift file gained, lost or re-signed a declaration, or a
+C-family header changed; an edit inside bodies does not raise it. `--json` gains `indexedLine` and
+`unconfirmed` on a position and a `staleness` object on each hit (on `context` and `blast` too);
+nothing else changes, and on a fresh index the output is byte-for-byte what it is without this.
+The text a file was indexed from comes from git's objects for a file that was clean when indexed;
+for one that was dirty (and for every source outside git) `sextant index` keeps a copy in
+`~/Library/Caches/sextant/index-snapshot-text/`. Stores judged by build time keep the plain label:
+without a snapshot there is no indexed text to map against.
+
+Measured on this repository (release build, median of 7): a fresh index costs what it did; with 1
+changed file a query costs up to ~90 ms more, with 10 changed files ~100 ms more — one `git
+cat-file --batch` for the indexed texts, and a parse of the changed files that mention the name.
+
 `.gitignore` is respected in full — under git directly, and outside it by handing the directory
 to git as a work tree whose git dir lives in the cache, so nothing is written into the project. To leave
 out files that *are* tracked on purpose — generated code, vendored sources, snapshot fixtures —
