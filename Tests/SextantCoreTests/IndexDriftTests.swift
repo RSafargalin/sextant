@@ -197,9 +197,83 @@ struct IndexDriftTests {
             let translated = drift.translate(location(workspace.path("Use.swift"), offset + 1, column))
             guard translated.isConfirmed else { continue }
             let line = Array(current[translated.line - 1].utf8)
-            #expect(line[(translated.column - 1)...].starts(with: Array("work".utf8)),
+            let stated = try #require(translated.column)
+            #expect(line[(stated - 1)...].starts(with: Array("work".utf8)),
                     "line \(offset + 1) confirmed at \(translated.line): \(current[translated.line - 1])")
         }
+    }
+
+    // MARK: - Columns on lines that are not ASCII
+
+    /// The byte column the index records for `needle` on `line`.
+    private func recordedColumn(of needle: String, in line: String) throws -> Int {
+        let range = try #require(line.utf8.firstRange(of: needle.utf8))
+        return line.utf8.distance(from: line.utf8.startIndex, to: range.lowerBound) + 1
+    }
+
+    /// The column an editor shows for `needle` on `line`, in UTF-16 code units.
+    private func editorColumn(of needle: String, in line: String) throws -> Int {
+        let range = try #require(line.range(of: needle))
+        return line.utf16.distance(from: line.startIndex, to: range.lowerBound) + 1
+    }
+
+    @Test("a moved line keeps the column restated from its indexed text: Cyrillic, an emoji, a tab")
+    func movedLinesKeepTheirColumns() throws {
+        let workspace = try Workspace()
+        let indexedLines = ["func f() {", "    let привет = 1; work(привет)", "    let s = \"😀\"; work(s)", "\twork(3)", "}"]
+        let indexed = indexedLines.joined(separator: "\n") + "\n"
+        // Two lines inserted above: what the index recorded at lines 2–4 is now at 4–6, and the
+        // current text at lines 2–4 is something else entirely.
+        try workspace.write("Use.swift", "// одна\n// две\n" + indexed)
+        let drift = try #require(try workspace.drift(["Use.swift": indexed]))
+        let columns = IndexColumns(drift: drift)
+        let current = try String(contentsOfFile: workspace.path("Use.swift"), encoding: .utf8).components(separatedBy: "\n")
+
+        for line in 2...4 {
+            let recorded = location(workspace.path("Use.swift"), line, try recordedColumn(of: "work", in: indexedLines[line - 1]))
+            let stated = drift.translate(columns.restate(recorded))
+            #expect(stated.isConfirmed)
+            #expect(stated.line == line + 2)
+            #expect(stated.column == (try editorColumn(of: "work", in: current[line + 1])))
+        }
+    }
+
+    @Test("a modified line is unconfirmed with the column of its indexed text; without that text, no column")
+    func unconfirmedColumns() throws {
+        let workspace = try Workspace()
+        let indexed = "    let s = \"😀\"; work(s)\n"
+        try workspace.write("Use.swift", "    print(0); let s = \"😀\"; work(s)\n")
+        try workspace.write("Lost.swift", "// привет\n    let s = \"😀\"; work(s)\n")
+        // Lost.swift was indexed from a text of its own, which is not kept anywhere.
+        let drift = try #require(try workspace.drift(["Use.swift": indexed, "Lost.swift": indexed + "// lost\n"],
+                                                     unavailable: ["Lost.swift"]))
+        let columns = IndexColumns(drift: drift)
+        let recorded = try recordedColumn(of: "work", in: indexed)
+
+        let modified = drift.translate(columns.restate(location(workspace.path("Use.swift"), 1, recorded)))
+        #expect(modified.unconfirmed == IndexDrift.Reason.lineChanged)
+        #expect(modified.column == (try editorColumn(of: "work", in: indexed)))
+        #expect(modified.column != recorded, "the byte column would be the wrong unit")
+
+        let lost = drift.translate(columns.restate(location(workspace.path("Lost.swift"), 1, recorded)))
+        #expect(lost.unconfirmed == IndexDrift.Reason.noIndexedText)
+        #expect(lost.column == nil, "no text to restate it from: no column rather than one in bytes")
+        #expect(lost.position == "1")
+        #expect(lost.marker.contains("no column"))
+    }
+
+    @Test("a confirmed use on a line that is not ASCII is not offered again as a candidate")
+    func confirmedWideUsesAreNotCandidates() throws {
+        let workspace = try Workspace()
+        let indexed = "func f() {\n    let привет = 1; work(привет)\n}\n"
+        try workspace.write("Use.swift", "// одна\n" + indexed + "func g() { let s = \"😀\"; work(s) }\n")
+        let drift = try #require(try workspace.drift(["Use.swift": indexed]))
+        let columns = IndexColumns(drift: drift)
+        let recorded = try recordedColumn(of: "work", in: "    let привет = 1; work(привет)")
+        let known = [drift.translate(columns.restate(location(workspace.path("Use.swift"), 2, recorded)))]
+
+        let found = drift.candidates(forName: "work", excluding: known, declarationsOnly: false)
+        #expect(found.shown.map { [$0.line, $0.column] } == [[5, try editorColumn(of: "work", in: "func g() { let s = \"😀\"; work(s) }")]])
     }
 
     // MARK: - Reference verification against the indexed text

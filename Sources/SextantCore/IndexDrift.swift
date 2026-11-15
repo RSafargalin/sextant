@@ -168,6 +168,12 @@ public final class IndexDrift: @unchecked Sendable {
 
     // MARK: - Positions
 
+    /// Whether the file is one of the changed files, the ones whose current text is not the text
+    /// the index was built from.
+    public func isChanged(_ path: String) -> Bool {
+        changedRelativePath(of: path) != nil
+    }
+
     /// The text a changed file was indexed from, line by line; nil for a file that did not change
     /// (its current text is its indexed text) or whose indexed text is unavailable.
     public func indexedLines(ofFile path: String) -> [String]? {
@@ -177,7 +183,8 @@ public final class IndexDrift: @unchecked Sendable {
 
     /// The position stated against the current text: unchanged outside changed files; on a line
     /// the edit left intact, moved to where that line is now; otherwise kept as indexed and marked
-    /// unconfirmed, never dropped.
+    /// unconfirmed, never dropped. The column is carried as it is: a line that moved is unchanged,
+    /// so the column restated against its indexed text holds on its current one.
     public func translate(_ location: SourceLocation) -> SourceLocation {
         guard let relative = changedRelativePath(of: location.path) else { return location }
         let state = state(of: relative)
@@ -216,7 +223,7 @@ public final class IndexDrift: @unchecked Sendable {
             let now = current(of: relative)
             guard let source = now.source, let lines = now.lines, source.contains(needle) else { continue }
             let confirmed = confirmedPositions ?? Set(known().filter(\.isConfirmed).compactMap { location in
-                changedRelativePath(of: location.path).map { "\($0):\(location.line):\(location.column)" }
+                location.column.flatMap { column in changedRelativePath(of: location.path).map { "\($0):\(location.line):\(column)" } }
             })
             confirmedPositions = confirmed
             // Every place the name is written as a whole word — comments and strings included, a
@@ -235,7 +242,7 @@ public final class IndexDrift: @unchecked Sendable {
         return (Array(found.prefix(Self.candidateLimit)), found.count)
     }
 
-    /// Positions (line, UTF-8 column) where `word` is written with identifier boundaries.
+    /// Positions (line, reported column) where `word` is written with identifier boundaries.
     static func wholeWords(_ word: String, in lines: [String]) -> [(line: Int, column: Int)] {
         let needle = Array(word.utf8)
         func isIdentifierByte(_ byte: UInt8) -> Bool {
@@ -253,7 +260,7 @@ public final class IndexDrift: @unchecked Sendable {
                 if bytes[start] == needle[0], Array(bytes[start..<start + needle.count]) == needle,
                    start == 0 || !isIdentifierByte(bytes[start - 1]),
                    start + needle.count == bytes.count || !isIdentifierByte(bytes[start + needle.count]) {
-                    result.append((offset + 1, start + 1))
+                    result.append((offset + 1, SourceColumn.column(after: bytes[..<start])))
                     start += needle.count
                 } else {
                     start += 1
@@ -415,19 +422,18 @@ public final class IndexDrift: @unchecked Sendable {
 
     // MARK: - Identifier scans
 
-    /// Positions (line, UTF-8 column, both 1-based) of identifier tokens spelled `name` in Swift
+    /// Positions (line, reported column) of identifier tokens spelled `name` in Swift
     /// source: comments and string literals are not tokens of that kind. With `declarationsOnly`,
     /// only the tokens that name a declaration.
     static func swiftIdentifiers(named name: String, in source: String, declarationsOnly: Bool) -> [(line: Int, column: Int)] {
         let tree = Parser.parse(source: source)
-        let converter = SourceLocationConverter(fileName: "", tree: tree)
+        let columns = SwiftColumns(tree: tree)
         var result: [(line: Int, column: Int)] = []
         for token in tree.tokens(viewMode: .sourceAccurate) {
             guard case .identifier(let text) = token.tokenKind,
                   text == name || text == "`\(name)`" else { continue }
             if declarationsOnly && !namesDeclaration(token) { continue }
-            let location = converter.location(for: token.positionAfterSkippingLeadingTrivia)
-            result.append((location.line, location.column))
+            result.append(columns.position(of: token.positionAfterSkippingLeadingTrivia))
         }
         return result
     }
@@ -491,7 +497,7 @@ public final class IndexDrift: @unchecked Sendable {
                 while index < bytes.count && isIdentifierByte(bytes[index]) { index += 1 }
                 if index - start == needle.count && Array(bytes[start..<index]) == needle,
                    !(byte >= UInt8(ascii: "0") && byte <= UInt8(ascii: "9")) {
-                    result.append((line, start - lineStart + 1))
+                    result.append((line, SourceColumn.column(after: bytes[lineStart..<start])))
                 }
             } else {
                 index += 1

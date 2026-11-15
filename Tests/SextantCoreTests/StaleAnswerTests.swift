@@ -47,6 +47,15 @@ struct StaleAnswerTests {
             }
 
             """,
+        // Uses after text that is not ASCII: Cyrillic, an emoji and a tab before the call.
+        "Sources/stale/Wide.swift": """
+            func wide() {
+                let привет = Kept(); привет.work()
+                let smile = "😀"; Kept().work(); _ = smile
+            \tKept().work()
+            }
+
+            """,
     ]
 
     /// The indexed package, built once for the whole suite.
@@ -149,12 +158,14 @@ struct StaleAnswerTests {
     private struct Position {
         let path: String
         let line: Int
-        let column: Int
+        /// Absent when the recorded line cannot be read.
+        let column: Int?
         let unconfirmed: String?
 
         init?(_ object: Any?) {
             guard let object = object as? [String: Any], let path = object["path"] as? String,
-                  let line = object["line"] as? Int, let column = object["column"] as? Int else { return nil }
+                  let line = object["line"] as? Int else { return nil }
+            let column = object["column"] as? Int
             self.path = path
             self.line = line
             self.column = column
@@ -188,14 +199,16 @@ struct StaleAnswerTests {
         return Answer(hits: hits)
     }
 
-    /// The invariant: every confirmed position has the name at its column in the current text.
+    /// The invariant: every confirmed position has the name at its column — in UTF-16 code units —
+    /// in the current text.
     private func expectConfirmedPositionsCarry(_ name: String, _ answer: Answer,
                                                sourceLocation: Testing.SourceLocation = #_sourceLocation) {
         for position in answer.references + answer.definitions where position.unconfirmed == nil {
             let lines = ((try? String(contentsOfFile: position.path, encoding: .utf8)) ?? "").components(separatedBy: "\n")
-            let carries = position.line >= 1 && position.line <= lines.count
-                && Array(lines[position.line - 1].utf8).dropFirst(position.column - 1).starts(with: Array(name.utf8))
-            #expect(carries, "\(position.file):\(position.line):\(position.column) is confirmed, and the text there does not carry '\(name)'",
+            let carries = position.line >= 1 && position.line <= lines.count && position.column.map { column in
+                Array(lines[position.line - 1].utf16).dropFirst(column - 1).starts(with: Array(name.utf16))
+            } == true
+            #expect(carries, "\(position.file):\(position.line):\(position.column ?? 0) is confirmed, and the text there does not carry '\(name)'",
                     sourceLocation: sourceLocation)
         }
     }
@@ -221,6 +234,31 @@ struct StaleAnswerTests {
         let text = try package.sextant("refs", "work", "--full")
         #expect(text.output.contains("Sources/stale/Use.swift:5:10  kept.work()"), "\(text.output)")
         #expect(text.output.contains("2 position(s) moved to their current lines"), "\(text.output)")
+    }
+
+    @Test("lines inserted above uses after Cyrillic, an emoji and a tab: columns stay in UTF-16 units",
+          .enabled(if: binary != nil, "sextant is not built — run `swift build` first"), .timeLimit(.minutes(10)))
+    func insertedLinesAboveWideUses() throws {
+        let package = try indexed()
+        defer { try? package.restore() }
+        let fresh = try refs("work", in: package).references.filter { $0.file == "Wide.swift" }
+        // `work` after "let привет = Kept(); привет." (28 characters, 40 bytes) and 4 spaces; after the
+        // emoji (2 units, 4 bytes); after a tab (1 of each).
+        #expect(fresh.map { [$0.line, $0.column ?? 0] } == [[2, 33], [3, 30], [4, 9]], "\(fresh)")
+
+        try package.write("Sources/stale/Wide.swift", "// одна\n// 😀\n" + (try package.text("Sources/stale/Wide.swift")))
+        let stale = try refs("work", in: package)
+        let moved = stale.references.filter { $0.file == "Wide.swift" }
+        #expect(moved.map { [$0.line, $0.column ?? 0] } == [[4, 33], [5, 30], [6, 9]], "\(moved)")
+        #expect(moved.allSatisfy { $0.unconfirmed == nil })
+        #expect(!stale.candidates.contains { $0.file == "Wide.swift" }, "a confirmed use is not a candidate: \(stale.candidates)")
+        expectConfirmedPositionsCarry("work", stale)
+
+        let search = try package.sextant("search", "Kept().work()", "--json")
+        let matches = try #require(try JSONSerialization.jsonObject(with: Data(search.output.utf8)) as? [String: Any])
+        let found = ((matches["matches"] as? [[String: Any]]) ?? []).filter { ($0["file"] as? String)?.hasSuffix("Wide.swift") == true }
+        // A match starts at `Kept`, seven units before `work`: the same unit as the index answer.
+        #expect(found.compactMap { ($0["column"] as? Int).map { $0 + 7 } } == [30, 9], "\(found)")
     }
 
     @Test("the line of a use modified: unconfirmed, never confirmed at a wrong line",

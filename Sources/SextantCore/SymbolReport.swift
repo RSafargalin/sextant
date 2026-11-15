@@ -116,7 +116,7 @@ public enum SymbolReport {
         // the text is withheld.
         var shifted = 0
         func located(_ location: SourceLocation, symbolName: String) -> String {
-            let position = style.showsColumns ? "\(location.line):\(location.column)" : "\(location.line)"
+            let position = style.showsColumns ? location.position : "\(location.line)"
             // An unconfirmed position is stated as the index recorded it; the current text at that
             // line is someone else's, so no snippet is quoted.
             guard location.isConfirmed else { return "\(path(location.path)):\(position)\(location.marker)" }

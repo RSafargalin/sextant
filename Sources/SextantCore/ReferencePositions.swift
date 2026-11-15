@@ -16,7 +16,8 @@ import Foundation
 ///
 /// Positions are checked against the text they were recorded in. For a file changed since the
 /// index was built that is its indexed text, which `indexedText` supplies; reading the current
-/// text at a recorded column would drop real references that merely moved.
+/// text at a recorded column would drop real references that merely moved. The columns checked
+/// are the index's own, in bytes of UTF-8: this runs before `TranslatedIndex` restates them.
 enum ReferencePositions {
     static func verified(_ locations: [SourceLocation], name: String,
                          indexedText: ((String) -> [String]?)? = nil) -> [SourceLocation] {
@@ -45,7 +46,8 @@ enum ReferencePositions {
                 return true   // unreadable: not evidence of anything, so nothing is dropped
             }
             let bytes = Array(file[location.line - 1].utf8)
-            let start = location.column - 1
+            guard let column = location.column else { return true }
+            let start = column - 1
             guard start >= 0, start < bytes.count else { return false }
             return bytes[start...].starts(with: needle)
         }

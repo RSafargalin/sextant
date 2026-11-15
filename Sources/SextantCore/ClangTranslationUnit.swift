@@ -12,6 +12,8 @@ public struct ClangNode: Sendable {
     /// The file the node is in — the main file, or a header the caller asked to keep.
     public let file: String
     public let line: Int
+    /// libclang's column, 1-based and counted in bytes; a reported column is restated from it
+    /// through `SourceColumn`.
     public let column: Int
     /// Byte range of the node in the file, for showing what matched.
     public let startOffset: Int

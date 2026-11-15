@@ -172,6 +172,15 @@ public struct ClangPatternSearch {
         }
 
         let sourceLength = sourceBytes.count
+        var lines: ByteLines?
+        // libclang counts a column in bytes; the line it names in the file's own text restates it.
+        // A position that is not on such a line is stated from where the node's text starts.
+        func position(of node: ClangNode) -> (line: Int, column: Int) {
+            let table = lines ?? ByteLines(sourceBytes)
+            lines = table
+            if let column = table.column(line: node.line, utf8Column: node.column) { return (node.line, column) }
+            return table.position(ofOffset: max(0, min(node.startOffset, sourceLength))) ?? (node.line, 1)
+        }
         var results: [(index: Int, match: StructuralMatch)] = []
         func visit(_ node: ClangNode) {
             // Only the file's own nodes are candidates; the appended patterns are not matches for
@@ -182,9 +191,10 @@ public struct ClangPatternSearch {
                     var bindings: [String: String] = [:]
                     if searches[index].matches(pattern: root, candidate: node, patternSource: overlayData,
                                                candidateSource: sourceBytes, bindings: &bindings) {
+                        let start = position(of: node)
                         results.append((index, StructuralMatch(
-                            line: node.line,
-                            column: node.column,
+                            line: start.line,
+                            column: start.column,
                             text: text(of: node, in: sourceBytes).split(separator: "\n").first.map(String.init) ?? ""
                         )))
                     }

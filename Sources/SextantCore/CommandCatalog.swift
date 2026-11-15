@@ -179,7 +179,8 @@ public enum CommandCatalog {
             details: ["Metavariables: $X (an expression, a type, a binding or declaration name, a parameter), "
                       + "variadic $$$. For example 'try? $X.save()', '$X as! $T', 'func $F($$$) { $$$ }'.",
                       "A metavariable that cannot be bound (in a string literal, in a comment) and a pattern "
-                      + "of several statements are refused rather than answered with no matches."],
+                      + "of several statements are refused rather than answered with no matches.",
+                      SourceColumn.positionFormat],
             servedByDaemon: true
         ),
         CommandSpec(
@@ -187,6 +188,7 @@ public enum CommandCatalog {
             group: navigationGroup,
             flags: [project, FlagSpec("--rules", takesPath: true, "JSON rules file (otherwise the built-in set)"),
                     scope, maxFiles, exclude, includeTests, json],
+            details: [SourceColumn.positionFormat],
             servedByDaemon: true
         ),
         CommandSpec(
@@ -215,12 +217,14 @@ public enum CommandCatalog {
         ),
         CommandSpec(name: "refs", argument: "<symbol>", summary: "every usage of a symbol",
                     group: semanticsGroup, flags: semanticFlags,
-                    details: ["Default when piped (an agent) is a histogram by file; TTY or --full gives line by line."], servedByDaemon: true),
+                    details: ["Default when piped (an agent) is a histogram by file; TTY or --full gives line by line.",
+                              SourceColumn.positionFormat], servedByDaemon: true),
         CommandSpec(name: "defs", argument: "<symbol>", summary: "where a symbol is defined",
-                    group: semanticsGroup, flags: semanticFlags, servedByDaemon: true),
+                    group: semanticsGroup, flags: semanticFlags, details: [SourceColumn.positionFormat], servedByDaemon: true),
         CommandSpec(name: "callers", argument: "<symbol>", summary: "call sites, accounting for protocol dispatch",
                     group: semanticsGroup, flags: semanticFlags,
-                    details: ["Types have no call sites — use refs, context, or blast for those."], servedByDaemon: true),
+                    details: ["Types have no call sites — use refs, context, or blast for those.",
+                              SourceColumn.positionFormat], servedByDaemon: true),
         CommandSpec(name: "callees", argument: "<symbol>", summary: "what a symbol calls (best effort)",
                     group: semanticsGroup, flags: [project, indexStore, indexLib, storePolicyFlag, derivedData, reindex, limit, json], servedByDaemon: true),
         CommandSpec(name: "impls", argument: "<type>", summary: "implementations and subtypes of a protocol or class",
@@ -412,6 +416,8 @@ public enum CommandCatalog {
                 lines.append("  \(invocation)  \(spec.summary)")
             }
         }
+        lines.append("")
+        lines.append(SourceColumn.positionFormat)
         return lines.joined(separator: "\n")
     }
 

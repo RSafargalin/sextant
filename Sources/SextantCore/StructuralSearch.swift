@@ -5,6 +5,7 @@ import SwiftSyntax
 /// A structural pattern match.
 public struct StructuralMatch: Sendable, Codable {
     public let line: Int
+    /// 1-based, in UTF-16 code units (`SourceColumn`).
     public let column: Int
     public let text: String
 }
@@ -143,9 +144,9 @@ public struct PatternSearch {
 
     /// Matches in a tree `OperatorFolding` has already folded.
     public func search(inFolded tree: SourceFileSyntax, fileName: String) -> [StructuralMatch] {
-        let converter = SourceLocationConverter(fileName: fileName, tree: tree)
+        let columns = SwiftColumns(tree: tree)
         var results: [StructuralMatch] = []
-        walk(Syntax(tree), converter: converter, into: &results)
+        walk(Syntax(tree), columns: columns, into: &results)
         return results
     }
 
@@ -158,14 +159,14 @@ public struct PatternSearch {
     /// `searchAll` over a tree `OperatorFolding` has already folded.
     public static func searchAll(_ searches: [PatternSearch], inFolded tree: SourceFileSyntax,
                                  fileName: String) -> [(index: Int, match: StructuralMatch)] {
-        let converter = SourceLocationConverter(fileName: fileName, tree: tree)
+        let columns = SwiftColumns(tree: tree)
         var results: [(index: Int, match: StructuralMatch)] = []
         func visit(_ node: Syntax) {
             let nodeKind = node.kind
             for (index, search) in searches.enumerated() where search.patternRootKind == nodeKind {
                 var bindings: [String: String] = [:]
                 if search.matchNode(search.patternRoot, node, &bindings) {
-                    let location = node.startLocation(converter: converter)
+                    let location = columns.position(of: node.positionAfterSkippingLeadingTrivia)
                     let firstLine = node.trimmedDescription.split(separator: "\n").first.map(String.init) ?? ""
                     results.append((index, StructuralMatch(line: location.line, column: location.column, text: firstLine)))
                 }
@@ -178,17 +179,17 @@ public struct PatternSearch {
 
     // MARK: - Walking and matching
 
-    private func walk(_ node: Syntax, converter: SourceLocationConverter, into results: inout [StructuralMatch]) {
+    private func walk(_ node: Syntax, columns: SwiftColumns, into results: inout [StructuralMatch]) {
         if node.kind == patternRootKind {
             var bindings: [String: String] = [:]
             if matchNode(patternRoot, node, &bindings) {
-                let location = node.startLocation(converter: converter)
+                let location = columns.position(of: node.positionAfterSkippingLeadingTrivia)
                 let firstLine = node.trimmedDescription.split(separator: "\n").first.map(String.init) ?? ""
                 results.append(StructuralMatch(line: location.line, column: location.column, text: firstLine))
             }
         }
         for child in node.children(viewMode: .sourceAccurate) {
-            walk(child, converter: converter, into: &results)
+            walk(child, columns: columns, into: &results)
         }
     }
 

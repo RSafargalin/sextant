@@ -135,6 +135,11 @@ Shared flags, each on the commands it makes sense for: `--project <path>` (every
 index before the query), `--scope <subdirectory>` and `--max-files <N>` (`map`, `api`, `search`,
 `lint`). Run `sextant <command> --help` for the exact set. Defaults come from `.sextant.json`.
 
+A position is `file:line:column`, both 1-based, in every answer — text, `--json` and MCP alike.
+The column counts UTF-16 code units, the unit an LSP client uses by default: an emoji counts 2, a
+Cyrillic letter 1, a tab 1, so a column can be handed to an editor as it is. A position whose
+recorded line can no longer be read (a deleted file, say) states no column rather than a guess.
+
 ### Big projects: a bounded answer, never a refusal
 
 The four file-walking commands are minutes of work on a large project — measured on one with

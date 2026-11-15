@@ -89,7 +89,7 @@ public final class IndexStoreSet {
     /// (/tmp vs /private/tmp, /var vs /private/var) — otherwise one symbol is counted twice.
     static func locationKey(usr: String, _ location: SourceLocation) -> String {
         let path = URL(fileURLWithPath: location.path).resolvingSymlinksInPath().path
-        return "\(usr)|\(path):\(location.line):\(location.column)"
+        return "\(usr)|\(path):\(location.line):\(location.column ?? 0)"
     }
 
     /// Records rejected by the scope filter across every open store.
@@ -167,7 +167,7 @@ public final class IndexStoreSet {
 
         func key(_ location: SourceLocation) -> String {
             let path = URL(fileURLWithPath: location.path).resolvingSymlinksInPath().path
-            return "\(path):\(location.line):\(location.column)"
+            return "\(path):\(location.line):\(location.column ?? 0)"
         }
 
         for hits in hitsPerStore {

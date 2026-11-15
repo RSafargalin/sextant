@@ -4,7 +4,12 @@ import IndexStoreDB
 public struct SourceLocation: Hashable, Sendable, Codable {
     public let path: String
     public let line: Int
-    public let column: Int
+    /// 1-based, in UTF-16 code units (`SourceColumn`). nil when the line the index recorded cannot
+    /// be read in the text it was recorded in — the file is gone, its indexed text is unavailable,
+    /// or the line no longer holds that column: no column is stated rather than one counted in
+    /// another unit. Inside `IndexStoreSet` it is still the index's own byte column;
+    /// `TranslatedIndex` restates it before anything reports it.
+    public let column: Int?
     public let isDefinition: Bool
     /// Set only when the file changed since the index was built and this position was mapped onto
     /// its current text: the line the index recorded. `line` is then the line it is on now.
@@ -21,7 +26,7 @@ public struct SourceLocation: Hashable, Sendable, Codable {
         self.isDefinition = occurrence.roles.contains(.definition)
     }
 
-    init(path: String, line: Int, column: Int, isDefinition: Bool,
+    init(path: String, line: Int, column: Int?, isDefinition: Bool,
          indexedLine: Int? = nil, unconfirmed: String? = nil) {
         self.path = path
         self.line = line
@@ -31,13 +36,27 @@ public struct SourceLocation: Hashable, Sendable, Codable {
         self.unconfirmed = unconfirmed
     }
 
+    /// The same position with its column restated.
+    func withColumn(_ column: Int?) -> SourceLocation {
+        SourceLocation(path: path, line: line, column: column, isDefinition: isDefinition,
+                       indexedLine: indexedLine, unconfirmed: unconfirmed)
+    }
+
+    /// `line:column`, or the line alone when no column can be stated.
+    public var position: String {
+        column.map { "\(line):\($0)" } ?? "\(line)"
+    }
+
+    /// A key that tells positions apart: path, line and column.
+    var key: String { "\(path):\(line):\(column ?? 0)" }
+
     /// Whether the position stands against the current text: everything but an unconfirmed one.
     public var isConfirmed: Bool { unconfirmed == nil }
 
     /// The text marker an answer prints after an unconfirmed position; empty for a confirmed one.
     public var marker: String {
         guard let unconfirmed else { return "" }
-        return "  [unconfirmed: \(Self.reasonText(unconfirmed))]"
+        return "  [unconfirmed: \(Self.reasonText(unconfirmed))\(column == nil ? ", no column" : "")]"
     }
 
     /// An unconfirmed reason in words.
@@ -51,7 +70,7 @@ public struct SourceLocation: Hashable, Sendable, Codable {
 
     /// Deterministic ordering: path, then line, then column.
     static func isOrderedBefore(_ lhs: SourceLocation, _ rhs: SourceLocation) -> Bool {
-        (lhs.path, lhs.line, lhs.column) < (rhs.path, rhs.line, rhs.column)
+        (lhs.path, lhs.line, lhs.column ?? 0) < (rhs.path, rhs.line, rhs.column ?? 0)
     }
 }
 

@@ -134,7 +134,7 @@ public final class IndexStore {
             for queryUSR in usrsToQuery {
                 for occurrence in database.occurrences(ofUSR: queryUSR, roles: query.roles) where isInScope(occurrence.location) {
                     let location = SourceLocation(occurrence)
-                    if seen.insert("\(location.path):\(location.line):\(location.column)").inserted {
+                    if seen.insert(location.key).inserted {
                         locations.append(location)
                     }
                 }
@@ -200,7 +200,7 @@ public final class IndexStore {
         var seen = Set<String>()
         var results: [RelatedSymbol] = []
         func add(_ symbol: Symbol, at location: SourceLocation) {
-            let key = "\(symbol.usr)|\(location.path):\(location.line):\(location.column)"
+            let key = "\(symbol.usr)|\(location.key)"
             guard seen.insert(key).inserted else { return }
             results.append(RelatedSymbol(name: symbol.name, usr: symbol.usr, kind: "\(symbol.kind)", location: location))
         }

@@ -31,12 +31,12 @@ public enum MCPTools {
                 "depth": ["type": "integer", "description": "Traversal depth (default: 3)."]
             ])],
             ["name": "repo_map", "description": "Repository map: public and internal types by file, symbol-level.", "inputSchema": ["type": "object", "properties": ["budget": ["type": "integer", "description": "Token budget for the map (default 4000, honoured)."]]]],
-            ["name": "structural_search", "description": "Structural search over the AST, replacing grep: metavariables $X (expression, type, binding name, declaration name, parameter), variadic $$$, statement patterns; a metavariable that cannot be bound is refused as an error. For example 'try? $X.save()' in Swift or '[$X reloadData]' in Objective-C. Swift is matched by its own parser; Objective-C, C and C++ by clang, which needs the flags from `sextant index`, which RUNS the project's build (its manifest, plugins and macros are code) — so it is the user's call, not an automatic step. Files that could not be read are listed with the reason, so 'no matches' never quietly covers them. Occurrences inside #if branches this build does not contain are reported separately as textual, NOT structurally verified — treat them as leads, not as matches.", "inputSchema": [
+            ["name": "structural_search", "description": "Structural search over the AST, replacing grep: metavariables $X (expression, type, binding name, declaration name, parameter), variadic $$$, statement patterns; a metavariable that cannot be bound is refused as an error. For example 'try? $X.save()' in Swift or '[$X reloadData]' in Objective-C. Swift is matched by its own parser; Objective-C, C and C++ by clang, which needs the flags from `sextant index`, which RUNS the project's build (its manifest, plugins and macros are code) — so it is the user's call, not an automatic step. Files that could not be read are listed with the reason, so 'no matches' never quietly covers them. Occurrences inside #if branches this build does not contain are reported separately as textual, NOT structurally verified — treat them as leads, not as matches. " + SourceColumn.positionFormat, "inputSchema": [
                 "type": "object",
                 "properties": ["pattern": ["type": "string", "description": "Structural pattern: an expression or statement using $X ($$$ is Swift only). Written in the language of the files being searched."]],
                 "required": ["pattern"]
             ]],
-            ["name": "lint", "description": "Structural code-hygiene rules (the set from .sextant.json, otherwise the built-in one). Covers Swift plus Objective-C, C and C++; a file where no rule could be checked is listed with the reason, so a clean report never covers unread code.", "inputSchema": ["type": "object", "properties": [String: Any]()]],
+            ["name": "lint", "description": "Structural code-hygiene rules (the set from .sextant.json, otherwise the built-in one). Covers Swift plus Objective-C, C and C++; a file where no rule could be checked is listed with the reason, so a clean report never covers unread code. " + SourceColumn.positionFormat, "inputSchema": ["type": "object", "properties": [String: Any]()]],
             ["name": "api", "description": "Public surface of a package or type — signatures plus doc summaries, without reading files. An order of magnitude cheaper than reading the sources. Covers Swift, Objective-C, C and C++ (C++ headers need the flags from `sextant index`, which RUNS the project's build (its manifest, plugins and macros are code) — so it is the user's call, not an automatic step). Narrow it with package, type, or scope.", "inputSchema": [
                 "type": "object",
                 "properties": [
@@ -127,6 +127,7 @@ public enum MCPTools {
         "Navigate Swift code without grep. Prefer context (everything about one symbol) over a series of greps; "
             + "api (public surface of a package or type) over reading sources; "
             + "structural_search (AST pattern) over textual search. "
-            + "Tools: " + names.joined(separator: ", ") + "."
+            + "Tools: " + names.joined(separator: ", ") + ". "
+            + SourceColumn.positionFormat
     }
 }

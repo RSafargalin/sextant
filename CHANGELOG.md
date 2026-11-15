@@ -55,6 +55,30 @@ Human-readable text output is not covered — parse `--json`, not prose.
 
 ### Changed
 
+- **Breaking (`--json` schema, MCP answers): every column is 1-based and counted in UTF-16 code
+  units.** That is the unit an LSP client uses by default, so a column can be handed to an editor
+  as it is. Each source of positions used to report its own count of UTF-8 bytes — the index store
+  for `refs`, `defs`, `callers`, `callees`, `impls`, `supertypes`, `hierarchy`, `context`, `blast`
+  and `construct`; SwiftSyntax for `search` and `lint`; libclang for `search` and `lint` over
+  Objective-C, C and C++; and the candidates of a stale answer — so on a line with Cyrillic or an
+  emoji before the symbol every column was further right than an editor shows it (measured on
+  `let привет = 1; let a = target(привет)`: 35 where an editor shows 29). They agreed with each
+  other, and none was usable as an editor position. Now an emoji counts 2, a Cyrillic letter 1 and
+  a tab 1, in text output, in `--json`, in the MCP `structural_search` and `lint` answers, and in
+  everything an index-backed answer states. Lines are unchanged, and so is every column on a line
+  that is ASCII up to the symbol. The index store's column is restated from the text of the line
+  it was recorded on — the file as it is now, or, over a stale index, the text the store was built
+  from; where that line cannot be read (a file gone, an indexed text that is unavailable, a line
+  that no longer holds the column) a position states **no column**: `column` is absent from its
+  JSON and the text shows `file:line`, never a column in another unit. `--help`, the command help
+  and the MCP tool descriptions say how a position is written. The `search` and `lint` result
+  caches move to a new version (`search-v4`, `lint-v4`); `sextant index` and `doctor` remove the old
+  ones. Reading the line text costs nothing measurable: a warm `refs SwiftSources --project .` on
+  this repository (release build, index fresh against its snapshot, median of 15 runs, wall clock
+  including about 6 ms of the timing harness) took
+  0.073 s before and 0.074 s after, `refs SourceLocation` (101 references in 21 files) 0.074 s
+  both times — differences inside the run-to-run spread.
+
 - **An index-backed query costs about 0.06 s instead of about 1.15 s.** Measured on this
   repository on the maintainer's machine (Apple silicon, release build, `refs SwiftSources
   --project .`, index fresh against its snapshot), by timestamps around each phase of one query:

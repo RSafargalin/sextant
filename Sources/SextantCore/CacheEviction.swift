@@ -6,8 +6,8 @@ import Foundation
 public enum CacheNamespace {
     public static let declarations = "declarations-v5"
     public static let driftDeclarations = "drift-declarations-v2"
-    public static let search = "search-v3"
-    public static let lint = "lint-v3"
+    public static let search = "search-v4"
+    public static let lint = "lint-v4"
     public static let storeCoverage = "store-coverage-v3"
 
     /// Every versioned namespace in use. A directory `<family>-v<N>` of one of these families with

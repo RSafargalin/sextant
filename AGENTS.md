@@ -8,7 +8,7 @@ breaking something invisible.
 ## Build and verify
 
 ```bash
-swift build && swift test          # 576 tests
+swift build && swift test          # 590 tests
 make ci                            # build + test + self-lint — run this before committing
 swift test --filter "<suite name>" # one suite
 ```
@@ -96,9 +96,15 @@ wrong answer rather than a crash.
   `sextant index` keeps in `~/Library/Caches/sextant/index-snapshot-text/`), marks what cannot be
   mapped `unconfirmed` (never drops it), lists text matches the index does not confirm as
   candidates (never counted), and notes changed declarations. `ReferencePositions.verified` runs
-  before the mapping, against the indexed text. On a fresh index, or on the build-time basis, it is
-  a pass-through, and the output must stay byte-for-byte what it was — `StaleAnswerTests` and the
-  JSON-key test in `IndexDriftTests` guard that.
+  before the mapping, against the indexed text. It also restates every column the store recorded
+  (`IndexColumns`, from the text the position was recorded in). Beyond that, on a fresh index, or
+  on the build-time basis, it is a pass-through, and the output must stay byte-for-byte what it
+  was — `StaleAnswerTests` and the JSON-key test in `IndexDriftTests` guard that.
+- **`SourceColumn`** is the only place a column is converted into the one reported unit: 1-based,
+  in UTF-16 code units, in text, `--json` and MCP alike. The index store, SwiftSyntax and libclang
+  all count bytes of UTF-8; each restates its columns through it (`IndexColumns`, `SwiftColumns`,
+  `ByteLines`), never with arithmetic of its own. A position whose line cannot be read states no
+  column (nil), never one in bytes. `ColumnUnitTests` holds every layer to the same column.
 - **`StoreSelection.resolve`** is the only place that decides which stores answer: with no policy
   set, the rule that a store `sextant index` built goes first (a package's own index tree, or the
   umbrella in the cache — a candidate beside the others, never in place of them), then the

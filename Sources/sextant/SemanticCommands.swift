@@ -594,7 +594,7 @@ func runRelated(_ query: RelationQuery, label: String, arguments: [String]) -> I
             : first.location.marker
         print("   • \(first.name) [\(first.kind)]  \(shorten(first.location.path)):\(first.location.line)\(snippet)")
         for extra in group.dropFirst() {
-            print("     also \(shorten(extra.location.path)):\(extra.location.line):\(extra.location.column)\(extra.location.marker)")
+            print("     also \(shorten(extra.location.path)):\(extra.location.position)\(extra.location.marker)")
         }
     }
     if order.count > shownOrder.count { print("   … \(order.count - shownOrder.count) more (--limit \(limit))") }
