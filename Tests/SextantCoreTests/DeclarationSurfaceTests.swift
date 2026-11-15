@@ -104,7 +104,7 @@ struct DeclarationSurfaceTests {
         // A new block inserted before an existing one attributes nothing to the wrong block.
         let inserted = diff("extension Foo { public func a() {} }",
                             "extension Foo { public func z() {} }\nextension Foo { public func a() {} }")
-        #expect(inserted.added.map(\.header) == ["extension Foo"])
+        #expect(inserted.added.map(\.header) == ["extension Foo", "Foo.func z()"])
         #expect(inserted.removed.isEmpty)
         #expect(inserted.changed.isEmpty)
     }

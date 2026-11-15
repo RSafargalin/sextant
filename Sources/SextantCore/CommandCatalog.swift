@@ -10,6 +10,10 @@ public enum FlagValue: Sendable, Equatable {
     case text
     /// A file-system path, read relative to the working directory of the process that was invoked.
     case path
+    /// A directory, read relative to the working directory of the process that was invoked.
+    case directory
+    /// A directory under the project root, read relative to that root.
+    case subdirectory
     /// A whole number no smaller than `minimum`.
     case integer(minimum: Int)
     /// One of a fixed set of words.
@@ -20,7 +24,8 @@ public enum FlagValue: Sendable, Equatable {
         switch self {
         case .none: return "no value"
         case .text: return "a value"
-        case .path: return "a path"
+        case .path, .directory: return "a path"
+        case .subdirectory: return "a value"
         case .integer(let minimum) where minimum == 1: return "a positive integer"
         case .integer(let minimum) where minimum == 0: return "a non-negative integer"
         case .integer(let minimum): return "an integer of at least \(minimum)"
@@ -32,7 +37,7 @@ public enum FlagValue: Sendable, Equatable {
     public func problem(with value: String) -> String? {
         guard !value.isEmpty else { return "is empty; expected \(expectation)" }
         switch self {
-        case .none, .text, .path:
+        case .none, .text, .path, .directory, .subdirectory:
             return nil
         case .integer(let minimum):
             guard let number = Int(value) else { return "is not an integer; expected \(expectation)" }
@@ -53,7 +58,7 @@ public struct FlagSpec: Sendable, Equatable {
     public var takesValue: Bool { value != .none }
     /// The value is a file-system path, read relative to the working directory of the process
     /// that was invoked.
-    public var takesPath: Bool { value == .path }
+    public var takesPath: Bool { value == .path || value == .directory }
 
     public init(_ name: String, value: FlagValue, _ summary: String) {
         self.name = name
@@ -116,9 +121,9 @@ public enum CommandCatalog {
 
     // MARK: Shared flag sets
 
-    static let project = FlagSpec("--project", takesPath: true, "project root (otherwise CLAUDE_PROJECT_DIR or the current directory)")
+    static let project = FlagSpec("--project", value: .directory, "project root (otherwise CLAUDE_PROJECT_DIR or the current directory)")
     static let json = FlagSpec("--json", "structured output instead of text")
-    static let scope = FlagSpec("--scope", takesValue: true, "narrow the area to a subdirectory")
+    static let scope = FlagSpec("--scope", value: .subdirectory, "narrow the area to a subdirectory")
     static let maxFiles = FlagSpec("--max-files", value: .integer(minimum: 1),
                                    "how many files to read (default 4000); the answer names what it left out")
     static let apiBudget = FlagSpec("--budget", value: .integer(minimum: 1), "token budget for the surface (unbounded by default)")
@@ -137,9 +142,9 @@ public enum CommandCatalog {
     static let compact = FlagSpec("--compact", "compact: a histogram by file")
     static let verify = FlagSpec("--verify", "cross-check semantics against the textual occurrence count")
     static let reindex = FlagSpec("--reindex", "rebuild the index before the query")
-    static let indexStore = FlagSpec("--index-store", takesPath: true, "path to an index store")
+    static let indexStore = FlagSpec("--index-store", value: .directory, "path to an index store")
     static let indexLib = FlagSpec("--index-lib", takesPath: true, "path to libIndexStore.dylib")
-    static let derivedData = FlagSpec("--derived-data", takesPath: true,
+    static let derivedData = FlagSpec("--derived-data", value: .directory,
                                       "Xcode DerivedData directory (default: ~/Library/Developer/Xcode/DerivedData)")
     static let storePolicyFlag = FlagSpec("--store-policy", value: .choice(StorePolicy.allCases.map(\.rawValue)),
                                           "for this command only: \(StorePolicy.known) (see `sextant store`)")
@@ -197,7 +202,8 @@ public enum CommandCatalog {
             flags: [project, FlagSpec("--from", takesValue: true, "baseline revision (default HEAD)"),
                     FlagSpec("--to", takesValue: true, "second revision; omit to use the working tree"), json],
             details: ["Compares SYMBOLS, not lines: body edits and reformatting do not add noise.",
-                      "Swift only. Changed C, C++ and Objective-C files are listed as not compared, never dropped."],
+                      "Covers Swift, Objective-C, C and C++; the last three need the compile flags from `sextant index`.",
+                      "A changed file that could not be compared is listed with the reason, never dropped."],
             servedByDaemon: true
         ),
 

@@ -15,6 +15,13 @@ Human-readable text output is not covered — parse `--json`, not prose.
 
 ### Added
 
+- **Operators and precedence groups are part of the surface.** `api`, `map` and `changed` now list
+  `infix operator >>> : CompositionPrecedence`, `prefix operator √` and
+  `precedencegroup CompositionPrecedence { associativity: left higherThan: AdditionPrecedence }`;
+  they were not extracted at all, so adding or removing one changed nothing in `changed`. `--json`
+  gains two values of `kind`: `operator` and `precedencegroup`. The declaration caches move to
+  `declarations-v6` and `drift-declarations-v3`; the eviction removes the old versions.
+
 - **An answer over a stale index is stated against the sources as they are now, and says exactly
   where it cannot be.** When the index `sextant index` built is stale against its snapshot, every
   symbol answer — `refs`, `defs`, `callers`, `callees`, `impls`, `supertypes`, `hierarchy`,
@@ -54,6 +61,61 @@ Human-readable text output is not covered — parse `--json`, not prose.
   hole.
 
 ### Changed
+
+- **Contract, documented: exit code `1` is a failure that is not a usage error.** The contract
+  named only `0` and `2`, while `1` was already what a failed build, a failed write, a git failure
+  and a check that found problems returned. `sextant store use` returned `2` (usage error) when
+  `.sextant.json` could not be written; it now returns `1`. AGENTS.md and both READMEs list the
+  three codes.
+- **`changed` lists the members of an extension added or removed whole.** Its header names only
+  the type it extends, so `+ extension Foo: Equatable` said nothing of what was added; the members
+  now follow it, qualified (`+ Foo.func a()`). The same holds for an Objective-C category. An
+  extension that stays is compared member by member, as before. `--json` keeps its shape; the
+  `added`/`removed` lists gain those entries.
+- **A property whose type is inferred says so.** `public var count = 0` was shown as `var count`,
+  as if it had no type; it is now `var count = …` in `api`, `map` and `changed` — the type comes
+  from the elided initial value, and none is invented. A change of the initial value is not a
+  change of the signature.
+- **A budget below the minimum is raised and the answer says so.** `api --budget` below 200, and the
+  MCP `repo_map`/`api` budget below 500, were raised without a word; `call_hierarchy` over MCP raised
+  a `depth` below 1 the same way. The value used is unchanged, and the answer now names the raise
+  (`budget 10 is below the minimum of 500; 500 was used` — on stderr in the CLI, in the answer over
+  MCP).
+- **`.sextant.json` refuses a `budget` or `maxFiles` the matching flag would refuse.** `maxFiles: 0`
+  was raised to 1 and a negative `budget` emptied the map, both silently; such a file is now
+  reported as invalid by the rule the flag uses (`maxFiles: 0 is out of range; expected a positive
+  integer`), like any other invalid config: named on stderr (and in `doctor`), and its defaults not
+  applied.
+- **`structural_search` over MCP reads as many files as every other area tool.** With no `maxFiles`
+  in `.sextant.json` it read up to 8000 Swift files while the CLI and the other MCP tools read
+  4000; it now reads 4000, and states the stop as before. The default lives in one place.
+- **Through `sextant serve`, stdout and stderr keep the order the command wrote them in** when the
+  caller's two streams are one file (one terminal, or `2>&1`): the daemon captured them apart and
+  the client printed stdout first, so a warning that a direct run printed before the results came
+  after them. Such a caller's streams are now captured as one, with stdout buffered as it would be
+  in the caller's process. Callers whose streams go to different files are answered as before. An
+  older client or daemon falls back to the previous behaviour.
+- **`doctor` resolves a client command written as a bare name through `PATH`.** A `.mcp.json` or
+  hook entry `sextant` was looked up as a file in the working directory and reported as "not an
+  executable file"; it is now found the way a shell finds it and shown with the file it led to,
+  with a note that a client started with another `PATH` may not find it.
+- **`init --client claude-desktop` says when the registration it finds serves another project.**
+  The machine-wide file holds one `sextant` entry, and "already registered" was printed whatever
+  project that entry named; it now says `⚠ sextant is registered for claude-desktop with another
+  project (…), not this one (--force to point it here)`, and does not tell you to restart the client.
+- **`changed --help` no longer says "Swift only"**: it covers Objective-C, C and C++ with the flags
+  from `sextant index`, as the MCP description already said.
+- **Shell completion offers directories for `--derived-data`**, read from the kind each flag is
+  declared with in the command catalog rather than from a list of its own.
+- **The telemetry log is created readable by its owner only** (`0600`, as the adoption log already
+  was): its entries name the queries asked. An existing file keeps its mode.
+- **Releases.** The release workflow builds the fixture's index store and flags before the tests (it
+  ran them without, so the C-family and semantic tests skipped themselves); refuses a tag that is
+  not `vX.Y.Z[-suffix]` and passes every tag-derived value to the shell through the environment;
+  and never replaces an archive already published — a repeat run completes a release that has no
+  archive yet and fails on one that has, because a rebuild is not byte-identical and the published
+  sha256 is already in the notes and the formula. CI runs with `contents: read`. (Unverified on
+  GitHub Actions: checked for YAML syntax only.)
 
 - **Breaking (`--json` schema, MCP answers): every column is 1-based and counted in UTF-16 code
   units.** That is the unit an LSP client uses by default, so a column can be handed to an editor
@@ -168,6 +230,41 @@ Human-readable text output is not covered — parse `--json`, not prose.
 
 ### Fixed
 
+- **`doctor --fix` reports a failed index build.** It ran the build and discarded the result, so a
+  build that failed over an older store ended in "✅ ready"; it now prints `❌ doctor --fix: the
+  index build failed (exit N)` and exits 1.
+- **The compile flags a failed build printed are kept.** Under SwiftPM's Swift Build system the
+  flags are read from the build's output, and a file prints them only when it compiles: a first
+  `sextant index` that failed on a Swift error after the C files compiled stored nothing, and the
+  next, successful and incremental, run compiled nothing and asked for `swift package clean`. A
+  failed build now stores the flags it printed (merged with what was known, as a successful one
+  does), and says so.
+- **A `.sextant.json` edited during an MCP session decides the stores of the very next call.** The
+  config was forgotten only inside `tools/call`, after the call's stores had been chosen with the
+  old store policy, so a policy written mid-session took effect one call late (and never for
+  `resources/read` or completion). It is now forgotten at the start of every message.
+- **`list_implementations` no longer calls a declared-only symbol unknown.** A C function declared in
+  a header and defined nowhere the index saw was "symbol not found" there, while `who_defines`
+  showed it; it now answers "no implementations found" for it, and "symbol not found" only for a
+  name the index has no record of.
+- **`lint --rules` names the error of the shape the file has.** A rules array with `pattern` instead
+  of `patterns` was reported as "Expected to decode Dictionary<String, Any> but found an array
+  instead" — the error of the object form; it now says that the key `patterns` is missing.
+- **A transient `accept()` error no longer stops `sextant serve`.** An interrupted call, a
+  connection the client dropped before it was accepted, or a moment without free descriptors
+  (`EINTR`, `ECONNABORTED`, `EMFILE`, `ENFILE`, `ENOBUFS`, `ENOMEM`) ended the serving loop and the
+  daemon; they are now waited out. A closed listener still ends it.
+- **`sextant mcp` closes its index database at the end of input every time.** The session's index
+  was also held by the signal handlers, which are released on their queue whenever that runs, so
+  the process could exit with the database still open — the next command then imported the whole
+  store again. Seen as an intermittent failure of `CleanStopTests` under load.
+- **Tests.** The test process runs with a home of its own (`CFFIXED_USER_HOME` under `/tmp`, set
+  before any test; `Tests/TestHome`), so no test writes into the real `~/Library/Caches/sextant`
+  any more; `make ci` runs the binary with `.build/fixture-home`, which the test home starts from.
+  Tests that returned early, and passed, when their throwaway package did not build now fail; the
+  ones that need something absent are skipped with the reason. `make ci` runs `golden`, as CI
+  does. Redundant `#require` warnings are gone.
+
 - **A source deleted before a build no longer stays in answers under a label that says "fresh".**
   A build does not remove the unit of a deleted file from its store, so `callers target` after
   deleting a caller's file and running `sextant index` still counted and listed the file, with
@@ -218,13 +315,18 @@ Human-readable text output is not covered — parse `--json`, not prose.
   entry. `umbrella/` and `compile-db/` entries are now named by a hash of the canonical root and
   record the root they belong to; a compile database is `compile-db/<hash>/compile_commands.json`,
   and the flags of the roots around and inside a root are found by the roots the entries record.
-  Entries under the old names are never read again and are removed by the cache eviction. **Once
-  after upgrading**, a project indexed by an earlier version has its flags captured again: the next
-  `sextant index` rebuilds an umbrella from scratch, and reads the flags of a single package from
-  the build graph where SwiftPM's native build system writes one; where the flags come only from
-  what the build prints (SwiftPM's Swift Build system, Xcode), an incremental build prints none,
-  and `sextant index` says so and asks for a clean build (`swift package clean`, `xcodebuild clean`)
-  before it runs again.
+  Queries never read entries under the old names. **Once after upgrading**, the first
+  `sextant index` of a project carries its flags over: when the project's new entry has none and
+  the file of the old naming for exactly that root exists, its commands (less those for files that
+  are gone) become the new entry, which keeps the old file's write time — the time the flags were
+  captured, which the staleness note judges by — and `sextant index` says so in one line; the build
+  that follows merges its own capture over them, and the cache eviction then removes the old file.
+  Where there is no old file for that root (it was never indexed, or the old file is already gone),
+  the flags are captured from the build as for a new project: an umbrella is rebuilt from scratch,
+  a single package's flags are read from the build graph where SwiftPM's native build system writes
+  one, and where they come only from what the build prints (SwiftPM's Swift Build system, Xcode) an
+  incremental build prints none, and `sextant index` says so and asks for a clean build
+  (`swift package clean`, `xcodebuild clean`) before it runs again.
 - **Robustness of the index layer.**
   - **A helper that hangs no longer hangs the query, and no helper reads the caller's input.**
     `git`, `xcrun` and `swift --version` are run with the null device as stdin (a helper reading

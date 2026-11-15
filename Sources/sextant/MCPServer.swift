@@ -66,6 +66,11 @@ func runMCP(arguments: [String]) -> Int32 {
             (method, id, params) = (name, given, arguments)
         }
 
+        // `.sextant.json` as it is now, before anything this message does reads it: the store
+        // policy in it decides the stores below, so a config forgotten later than this would let a
+        // policy edited mid-session take effect one message late.
+        clearConfigMemo()
+
         // The stores this call is answered from, decided once per call: the signature below and
         // the trust label of the answer are read from the same decision.
         let resolution = CallResolution { resolveStores(in: arguments) }
@@ -105,6 +110,10 @@ func runMCP(arguments: [String]) -> Int32 {
                                       indexProblem: { indexUnavailableReason(arguments) }, warnedInvalidConfig: &configWarned)
         handleMCP(method: method, id: id, params: params, context: context)
     }
+    // The session's reference goes here, at the end of input: the signal handlers hold the same
+    // object, and a cancelled handler is released on its queue whenever that runs — possibly after
+    // the process has exited with the database still open.
+    index = nil
     return 0
 }
 
@@ -317,7 +326,6 @@ private func handleMCP(method: String, id: Any?, params: [String: Any], context:
     case "tools/call":
         index?.pollForChanges()              // pick up reindexing on a hot store
         SwiftSources.clearFileListMemo()     // fresh file list per call, so new files are seen
-        clearConfigMemo()                    // and a `.sextant.json` edited mid-session takes effect
         // An undeclared tool or arguments its schema does not admit are refused before anything
         // runs: a value of the wrong type used to be replaced by the default, and the answer did
         // not say so.
@@ -355,7 +363,7 @@ private func handleMCP(method: String, id: Any?, params: [String: Any], context:
 /// How many files an area tool may read, and the line that says what it did not. An agent never
 /// sees stderr, so on a large project the bound has to travel inside the answer or the answer
 /// reads as complete.
-private func fileLimit(_ context: ToolContext) -> Int { max(1, context.config?.maxFiles ?? 4000) }
+private func fileLimit(_ context: ToolContext) -> Int { max(1, context.config?.maxFiles ?? ProjectConfig.defaultMaxFiles) }
 
 private func scaleNoteMCP(_ context: ToolContext, includeTests: Bool = false) -> [String] {
     let limit = fileLimit(context)
@@ -367,13 +375,10 @@ private func scaleNoteMCP(_ context: ToolContext, includeTests: Bool = false) ->
 }
 
 /// Tools that work over an area of the project rather than a symbol — they need a valid scope.
-private let areaTools: Set<String> = ["repo_map", "structural_search", "lint", "api", "changed"]
+private let areaTools = MCPTools.names(with: .readsArea)
 
 /// Tools whose answer comes from the index, and which therefore carry its trust label.
-private let indexBackedTools: Set<String> = [
-    "context", "body", "blast_radius", "who_defines", "find_references", "find_callers",
-    "list_implementations", "call_hierarchy", "api", "repo_map",
-]
+private let indexBackedTools = MCPTools.names(with: .answersFromIndex)
 
 /// Output cap: a long surface is truncated with an honest note — narrowing the query is
 /// cheaper for the agent than receiving a wall of text.
@@ -445,8 +450,9 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
         guard let symbol = symbol() else { return ("the symbol parameter is required", true) }
         guard let set = context.translated?.value else { return (context.indexProblem(), true) }
         // "No implementations" is a statement about a symbol that exists. For one the index has
-        // never heard of, it is a made-up answer — the other six symbol tools say so.
-        guard !set.resolveSymbols(forName: symbol).isEmpty else { return ("symbol not found: \(symbol)", true) }
+        // never heard of, it is a made-up answer — the other six symbol tools say so. A symbol the
+        // index records only declarations of exists, as `who_defines` shows it.
+        guard set.knowsSymbol(named: symbol) else { return ("symbol not found: \(symbol)", true) }
         let related = set.related(toName: symbol, query: .implementations, limit: .max)
         let staleness = SymbolReport.staleness(set.staleness(forName: symbol, query: .references),
                                                locations: related.map(\.location), symbol: symbol, style: .mcp, path: shorten)
@@ -462,7 +468,8 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
         guard let symbol = symbol() else { return ("the symbol parameter is required", true) }
         guard let set = context.translated?.value else { return (context.indexProblem(), true) }
         let direction: CallDirection = (args["direction"] as? String) == "callers" ? .callers : .callees
-        let depth = max(1, (args["depth"] as? Int) ?? 3)
+        let raisedDepth = RaisedValue((args["depth"] as? Int) ?? 3, minimum: 1, name: "depth")
+        let depth = raisedDepth.value
         let roots = set.resolveSymbols(forName: symbol)
         guard !roots.isEmpty else { return ("symbol not found: \(symbol)", true) }
         var visited = Set<String>()
@@ -493,6 +500,7 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
         for root in roots { walk(root.usr, "\(root.name) [\(root.kind)]", root.location, nil, true, depth, 0) }
         lines += SymbolReport.staleness(set.staleness(forName: symbol, query: .references), locations: positions,
                                         symbol: symbol, style: .mcp, path: shorten)
+        if let note = raisedDepth.note { lines.append("⚠ \(note)") }
         return (lines.joined(separator: "\n"), false)
 
     case "repo_map":
@@ -507,7 +515,7 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
         catch let failure as PatternSearch.Failure where failure.mayBeCFamily { swiftRejection = failure.description }
         catch { return ("invalid pattern: \(error)", true) }
         let root = URL(fileURLWithPath: context.project, isDirectory: true)
-        let scanLimit = max(1, context.config?.maxFiles ?? 8000)   // clamped: 0 or negative would disable search
+        let scanLimit = fileLimit(context)
         let shownLimit = 200
         var lines: [String] = []
         // Matches past the first 200 are counted, not printed: the answer states the total it cut.
@@ -596,6 +604,8 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
         // Objective-C, C and C++ too.
         let rootURL = URL(fileURLWithPath: root, isDirectory: true)
         let package = (args["package"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        // Below 500 tokens the surface holds nothing useful; a smaller budget is raised, and the answer says so.
+        let raisedBudget = RaisedValue((args["budget"] as? Int) ?? context.config?.budget ?? 8000, minimum: 500, name: "budget")
         let surface = PublicAPI.generate(
             projectRoot: root,
             package: package,
@@ -605,7 +615,7 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
             fileLimit: fileLimit(context),
             // The MCP surface is read by an agent with a context window, so here the budget has a
             // default: the CLI can afford to hand a person three megabytes, a tool call cannot.
-            tokenBudget: max(500, (args["budget"] as? Int) ?? context.config?.budget ?? 8000)
+            tokenBudget: raisedBudget.value
         )
         let bounded = scaleNoteMCP(context)
         let cxxHeaders = IndexDeclarations.publicHeaderSummaries(root: rootURL, index: index, package: package).cxxHeaders
@@ -613,7 +623,8 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
                                                               compileDatabaseRoot: context.projectRoot).unanswered
         let answer = ([capped(surface, hint: "narrow it with package, type, or scope")]
                       + (index == nil ? [] : IndexDeclarations.conditionalHeaderNote(root: rootURL, package: package))
-                      + StructuralCoverage.report(unanswered) + bounded).joined(separator: "\n")
+                      + StructuralCoverage.report(unanswered) + bounded
+                      + [raisedBudget.note].compactMap { $0.map { "⚠ \($0)" } }).joined(separator: "\n")
         return (answer, false)
 
     case "changed":
@@ -650,8 +661,10 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
 /// answer, whichever way it is asked for.
 private func repoMapText(budget requested: Int?, context: ToolContext) -> String {
     // The token budget is honoured (a field report found it being ignored); the default
-    // comes from .sextant.json, as in the CLI. Clamped: a budget of 0 would collapse the map.
-    let budget = max(500, requested ?? context.config?.budget ?? 4000)
+    // comes from .sextant.json, as in the CLI. Below 500 the map would collapse, so a smaller
+    // budget is raised and the answer says so.
+    let raised = RaisedValue(requested ?? context.config?.budget ?? 4000, minimum: 500, name: "budget")
+    let budget = raised.value
     // The index is passed here as it is in the CLI: without it the map covers Swift only,
     // while the same command in a terminal covers Objective-C, C and C++ as well. What is
     // missing is named, because a map that looks complete is worse than a short one.
@@ -667,6 +680,7 @@ private func repoMapText(budget requested: Int?, context: ToolContext) -> String
         map += "\n\n⚠ \(foreign.count) non-Swift file(s) are missing from the map: no index store. "
              + "Build one with `sextant index`."
     }
+    if let note = raised.note { map += "\n\n⚠ \(note)" }
     return map
 }
 

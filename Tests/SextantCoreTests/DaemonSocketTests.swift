@@ -12,6 +12,21 @@ struct DaemonSocketTests {
             .appendingPathComponent("sextant-\(UUID().uuidString.prefix(8)).sock").path
     }
 
+    /// An error from accept(2) used to end the serving loop whatever it was, so one interrupted
+    /// call or a moment without free descriptors stopped the daemon.
+    @Test("A transient accept error is waited out; a closed listener ends the wait")
+    func transientAcceptErrorsAreRetried() {
+        var script: [(Int32, Int32)] = [(-1, EINTR), (-1, ECONNABORTED), (-1, EMFILE), (-1, ENFILE), (7, 0)]
+        var pauses = 0
+        let accepted = DaemonSocket.acceptRetrying(attempt: { script.removeFirst() }, pause: { pauses += 1 })
+        #expect(accepted == 7)
+        #expect(pauses == 2)
+
+        var closed: [(Int32, Int32)] = [(-1, EINTR), (-1, EBADF)]
+        #expect(DaemonSocket.acceptRetrying(attempt: { closed.removeFirst() }, pause: {}) == nil)
+        #expect(closed.isEmpty)
+    }
+
     @Test("The socket path is under the sun_path limit and stable per project")
     func socketPathFitsLimit() {
         let long = "/Users/someone/Documents/Projects/" + String(repeating: "nested-directory/", count: 20) + "App"

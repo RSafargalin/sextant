@@ -51,19 +51,31 @@ jobs:
             exit 1
           fi
 
+      # Every value that comes from the tag reaches the shell through the environment, never by
+      # expression interpolation into the script, and a tag that is not a version is refused here.
       - name: Release version
         id: meta
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
-          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          tag="$RELEASE_TAG"
+          if ! printf '%s' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+            echo "::error::not a release tag: $tag (expected vX.Y.Z or vX.Y.Z-suffix)"
+            exit 1
+          fi
           version="${tag#v}"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "archive=sextant-$version-macos-universal.tar.gz" >> "$GITHUB_OUTPUT"
           case "$version" in
-            *-*) echo "prerelease=true" >> "$GITHUB_OUTPUT" ;;
-            *)   echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
+            *-*) prerelease=true ;;
+            *)   prerelease=false ;;
           esac
+          # The later steps read these from the environment.
+          {
+            echo "RELEASE_TAG=$tag"
+            echo "RELEASE_VERSION=$version"
+            echo "RELEASE_ARCHIVE=sextant-$version-macos-universal.tar.gz"
+            echo "RELEASE_PRERELEASE=$prerelease"
+          } >> "$GITHUB_ENV"
 
       # The tag and Sextant.version are two sources of truth; a mismatch ships a release that
       # lies about its version in `sextant --version` and in the MCP handshake.
@@ -72,13 +84,22 @@ jobs:
           set -euo pipefail
           source_version=$(sed -n 's/.*static let version = "\([^"]*\)".*/\1/p' Sources/SextantCore/Sextant.swift)
           source_version=${source_version%%$'\n'*}
-          if [ "$source_version" != "${{ steps.meta.outputs.version }}" ]; then
-            echo "::error::tag ${{ steps.meta.outputs.tag }} does not match Sextant.version = $source_version"
+          if [ "$source_version" != "$RELEASE_VERSION" ]; then
+            echo "::error::tag $RELEASE_TAG does not match Sextant.version = $source_version"
             exit 1
           fi
 
       # A tag can be placed on any commit, and a release must not ship unverified. PR CI does not
       # cover this: a tag can bypass the pull request entirely.
+      - name: Build
+        run: swift build
+
+      # The same preparation as CI: without the fixture's index store and compile flags the
+      # semantic and C-family tests skip themselves, and a green run would check nothing.
+      - name: Prepare the fixture (index store + compile flags)
+        # In the home the tests start from (see Makefile and Tests/TestHome), not the runner's own.
+        run: CFFIXED_USER_HOME="$PWD/.build/fixture-home" $(swift build --show-bin-path)/sextant index --project Tests/Fixtures/IndexFixture
+
       - name: Tests
         run: swift test
 
@@ -125,40 +146,39 @@ jobs:
         run: |
           set -euo pipefail
           actual=$(./dist/sextant --version)
-          if [ "$actual" != "${{ steps.meta.outputs.version }}" ]; then
-            echo "::error::binary reports version '$actual', expected '${{ steps.meta.outputs.version }}'"
+          if [ "$actual" != "$RELEASE_VERSION" ]; then
+            echo "::error::binary reports version '$actual', expected '$RELEASE_VERSION'"
             exit 1
           fi
           ./dist/sextant help >/dev/null
 
       - name: Package and sha256
-        id: package
         run: |
           set -euo pipefail
-          archive="${{ steps.meta.outputs.archive }}"
+          archive="$RELEASE_ARCHIVE"
           tar -czf "dist/$archive" -C dist sextant
           sha=$(shasum -a 256 "dist/$archive" | awk '{print $1}')
-          echo "sha256=$sha" >> "$GITHUB_OUTPUT"
+          echo "RELEASE_SHA256=$sha" >> "$GITHUB_ENV"
           echo "$sha  $archive" > "dist/$archive.sha256"
 
       - name: Release notes
         run: |
           set -euo pipefail
           cat > dist/notes.md <<EOF
-          ## sextant ${{ steps.meta.outputs.version }}
+          ## sextant $RELEASE_VERSION
 
-          macOS universal (arm64 + x86_64), built from tag \`${{ steps.meta.outputs.tag }}\`.
+          macOS universal (arm64 + x86_64), built from tag \`$RELEASE_TAG\`.
 
           \`\`\`
-          sha256  ${{ steps.package.outputs.sha256 }}
+          sha256  $RELEASE_SHA256
           \`\`\`
 
           ### Installation
 
           \`\`\`bash
-          curl -fsSL -O https://github.com/${{ github.repository }}/releases/download/${{ steps.meta.outputs.tag }}/${{ steps.meta.outputs.archive }}
-          shasum -a 256 ${{ steps.meta.outputs.archive }}   # compare with the sha256 above
-          tar -xzf ${{ steps.meta.outputs.archive }}
+          curl -fsSL -O https://github.com/$GITHUB_REPOSITORY/releases/download/$RELEASE_TAG/$RELEASE_ARCHIVE
+          shasum -a 256 $RELEASE_ARCHIVE   # compare with the sha256 above
+          tar -xzf $RELEASE_ARCHIVE
           xattr -d com.apple.quarantine sextant || true     # the binary is not signed or notarised
           mkdir -p ~/.local/bin && install -m 0755 sextant ~/.local/bin/sextant
           \`\`\`
@@ -176,8 +196,8 @@ jobs:
           Update the formula in the tap (\`Formula/sextant.rb\`):
 
           \`\`\`ruby
-          url "https://github.com/${{ github.repository }}/releases/download/${{ steps.meta.outputs.tag }}/${{ steps.meta.outputs.archive }}"
-          sha256 "${{ steps.package.outputs.sha256 }}"
+          url "https://github.com/$GITHUB_REPOSITORY/releases/download/$RELEASE_TAG/$RELEASE_ARCHIVE"
+          sha256 "$RELEASE_SHA256"
           \`\`\`
           EOF
 
@@ -186,17 +206,28 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          tag="${{ steps.meta.outputs.tag }}"
-          archive="${{ steps.meta.outputs.archive }}"
+          tag="$RELEASE_TAG"
+          archive="$RELEASE_ARCHIVE"
           prerelease=""
-          if [ "${{ steps.meta.outputs.prerelease }}" = "true" ]; then prerelease="--prerelease"; fi
-          # Idempotent: a repeat run on the same tag re-uploads the artefacts instead of failing.
+          if [ "$RELEASE_PRERELEASE" = "true" ]; then prerelease="--prerelease"; fi
+          # A published archive is never replaced: its sha256 is already in the release notes and in
+          # the tap's formula, and a rebuild is not byte-identical (archive timestamps), so a
+          # replacement would break every checksum given out. A repeat run on a release that has
+          # no archive yet (an earlier run failed before uploading) completes it; one that already
+          # has it fails, and a new release needs a new tag.
           if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" "dist/$archive" "dist/$archive.sha256" --clobber
+            existing=$(gh release view "$tag" --json assets --jq '.assets[].name')
+            for name in "$archive" "$archive.sha256"; do
+              if printf '%s\n' "$existing" | grep -Fxq "$name"; then
+                echo "::error::release $tag already has $name; refusing to replace a published asset (tag a new version instead)"
+                exit 1
+              fi
+            done
+            gh release upload "$tag" "dist/$archive" "dist/$archive.sha256"
             gh release edit "$tag" --notes-file dist/notes.md
           else
             gh release create "$tag" \
-              --title "sextant ${{ steps.meta.outputs.version }}" \
+              --title "sextant $RELEASE_VERSION" \
               --notes-file dist/notes.md \
               $prerelease \
               "dist/$archive" "dist/$archive.sha256"

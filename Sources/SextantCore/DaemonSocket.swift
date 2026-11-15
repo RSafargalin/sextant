@@ -81,14 +81,35 @@ public enum DaemonSocket {
         _ = Darwin.close(listener.lock)   // releases the flock — the socket is free for a new daemon
     }
 
-    /// Waits for a client. nil means the socket was closed or the call was interrupted.
+    /// Waits for a client. nil means the socket was closed (or is otherwise unusable); an
+    /// interrupted call, a connection the client dropped before it was accepted, and a moment
+    /// without free descriptors or memory are waited out rather than ending the daemon.
     public static func accept(_ listener: Listener, readTimeout: TimeInterval = 15) -> Int32? {
-        let client = Darwin.accept(listener.handle, nil, nil)
-        guard client >= 0 else { return nil }
+        let accepted = acceptRetrying(attempt: {
+            let client = Darwin.accept(listener.handle, nil, nil)
+            return (client, client >= 0 ? 0 : errno)
+        }, pause: { usleep(100_000) })
+        guard let client = accepted else { return nil }
         // A silent client would otherwise block the sequential serving loop forever.
         var timeout = timeval(tv_sec: Int(readTimeout), tv_usec: 0)
         setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
         return client
+    }
+
+    /// Calls `attempt` until it yields a descriptor or fails in a way that does not pass: `EINTR`
+    /// and `ECONNABORTED` are retried at once, a shortage of descriptors, buffers or memory
+    /// (`EMFILE`, `ENFILE`, `ENOBUFS`, `ENOMEM`) after `pause`. Anything else — a closed or invalid
+    /// listener — returns nil.
+    static func acceptRetrying(attempt: () -> (descriptor: Int32, error: Int32), pause: () -> Void) -> Int32? {
+        while true {
+            let (descriptor, error) = attempt()
+            if descriptor >= 0 { return descriptor }
+            switch error {
+            case EINTR, ECONNABORTED: continue
+            case EMFILE, ENFILE, ENOBUFS, ENOMEM: pause()
+            default: return nil
+            }
+        }
     }
 
     /// Connects to the daemon; nil means there is none (no socket, or nobody listening).

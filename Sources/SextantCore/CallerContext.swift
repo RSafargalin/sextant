@@ -16,16 +16,29 @@ public struct CallerContext: Codable, Sendable, Equatable {
     public let environment: [String: String]
     /// Whether the caller's standard output is a terminal.
     public let outputIsTerminal: Bool
+    /// Whether the caller's standard output and standard error are one open file (one terminal, or
+    /// `2>&1`), so the order in which a command writes to the two is visible. nil from a client
+    /// that does not send it.
+    public let outputSharesErrorStream: Bool?
 
-    public init(environment: [String: String], outputIsTerminal: Bool) {
+    public init(environment: [String: String], outputIsTerminal: Bool, outputSharesErrorStream: Bool? = nil) {
         self.environment = environment.filter { Self.environmentNames.contains($0.key) }
         self.outputIsTerminal = outputIsTerminal
+        self.outputSharesErrorStream = outputSharesErrorStream
     }
 
     /// The context of the current process.
     public static func current(environment: [String: String] = ProcessInfo.processInfo.environment,
                                outputIsTerminal: Bool = isatty(STDOUT_FILENO) != 0) -> CallerContext {
-        CallerContext(environment: environment, outputIsTerminal: outputIsTerminal)
+        CallerContext(environment: environment, outputIsTerminal: outputIsTerminal,
+                      outputSharesErrorStream: sameFile(STDOUT_FILENO, STDERR_FILENO))
+    }
+
+    /// Whether two descriptors refer to the same file (device and inode).
+    static func sameFile(_ left: Int32, _ right: Int32) -> Bool {
+        var a = stat(), b = stat()
+        guard fstat(left, &a) == 0, fstat(right, &b) == 0 else { return false }
+        return a.st_dev == b.st_dev && a.st_ino == b.st_ino
     }
 
     // MARK: Reading

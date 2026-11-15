@@ -227,7 +227,10 @@ public enum RuleEngine {
     public static func loadRules(fromJSONAt path: String) throws -> RuleSet {
         let data = try Data(contentsOf: URL(fileURLWithPath: path))
         let name = (path as NSString).lastPathComponent
-        if let array = try? JSONDecoder().decode([Rule].self, from: data) {
+        // The file's own shape decides which form it is read as, so an error names what is wrong
+        // with that form rather than the other one.
+        if (try? JSONSerialization.jsonObject(with: data)) is [Any] {
+            let array = try JSONDecoder().decode([Rule].self, from: data)
             return RuleSet(rules: array, origin: "\(array.count) from \(name) (the built-in set is replaced)")
         }
         let file = try JSONDecoder().decode(RulesFile.self, from: data)

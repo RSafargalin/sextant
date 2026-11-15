@@ -46,6 +46,22 @@ struct ClientWiringTests {
         #expect(ClientWiring.mcpRegistration(projectRoot: real.path)?.binaryExists == true)
     }
 
+    /// A command written as a bare name is found the way a shell finds it; it used to be looked up
+    /// as a file in the working directory and reported missing.
+    @Test("A bare command is resolved through PATH, not read as a file name")
+    func bareCommandIsResolvedThroughPath() throws {
+        let bare = ClientWiring.Registration(source: ".mcp.json", command: "ls mcp", binary: "ls")
+        #expect(bare.isLookedUpInPath)
+        #expect(bare.resolvedBinary(searchPath: "/nowhere:/bin") == "/bin/ls")
+        #expect(bare.resolvedBinary(searchPath: "/nowhere") == nil)
+        let missing = ClientWiring.Registration(source: ".mcp.json", command: "sextant-not-installed-anywhere",
+                                                binary: "sextant-not-installed-anywhere")
+        #expect(!missing.binaryExists)
+        let absolute = ClientWiring.Registration(source: ".mcp.json", command: "/bin/ls", binary: "/bin/ls")
+        #expect(absolute.resolvedBinary(searchPath: "") == "/bin/ls")
+        #expect(absolute.binaryDescription == "/bin/ls")
+    }
+
     @Test("The hook is found where a client actually keeps it, and only when it is ours")
     func findsOurHook() throws {
         let root = project { root in

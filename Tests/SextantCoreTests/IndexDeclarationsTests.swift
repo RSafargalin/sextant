@@ -26,15 +26,15 @@ struct IndexDeclarationsTests {
     }
 
     @Test("A declaration that exists only in a header is kept")
-    func headerOnlyDeclarationSurvives() {
+    func headerOnlyDeclarationSurvives() throws {
         let result = IndexDeclarations.withoutHeaderDuplicates([
             summary("Sources/Core/include/Core.h", [(.structKind, "struct Counter"), (.function, "func bump")]),
             summary("Sources/Core/Core.cpp", [(.function, "func bump")]),
         ])
-        let header = try? #require(result.first { $0.relativePath.hasSuffix(".h") })
+        let header = try #require(result.first { $0.relativePath.hasSuffix(".h") })
         // `bump` is implemented, `Counter` is not — dropping it would hide it from the map, which
         // is the only place a reader would learn it exists.
-        #expect(header?.declarations.map { $0.header } == ["struct Counter"])
+        #expect(header.declarations.map { $0.header } == ["struct Counter"])
     }
 
     @Test("Swift files are untouched by header deduplication")

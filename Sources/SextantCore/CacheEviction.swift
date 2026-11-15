@@ -4,8 +4,8 @@ import Foundation
 /// The names of sextant's persistent caches, one place for all of them. A value-format change
 /// bumps the version of its namespace; the eviction removes every other version of the family.
 public enum CacheNamespace {
-    public static let declarations = "declarations-v5"
-    public static let driftDeclarations = "drift-declarations-v2"
+    public static let declarations = "declarations-v6"
+    public static let driftDeclarations = "drift-declarations-v3"
     public static let search = "search-v4"
     public static let lint = "lint-v4"
     public static let storeCoverage = "store-coverage-v3"

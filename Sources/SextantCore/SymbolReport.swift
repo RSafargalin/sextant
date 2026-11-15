@@ -108,7 +108,9 @@ public enum SymbolReport {
     ) -> Rendering {
         // A location whose file is gone is not a fact about the code — it is the index describing
         // a state that no longer exists. Deleting a file makes nothing "newer", so the freshness
-        // signal cannot see it; the answer itself is the only place where it shows.
+        // signal cannot see it; the answer itself is the only place where it shows. A missing file
+        // under the project root is left out of the answer before it gets here (`AbsentSources`),
+        // so what this names is a missing file outside it, such as a local dependency's source.
         var vanished: Set<String> = []
         // Snippets are read from the file as it is now, at the line the index recorded. After an
         // edit that line holds someone else's code, and printing it would attribute text to a

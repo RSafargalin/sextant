@@ -128,7 +128,7 @@ struct KnownDefectsSurfaceTests {
     @Test("a non-UTF-8 byte does not move the reported column")
     func nonUTF8DoesNotShiftOffsets() throws {
         let clean = "#import \"legacy.h\"\n// cafe cafe cafe\n@implementation Legacy\n- (NSInteger)legacyValue { return 1; }\n- (NSInteger)twice { return [self legacyValue] * 2; }\n@end\n"
-        guard let fixture = mixedFixture(name: "enc", objcBody: clean) else { return }
+        let fixture = try #require(mixedFixture(name: "enc", objcBody: clean), "the throwaway package did not build, so nothing here would be checked")
         defer { BuildProducts.removeIndexSnapshots(under: fixture.root) }
 
         let good = try sextant(["search", "[$X legacyValue]", "--project", fixture.root.path])
@@ -151,7 +151,7 @@ struct KnownDefectsSurfaceTests {
     @Test("an unreadable C-family source is reported as not scanned")
     func unreadableSourceIsReported() throws {
         let body = "#import \"legacy.h\"\n@implementation Legacy\n- (NSInteger)legacyValue { return 1; }\n- (NSInteger)twice { return [self legacyValue] * 2; }\n@end\n"
-        guard let fixture = mixedFixture(name: "perm", objcBody: body) else { return }
+        let fixture = try #require(mixedFixture(name: "perm", objcBody: body), "the throwaway package did not build, so nothing here would be checked")
         defer { BuildProducts.removeIndexSnapshots(under: fixture.root) }
         let file = fixture.root.appendingPathComponent("Sources/legacy/legacy.m")
         try? FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: file.path)
@@ -169,7 +169,7 @@ struct KnownDefectsSurfaceTests {
     @Test("repo_map over MCP covers the same languages as the CLI")
     func mcpRepoMapCoversCFamily() throws {
         let body = "#import \"legacy.h\"\n@implementation Legacy\n- (NSInteger)legacyValue { return 1; }\n- (NSInteger)twice { return [self legacyValue] * 2; }\n@end\n"
-        guard let fixture = mixedFixture(name: "mcpmap", objcBody: body) else { return }
+        let fixture = try #require(mixedFixture(name: "mcpmap", objcBody: body), "the throwaway package did not build, so nothing here would be checked")
         defer { BuildProducts.removeIndexSnapshots(under: fixture.root) }
 
         let cli = try sextant(["map", "--project", fixture.root.path])
@@ -185,14 +185,14 @@ struct KnownDefectsSurfaceTests {
     /// The agent, the main consumer, cannot see the trust marker at all.
     @Test("an MCP answer carries the provenance the CLI prints")
     func mcpAnswersCarryProvenance() throws {
-        guard let fixture = buildFixture(name: "prov", files: [
+        let fixture = try #require(buildFixture(name: "prov", files: [
             "Sources/prov/a.swift": "public struct Thing {}\npublic let one = Thing()\n",
         ], manifest: """
             // swift-tools-version: 5.9
             import PackageDescription
             let package = Package(name: "prov", products: [.library(name: "prov", targets: ["prov"])],
                                   targets: [.target(name: "prov")])
-            """) else { return }
+            """), "the throwaway package did not build, so nothing here would be checked")
         // Make the index stale the way ordinary work does: edit without rebuilding.
         Thread.sleep(forTimeInterval: 1.1)
         try? "public struct Thing {}\npublic let one = Thing()\npublic let two = Thing()\n"
@@ -210,14 +210,14 @@ struct KnownDefectsSurfaceTests {
     /// "no implementations found", which is a claim about a symbol that was never there.
     @Test("list_implementations distinguishes an unknown symbol from one without implementations")
     func listImplementationsNamesUnknownSymbols() throws {
-        guard let fixture = buildFixture(name: "impl", files: [
+        let fixture = try #require(buildFixture(name: "impl", files: [
             "Sources/impl/a.swift": "public protocol Shape {}\npublic struct Round: Shape {}\n",
         ], manifest: """
             // swift-tools-version: 5.9
             import PackageDescription
             let package = Package(name: "impl", products: [.library(name: "impl", targets: ["impl"])],
                                   targets: [.target(name: "impl")])
-            """) else { return }
+            """), "the throwaway package did not build, so nothing here would be checked")
 
         let known = try callTool("list_implementations", arguments: ["symbol": "Shape"], project: fixture.root.path)
         try #require(known?.text.contains("Round") == true)

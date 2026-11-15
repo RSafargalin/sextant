@@ -109,7 +109,7 @@ func scopedRoot(in arguments: [String]) -> String? {
 /// nothing at all. Now it bounds the walk and the answer says what it did not look at, which is
 /// the same contract every other partial answer here carries.
 func scaleLimit(in arguments: [String]) -> Int {
-    max(1, optionValue("--max-files", in: arguments).flatMap(Int.init) ?? loadConfig(arguments)?.maxFiles ?? 4000)
+    max(1, optionValue("--max-files", in: arguments).flatMap(Int.init) ?? loadConfig(arguments)?.maxFiles ?? ProjectConfig.defaultMaxFiles)
 }
 
 /// The line that keeps a bounded walk from reading as a complete one. Empty when everything was read.
@@ -272,6 +272,12 @@ private func runCommand(_ arguments: [String]) -> Int32 {
     case "hook": return runHook(arguments: rest)
     case "completion": return runCompletion(arguments: rest)
     case "index":
+        // Before the build, so a fresh capture merges over what was carried; before the eviction,
+        // which removes the file of the earlier naming.
+        let root = projectRoot(in: rest)
+        if let count = CompilationDatabase.migrateLegacyEntry(forRoot: root) {
+            print("compile database: \(count) file(s) carried over from the cache entry of an earlier version")
+        }
         let code = runIndex(arguments: rest)
         evictObsoleteCaches()
         return code

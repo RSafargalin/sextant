@@ -124,9 +124,15 @@ public enum DeclarationDiff {
         func order(_ lhs: Declaration, _ rhs: Declaration) -> Bool {
             (lhs.name, lhs.header, lhs.signature) < (rhs.name, rhs.header, rhs.signature)
         }
+        // An extension that appears or disappears whole adds or removes its members: its own
+        // header names only the type it extends, so its members follow it, qualified by that type.
+        func expanded(_ declaration: Declaration) -> [Declaration] {
+            guard declaration.kind == .extensionKind else { return [declaration] }
+            return [declaration] + declaration.members.map { $0.with(header: "\(declaration.name).\($0.header)") }
+        }
         return Result(
-            added: added.sorted(by: order),
-            removed: removed.sorted(by: order),
+            added: added.sorted(by: order).flatMap(expanded),
+            removed: removed.sorted(by: order).flatMap(expanded),
             changed: changed.sorted { order($0.1, $1.1) }
         )
     }

@@ -151,6 +151,21 @@ struct MCPAnswerBoundsTests {
 
     // MARK: - Cuts that state their total
 
+    /// A budget below the minimum used to be raised to 500 without a word, so the answer did not
+    /// match the request and did not say why.
+    @Test("A budget below the minimum is raised, and the answer says so", .enabled(if: hasBinary))
+    func raisedBudgetIsNamed() throws {
+        let root = try write(["Sources/M/A.swift": "public struct A {}\n"], name: "budget")
+        defer { remove(root) }
+
+        let small = try callTool("repo_map", ["budget": 10], project: root)
+        #expect(small.text.hasSuffix("⚠ budget 10 is below the minimum of 500; 500 was used"), "\(small.text)")
+        let usual = try callTool("repo_map", ["budget": 500], project: root)
+        #expect(!usual.text.contains("below the minimum"))
+        let shallow = try callTool("call_hierarchy", ["symbol": "A", "depth": 0], project: root)
+        #expect(shallow.isError || shallow.text.contains("⚠ depth 0 is below the minimum of 1; 1 was used"), "\(shallow.text)")
+    }
+
     @Test("lint over MCP states how many violations it did not print", .enabled(if: hasBinary))
     func lintStatesItsCut() throws {
         let body = (1...250).map { "    let value\($0) = try! make()" }.joined(separator: "\n")

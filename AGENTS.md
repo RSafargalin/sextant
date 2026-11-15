@@ -8,7 +8,7 @@ breaking something invisible.
 ## Build and verify
 
 ```bash
-swift build && swift test          # 602 tests
+swift build && swift test          # 624 tests
 make ci                            # build + test + self-lint — run this before committing
 swift test --filter "<suite name>" # one suite
 ```
@@ -59,7 +59,8 @@ These are public surface under semver. Renaming one is a breaking change, not a 
 - CLI command names and flags
 - `--json` output schemas
 - MCP tool names and their input schemas
-- exit codes (currently `0` success, `2` usage error)
+- exit codes (currently `0` success, `1` a failure that is not a usage error — a build, a write,
+  git, or a check that found problems — and `2` usage error)
 
 ## Single sources of truth — do not add a second one
 
@@ -166,6 +167,11 @@ confident wrong answers, and a contributor who reports the same way is part of t
   candidate; with no store policy set the one `sextant index` built answers, and an explicit
   policy decides otherwise. Tests find stores and binaries through
   `BuildProducts`, never through a hard-coded layout.
+- **Tests never see the real home.** `Tests/TestHome` sets `CFFIXED_USER_HOME` to a fresh
+  directory under `/tmp` before any test runs (child processes inherit it), seeded from
+  `.build/fixture-home` — the home `make fixture` indexes the fixture with, which is where the
+  fixture's compile flags live. A test that needs the real `~/Library/Caches/sextant` is wrong;
+  one that needs the fixture's flags runs after `make fixture`.
 - **Semantic commands need a built index store.** A test that queries semantics without one
   will pass vacuously. The integration fixture exists so this does not happen silently.
 - **Do not add a fourth patch for index staleness.** Four separate mechanisms existed once;

@@ -86,9 +86,9 @@ struct KnownDefectsScaleTests {
     @Test("a symbol with more references than the internal cap is counted, or the cap is named")
     func referenceCapIsNamed() throws {
         let calls = (1...1200).map { "    _ = Widget(); // \($0)" }.joined(separator: "\n")
-        guard let fixture = buildFixture(name: "cap", files: [
+        let fixture = try #require(buildFixture(name: "cap", files: [
             "Sources/cap/a.swift": "public struct Widget { public init() {} }\npublic func many() {\n\(calls)\n}\n",
-        ]) else { return }
+        ]), "the throwaway package did not build, so nothing here would be checked")
 
         let result = try sextant(["refs", "Widget", "--project", fixture.root.path, "--index-store", fixture.store])
         let usages = try #require(result.stdout.split(separator: "\n").first(where: { $0.contains("usages:") }))
@@ -106,10 +106,10 @@ struct KnownDefectsScaleTests {
     /// The rival is a real copy of the good store with one unit removed.
     @Test("with several usable stores the choice is made explicitly, not by timestamp alone")
     func storeChoiceIsNotByTimestampAlone() throws {
-        guard let fixture = buildFixture(name: "pick", files: [
+        let fixture = try #require(buildFixture(name: "pick", files: [
             "Sources/pick/a.swift": "public struct Widget { public init() {} }\n",
             "Sources/pick/b.swift": "public func use() { _ = Widget() }\n",
-        ]) else { return }
+        ]), "the throwaway package did not build, so nothing here would be checked")
 
         let rivalIndex = fixture.root.appendingPathComponent(".build/index-build/host/debug/index")
         try? FileManager.default.createDirectory(at: rivalIndex, withIntermediateDirectories: true)
@@ -206,9 +206,9 @@ struct KnownDefectsScaleTests {
     /// as "a closure, a local, or another kind of symbol".
     @Test("an answer emptied by scope names the store, not an invented reason")
     func foreignStoreIsNamedAsTheReason() throws {
-        guard let fixture = buildFixture(name: "wtfx", files: [
+        let fixture = try #require(buildFixture(name: "wtfx", files: [
             "Sources/wtfx/a.swift": "public struct Widget { public init() {} }\npublic func use() { _ = Widget() }\n",
-        ], subdirectory: ".claude/worktrees/agent") else { return }
+        ], subdirectory: ".claude/worktrees/agent"), "the throwaway package did not build, so nothing here would be checked")
         // The project is the checkout AROUND the worktree, so every record in the store is foreign.
         let outer = fixture.root.deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -225,12 +225,13 @@ struct KnownDefectsScaleTests {
     /// invalidates it, and nothing in the output says the answer came from a daemon.
     @Test("a file created after the daemon started is visible to it")
     func daemonSeesNewFiles() throws {
-        guard let fixture = buildFixture(name: "dmn", files: [
+        let fixture = try #require(buildFixture(name: "dmn", files: [
             "Sources/dmn/a.swift": "public struct First {}\n",
-        ]) else { return }
+        ]), "the throwaway package did not build, so nothing here would be checked")
 
         let daemon = Process()
-        daemon.executableURL = try #require(Self.binary)
+        let executable: URL = try #require(Self.binary)
+        daemon.executableURL = executable
         daemon.arguments = ["serve", "--project", fixture.root.path]
         daemon.standardOutput = FileHandle.nullDevice
         daemon.standardError = FileHandle.nullDevice

@@ -16,8 +16,29 @@ public enum ClientWiring {
         public let command: String
         /// The binary the command names, once the arguments are stripped off.
         public let binary: String
-        public var binaryExists: Bool {
-            FileManager.default.isExecutableFile(atPath: binary)
+        public var binaryExists: Bool { resolvedBinary() != nil }
+
+        /// The command names a program to be looked up in `PATH` rather than a file.
+        public var isLookedUpInPath: Bool { !binary.contains("/") }
+
+        /// The executable the command runs: the named file when it is a path, otherwise the first
+        /// match in `searchPath`, the way a shell finds it; nil when there is none.
+        public func resolvedBinary(searchPath: String = ProcessInfo.processInfo.environment["PATH"] ?? "") -> String? {
+            guard isLookedUpInPath else {
+                return FileManager.default.isExecutableFile(atPath: binary) ? binary : nil
+            }
+            for directory in searchPath.split(separator: ":", omittingEmptySubsequences: true) {
+                let candidate = URL(fileURLWithPath: String(directory)).appendingPathComponent(binary).path
+                if FileManager.default.isExecutableFile(atPath: candidate) { return candidate }
+            }
+            return nil
+        }
+
+        /// Where the binary was found, for a message: the path as written, plus the file `PATH`
+        /// led to when the command is a bare name.
+        public var binaryDescription: String {
+            guard isLookedUpInPath, let resolved = resolvedBinary() else { return binary }
+            return "\(binary) (through PATH: \(resolved); a client started with another PATH may not find it)"
         }
     }
 

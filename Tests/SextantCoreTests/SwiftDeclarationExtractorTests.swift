@@ -28,6 +28,39 @@ struct SwiftDeclarationExtractorTests {
         #expect(event?.header.contains("Identifiable, Hashable") == true)
     }
 
+    @Test("Operators and precedence groups are part of the surface")
+    func operatorsAndPrecedenceGroups() {
+        let declarations = SwiftDeclarationExtractor.declarations(source: """
+            precedencegroup CompositionPrecedence {
+                associativity: left
+                higherThan: AdditionPrecedence
+            }
+            infix operator >>> : CompositionPrecedence
+            prefix operator √
+            """)
+        #expect(declarations.map(\.kind) == [.precedenceGroupKind, .operatorKind, .operatorKind])
+        #expect(declarations.map(\.header) == [
+            "precedencegroup CompositionPrecedence { associativity: left higherThan: AdditionPrecedence }",
+            "infix operator >>> : CompositionPrecedence",
+            "prefix operator √",
+        ])
+        #expect(declarations.map(\.name) == ["CompositionPrecedence", ">>>", "√"])
+        #expect(declarations.allSatisfy { $0.access == .public })
+    }
+
+    /// The type of `var count = 0` is inferred; the header used to read `var count`, as if the
+    /// property had no type, and nothing said a value decided it.
+    @Test("A property whose type is inferred says so instead of inventing one")
+    func inferredTypeIsMarked() {
+        let declarations = SwiftDeclarationExtractor.declarations(source: """
+            public var count = 0
+            public let label: String = "x"
+            public var lazyValue: Int { 1 }
+            """)
+        #expect(declarations.map(\.header) == ["var count = …", "let label: String", "var lazyValue: Int { get }"])
+        #expect(declarations.first?.name == "count")
+    }
+
     @Test("Extracts type members with their access levels")
     func extractsMembers() {
         let declarations = SwiftDeclarationExtractor.declarations(source: source)

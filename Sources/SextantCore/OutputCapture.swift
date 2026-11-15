@@ -71,15 +71,24 @@ public enum OutputCapture {
 
     /// Runs `body` with stdout and stderr captured, returning its code and its output.
     ///
+    /// With `mergingStreams`, both go into one pipe, in the order `body` wrote them, and come back
+    /// together as `output` (`errorOutput` is empty): what a caller whose two streams are one file
+    /// would have seen. Standard output is then line-buffered when `lineBufferedOutput` (the caller
+    /// writes to a terminal) and fully buffered otherwise, as it would be in the caller's process.
+    ///
     /// Swapping descriptors is process-global: the caller must guarantee there are no concurrent
     /// invocations (the daemon serves requests sequentially).
-    public static func capture(_ body: () -> Int32) -> Captured {
+    public static func capture(mergingStreams: Bool = false, lineBufferedOutput: Bool = false,
+                               _ body: () -> Int32) -> Captured {
         let outPipe = Pipe(), errorPipe = Pipe()
+        let pipes = mergingStreams ? [outPipe] : [outPipe, errorPipe]
         var code: Int32 = 0
-        let texts = collect(from: [outPipe, errorPipe]) {
+        let texts = collect(from: pipes) {
+            fflush(stdout)
             let savedOut = dup(STDOUT_FILENO), savedError = dup(STDERR_FILENO)
             dup2(outPipe.fileHandleForWriting.fileDescriptor, STDOUT_FILENO)
-            dup2(errorPipe.fileHandleForWriting.fileDescriptor, STDERR_FILENO)
+            dup2(pipes.last!.fileHandleForWriting.fileDescriptor, STDERR_FILENO)
+            if mergingStreams { setvbuf(stdout, nil, lineBufferedOutput ? _IOLBF : _IOFBF, Int(BUFSIZ)) }
             code = body()
             fflush(stdout)
             fflush(stderr)
@@ -87,7 +96,8 @@ public enum OutputCapture {
             dup2(savedError, STDERR_FILENO)
             Darwin.close(savedOut)
             Darwin.close(savedError)
+            if mergingStreams { setvbuf(stdout, nil, isatty(STDOUT_FILENO) != 0 ? _IOLBF : _IOFBF, Int(BUFSIZ)) }
         }
-        return Captured(value: code, output: texts[0], errorOutput: texts[1])
+        return Captured(value: code, output: texts[0], errorOutput: mergingStreams ? "" : texts[1])
     }
 }

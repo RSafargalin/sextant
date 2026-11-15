@@ -225,20 +225,22 @@ public enum CompilationDatabase {
     /// later query with an absolute path are the same project, and keying on the raw string made
     /// the second one report every file as having no flags. The file keeps the
     /// `compile_commands.json` name and shape; the entry beside it records the root.
-    public static func path(forRoot root: String) -> URL {
-        entry(forRoot: root).appendingPathComponent(fileName)
+    public static func path(forRoot root: String, home: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
+        entry(forRoot: root, home: home).appendingPathComponent(fileName)
     }
 
     /// The cache entry of a project's database: a directory named by `CanonicalPath.entryName`,
     /// holding the database and the record of the root it was stored for.
-    public static func entry(forRoot root: String) -> URL {
-        directory.appendingPathComponent(CanonicalPath.entryName(of: root), isDirectory: true)
+    public static func entry(forRoot root: String, home: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
+        directory(home: home).appendingPathComponent(CanonicalPath.entryName(of: root), isDirectory: true)
     }
 
     static let fileName = "compile_commands.json"
 
-    private static var directory: URL {
-        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Caches/sextant/compile-db")
+    private static var directory: URL { directory(home: FileManager.default.homeDirectoryForCurrentUser) }
+
+    private static func directory(home: URL) -> URL {
+        CacheEviction.root(home: home).appendingPathComponent("compile-db", isDirectory: true)
     }
 
     /// The flags of the files under `root`, wherever they were stored.
@@ -288,8 +290,9 @@ public enum CompilationDatabase {
         return result
     }
 
-    public static func save(_ commands: [CompileCommand], forRoot root: String) throws {
-        let url = path(forRoot: root)
+    public static func save(_ commands: [CompileCommand], forRoot root: String,
+                            home: URL = FileManager.default.homeDirectoryForCurrentUser) throws {
+        let url = path(forRoot: root, home: home)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         CacheEviction.recordOwner(CanonicalPath.of(root), in: url.deletingLastPathComponent())
         let encoder = JSONEncoder()
@@ -297,14 +300,41 @@ public enum CompilationDatabase {
         try encoder.encode(commands).write(to: url, options: .atomic)
     }
 
-    public static func load(forRoot root: String) -> [CompileCommand] {
-        guard let data = try? Data(contentsOf: path(forRoot: root)),
+    public static func load(forRoot root: String, home: URL = FileManager.default.homeDirectoryForCurrentUser) -> [CompileCommand] {
+        load(from: path(forRoot: root, home: home))
+    }
+
+    private static func load(from url: URL) -> [CompileCommand] {
+        guard let data = try? Data(contentsOf: url),
               let commands = try? JSONDecoder().decode([CompileCommand].self, from: data) else { return [] }
         // Entries for files that are gone are dropped on the way in, not only when a new capture
         // merges over them: a database is pruned when it is next built, and a project that is not
         // rebuilt keeps them for as long as it is not. Measured on this machine: two databases
         // held 75 of 75 and 72 of 73 entries for files deleted weeks earlier.
         return commands.filter { FileManager.default.fileExists(atPath: $0.file) }
+    }
+
+    /// The file a project's flags were kept in before entries were named by a hash: the canonical
+    /// root with every `/` turned into `_`, plus `.json`, directly in `compile-db`.
+    static func legacyPath(forRoot root: String, home: URL) -> URL {
+        directory(home: home).appendingPathComponent(CanonicalPath.of(root).replacingOccurrences(of: "/", with: "_") + ".json")
+    }
+
+    /// Carries the flags of the earlier naming into the project's entry, once: when the entry has
+    /// no flags and the file of the earlier naming for exactly this root exists. Entries for files
+    /// that are gone are left behind, as `load` leaves them. The entry keeps the old file's write
+    /// time, which is when those flags were captured. Returns how many commands were carried over,
+    /// or nil when nothing was. The old file is left for `CacheEviction` to remove.
+    public static func migrateLegacyEntry(forRoot root: String,
+                                          home: URL = FileManager.default.homeDirectoryForCurrentUser) -> Int? {
+        guard load(forRoot: root, home: home).isEmpty else { return nil }
+        let legacy = legacyPath(forRoot: root, home: home)
+        let commands = load(from: legacy)
+        guard !commands.isEmpty,
+              let captured = (try? legacy.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate,
+              (try? save(commands, forRoot: root, home: home)) != nil else { return nil }
+        try? FileManager.default.setAttributes([.modificationDate: captured], ofItemAtPath: path(forRoot: root, home: home).path)
+        return commands.count
     }
 
     /// When the flags were captured — the file's own write time, so the stored JSON keeps the

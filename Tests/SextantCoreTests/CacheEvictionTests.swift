@@ -135,6 +135,32 @@ struct CacheEvictionTests {
         }
     }
 
+    /// The eviction removes a compile database of the earlier naming, and it runs after
+    /// `sextant index`; the index run carries the flags over first, or they would be lost.
+    @Test("A compile database of the earlier naming survives one `sextant index` into the new entry, then goes",
+          .enabled(if: BuildProducts.hasSextantBinary, "sextant is not built — run `swift build` first"),
+          .timeLimit(.minutes(5)))
+    func legacyCompileDatabaseIsCarriedOverBeforeItIsEvicted() throws {
+        let home = try Home()
+        let root = home.base.appendingPathComponent("pkg")
+        try BuildProducts.writeCPackage(at: root, swift: "import CLib\nlet value = lib_value()\n")
+        // A C file no target builds: only the old database knows flags for it.
+        let extra = root.appendingPathComponent("Extra/extra.c")
+        try FileManager.default.createDirectory(at: extra.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "int extra;\n".write(to: extra, atomically: true, encoding: .utf8)
+        let legacyName = "compile-db/" + root.path.replacingOccurrences(of: "/", with: "_") + ".json"
+        let command = CompileCommand(directory: root.path, file: extra.path, arguments: ["clang", "-DOLD=1", "-c", extra.path])
+        try home.file(legacyName, String(decoding: try JSONEncoder().encode([command]), as: UTF8.self))
+
+        let run = try BuildProducts.runSextant(["index", "--project", root.path], home: home.home)
+        #expect(run.code == 0, "\(run.errors)")
+        #expect(run.output.contains("compile database: 1 file(s) carried over"), "\(run.output)")
+        let carried = CompilationDatabase.load(forRoot: root.path, home: home.home)
+        #expect(carried.first { $0.file == extra.path }?.arguments.contains("-DOLD=1") == true, "\(carried.map(\.file))")
+        #expect(carried.contains { $0.file.hasSuffix("lib.c") })
+        #expect(!home.exists(legacyName))
+    }
+
     @Test("A socket no daemon holds goes once it is old; one a daemon holds stays")
     func orphanedSocketsAreRemoved() throws {
         let home = try Home()

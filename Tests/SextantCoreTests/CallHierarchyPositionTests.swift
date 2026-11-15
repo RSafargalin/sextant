@@ -14,6 +14,12 @@ struct CallHierarchyPositionTests {
         return BuildProducts.sextantBinary(under: root)
     }
 
+    /// An index store of this repository, which the test over `--project .` answers from.
+    static var ownStore: String? {
+        BuildProducts.indexStore(under: URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent())
+    }
+
     private struct Output { let stdout: String, stderr: String; var all: String { stdout + stderr } }
 
     private func sextant(_ arguments: [String]) throws -> Output {
@@ -69,7 +75,7 @@ struct CallHierarchyPositionTests {
 
     @Test("a callee is shown where it is defined, and its call site is named separately")
     func calleeShowsItsDefinition() throws {
-        guard let fixture = buildFixture() else { return }
+        let fixture = try #require(buildFixture(), "the throwaway package did not build, so nothing here would be checked")
         defer { try? FileManager.default.removeItem(at: fixture.root) }
 
         let result = try sextant(["hierarchy", "middle", "--callees", "--depth", "2",
@@ -85,7 +91,7 @@ struct CallHierarchyPositionTests {
 
     @Test("a caller is shown where it is defined, with the line the call is on")
     func callerShowsItsDefinition() throws {
-        guard let fixture = buildFixture() else { return }
+        let fixture = try #require(buildFixture(), "the throwaway package did not build, so nothing here would be checked")
         defer { try? FileManager.default.removeItem(at: fixture.root) }
 
         let result = try sextant(["hierarchy", "target", "--callers", "--depth", "2",
@@ -99,10 +105,12 @@ struct CallHierarchyPositionTests {
     /// A symbol the index has no definition for — a Foundation initialiser, say — cannot be given
     /// a definition position. Standing the call site in for one silently is what makes a wrong
     /// answer; saying so makes it a partial one.
-    @Test("a symbol with no definition in the index is marked, not given a made-up position")
+    @Test("a symbol with no definition in the index is marked, not given a made-up position",
+          .enabled(if: CallHierarchyPositionTests.ownStore != nil,
+                   "needs an index store of this repository — run `sextant index --project .`"))
     func externalSymbolIsMarked() throws {
         let result = try sextant(["hierarchy", "state", "--callees", "--depth", "2", "--project", "."])
-        guard result.stdout.contains("call hierarchy") else { return }   // no index here: not applicable
+        try #require(result.stdout.contains("call hierarchy"), "no hierarchy was answered: \(result.stdout)")
         for line in result.stdout.split(separator: "\n") where line.contains("init(fileURLWithPath") {
             #expect(line.contains("that is the call site"))
             #expect(line.contains("no definition"))

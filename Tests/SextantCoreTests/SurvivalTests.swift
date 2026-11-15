@@ -145,7 +145,7 @@ struct SurvivalTests {
         build.standardError = FileHandle.nullDevice
         try build.run()
         build.waitUntilExit()
-        guard build.terminationStatus == 0 else { return }
+        try #require(build.terminationStatus == 0, "the fixture did not build, so nothing here would be checked")
 
         let path = try #require(BuildProducts.indexStore(under: root), "the fixture did not produce an index store")
 

@@ -6,8 +6,8 @@ import Testing
 /// while a defect was open it sat inside `withKnownIssue` so that fixing it failed the suite
 /// rather than passing unnoticed. All of them are fixed; these are regression guards now.
 ///
-/// Prerequisites (a toolchain, `libIndexStore`, a build that succeeds) are treated as "not
-/// applicable" rather than failure — the same way the existing integration suite does it.
+/// A throwaway package that does not build fails the test: a test that returned early on it would
+/// pass having checked nothing.
 @Suite("Known defects: index-backed answers", .serialized)
 struct KnownDefectsIndexTests {
 
@@ -40,7 +40,7 @@ struct KnownDefectsIndexTests {
     }
 
     /// A built package: sources on disk plus the store its build produced. `nil` when the
-    /// environment cannot build one, which is a skip, not a failure.
+    /// build failed, which fails the test that needed it.
     private struct Fixture {
         let root: URL
         let store: String
@@ -84,10 +84,10 @@ struct KnownDefectsIndexTests {
     /// state that no longer exists, and it has to be said rather than served as a fact.
     @Test("a deleted source makes the index stale")
     func deletionMarksTheIndexStale() throws {
-        guard let fixture = buildFixture(name: "ghost", files: [
+        let fixture = try #require(buildFixture(name: "ghost", files: [
             "Sources/ghost/keep.swift": "public struct Keep {}\n",
             "Sources/ghost/gone.swift": "public struct Gone {}\n",
-        ]) else { return }
+        ]), "the throwaway package did not build, so nothing here would be checked")
         try? FileManager.default.removeItem(at: fixture.root.appendingPathComponent("Sources/ghost/gone.swift"))
 
         let result = try sextant(["defs", "Gone", "--project", fixture.root.path, "--index-store", fixture.store])
@@ -99,7 +99,7 @@ struct KnownDefectsIndexTests {
     /// kept the marker saying `fresh`, which is a trust label on a stale answer.
     @Test("an edit to a C-family source makes the index stale")
     func cFamilyEditMarksTheIndexStale() throws {
-        guard let fixture = buildFixture(name: "cfam", files: [
+        let fixture = try #require(buildFixture(name: "cfam", files: [
             "Sources/cfam/a.swift": "public struct Thing {}\n",
             "Sources/legacy/legacy.c": "int legacy(void) { return 1; }\n",
             "Sources/legacy/include/legacy.h": "int legacy(void);\n",
@@ -108,7 +108,7 @@ struct KnownDefectsIndexTests {
             import PackageDescription
             let package = Package(name: "cfam", products: [.library(name: "cfam", targets: ["cfam"])],
                                   targets: [.target(name: "legacy"), .target(name: "cfam", dependencies: ["legacy"])])
-            """) else { return }
+            """), "the throwaway package did not build, so nothing here would be checked")
         Thread.sleep(forTimeInterval: 1.1)   // mtime granularity: the edit must land after the build
         write("int legacy(void) { return 2; }\n", to: "Sources/legacy/legacy.c", in: fixture)
 
@@ -122,9 +122,9 @@ struct KnownDefectsIndexTests {
     /// the symbol that was asked for, so a shifted file answers with someone else's body.
     @Test("body answers with the requested symbol or refuses")
     func bodyDoesNotAnswerWithAnotherSymbol() throws {
-        guard let fixture = buildFixture(name: "body", files: [
+        let fixture = try #require(buildFixture(name: "body", files: [
             "Sources/body/a.swift": "public func alpha() -> Int { 1 }\npublic func beta() -> Int { 2 }\n",
-        ]) else { return }
+        ]), "the throwaway package did not build, so nothing here would be checked")
         write("public func beta() -> Int { 2 }\npublic func alpha() -> Int { 1 }\n", to: "Sources/body/a.swift", in: fixture)
 
         let result = try sextant(["body", "alpha", "--project", fixture.root.path, "--index-store", fixture.store])
@@ -135,9 +135,9 @@ struct KnownDefectsIndexTests {
     /// longer belongs to the symbol, and it is printed as if it did.
     @Test("a snippet either matches the symbol or is not printed")
     func snippetsAreNotPrintedFromMovedPositions() throws {
-        guard let fixture = buildFixture(name: "snip", files: [
+        let fixture = try #require(buildFixture(name: "snip", files: [
             "Sources/snip/a.swift": "public struct Widget {}\npublic let one = Widget()\n",
-        ]) else { return }
+        ]), "the throwaway package did not build, so nothing here would be checked")
         write("// shifted\n// shifted\npublic struct Widget {}\npublic let one = Widget()\n", to: "Sources/snip/a.swift", in: fixture)
 
         let result = try sextant(["refs", "Widget", "--project", fixture.root.path, "--index-store", fixture.store, "--full"])
@@ -153,9 +153,9 @@ struct KnownDefectsIndexTests {
     /// an empty array instead, so a machine reads "no references" where a human reads a warning.
     @Test("--json carries the textual degradation the text answer shows")
     func jsonCarriesDegradation() throws {
-        guard let fixture = buildFixture(name: "deg", files: [
+        let fixture = try #require(buildFixture(name: "deg", files: [
             "Sources/deg/a.swift": "public func f() { let localOnly = 1; _ = localOnly }\n",
-        ]) else { return }
+        ]), "the throwaway package did not build, so nothing here would be checked")
 
         let text = try sextant(["refs", "localOnly", "--project", fixture.root.path, "--index-store", fixture.store])
         let json = try sextant(["refs", "localOnly", "--project", fixture.root.path, "--index-store", fixture.store, "--json"])
@@ -172,7 +172,7 @@ struct KnownDefectsIndexTests {
     /// prose on stdout, so the consumer gets a parse error instead of an answer.
     @Test("--json always emits JSON, including when nothing was found")
     func jsonIsAlwaysJSON() throws {
-        guard let fixture = buildFixture(name: "js", files: ["Sources/js/a.swift": "public struct Thing {}\n"]) else { return }
+        let fixture = try #require(buildFixture(name: "js", files: ["Sources/js/a.swift": "public struct Thing {}\n"]), "the throwaway package did not build, so nothing here would be checked")
         for command in ["blast", "hierarchy", "context"] {
             let result = try sextant([command, "NoSuchSymbolXYZ", "--project", fixture.root.path,
                                       "--index-store", fixture.store, "--json"])
@@ -187,14 +187,14 @@ struct KnownDefectsIndexTests {
     /// "how many were shown", so a limited query answers a counting question with the limit.
     @Test("a limited answer does not present the limit as the total")
     func limitIsNotPresentedAsTheTotal() throws {
-        guard let fixture = buildFixture(name: "lim", files: [
+        let fixture = try #require(buildFixture(name: "lim", files: [
             "Sources/lim/a.swift": """
                 public protocol Shape {}
                 public struct A: Shape {}
                 public struct B: Shape {}
                 public struct C: Shape {}
                 """,
-        ]) else { return }
+        ]), "the throwaway package did not build, so nothing here would be checked")
 
         let all = try sextant(["impls", "Shape", "--project", fixture.root.path, "--index-store", fixture.store])
         let limited = try sextant(["impls", "Shape", "--project", fixture.root.path, "--index-store", fixture.store, "--limit", "1"])
@@ -206,12 +206,12 @@ struct KnownDefectsIndexTests {
     /// overstates how many places actually construct the type.
     @Test("construct counts a position once")
     func constructCountsAPositionOnce() throws {
-        guard let fixture = buildFixture(name: "ctor", files: [
+        let fixture = try #require(buildFixture(name: "ctor", files: [
             "Sources/ctor/a.swift": """
                 public struct Box { public init() {} }
                 public func make(_ x: Box = Box(), _ y: Box = Box()) {}
                 """,
-        ]) else { return }
+        ]), "the throwaway package did not build, so nothing here would be checked")
 
         let result = try sextant(["construct", "Box", "--project", fixture.root.path, "--index-store", fixture.store])
         let lines = result.stdout.split(separator: "\n").filter { $0.contains("a.swift:") }

@@ -130,6 +130,19 @@ func captureCompileDatabase(root: String, stores: [String], buildLog: URL) {
                         emptyReason: "no clang commands in the build graph or the build log (an incremental build compiles nothing — `swift package clean`, then run this again)")
 }
 
+/// Keeps the flags a failed build did state. Files that compiled before the failure printed their
+/// invocations, and a later incremental build that succeeds compiles them no more, so this is the
+/// only moment they can be captured. Nothing is said when there were none: the failure itself is.
+func captureCompileDatabaseFromFailedBuild(root: String, stores: [String], buildLog: URL) {
+    let fromGraph = CompilationDatabase.capture(fromStores: stores)
+    let captured = fromGraph.isEmpty
+        ? CompilationDatabase.commands(inBuildLog: (try? String(contentsOf: buildLog, encoding: .utf8)) ?? "")
+        : fromGraph
+    guard !captured.isEmpty else { return }
+    reportError("   the files it compiled stated their flags; they are kept:")
+    saveCompileDatabase(captured, forRoot: root, emptyReason: "")
+}
+
 /// Runs `swift build` for an index, with its output in a log rather than on the terminal: the
 /// build is verbose, and a failure is reported with the end of that log.
 private func runSwiftBuild(_ build: [String], in directory: URL, log: URL) -> Int32 {
@@ -223,7 +236,13 @@ func runDoctor(arguments: [String]) -> Int32 {
         let currentStores = resolveStorePaths(in: arguments)
         if currentStores.isEmpty || indexIsStale(paths: currentStores, root: root) {
             reportError("sextant doctor --fix: index missing or stale — building…")
-            _ = runIndex(arguments: arguments)
+            // A failed build is a problem of the setup even when an older store is still there to
+            // be diagnosed below.
+            let status = runIndex(arguments: arguments)
+            if status != 0 {
+                print("❌ doctor --fix: the index build failed (exit \(status)) — see the messages above")
+                ok = false
+            }
         }
     }
 
@@ -303,7 +322,7 @@ func runDoctor(arguments: [String]) -> Int32 {
     // file for ten days, and was never missed by a check-up that only ever asked about itself.
     if let mcp = ClientWiring.mcpRegistration(projectRoot: root) {
         if mcp.binaryExists {
-            print("✅ MCP registered in \(mcp.source) → \(shorten(mcp.binary))")
+            print("✅ MCP registered in \(mcp.source) → \(shorten(mcp.binaryDescription))")
         } else {
             print("❌ MCP registered in \(mcp.source) → \(mcp.binary), which is not an executable file")
             print("   the client starts nothing and says nothing — re-register: `sextant init --force`")
@@ -319,9 +338,9 @@ func runDoctor(arguments: [String]) -> Int32 {
             print("   it records nothing while looking installed — `sextant hook --install` prints the right snippet")
             ok = false
         } else if let last = AdoptionLog.lastRecordedAt() {
-            print("✅ adoption hook in \(hook.source) → \(shorten(hook.binary)), last wrote \(StoreSelection.stamp(last))")
+            print("✅ adoption hook in \(hook.source) → \(shorten(hook.binaryDescription)), last wrote \(StoreSelection.stamp(last))")
         } else {
-            print("⚠ adoption hook in \(hook.source) → \(shorten(hook.binary)), but nothing has ever been recorded")
+            print("⚠ adoption hook in \(hook.source) → \(shorten(hook.binaryDescription)), but nothing has ever been recorded")
             print("   the entry may sit in a file this client does not read — check with `sextant adoption`")
         }
     } else {
@@ -450,6 +469,7 @@ func runIndex(arguments: [String]) -> Int32 {
         }
         guard status == 0 else {
             reportError("sextant index: build failed (code \(status)).")
+            captureCompileDatabaseFromFailedBuild(root: rootPath, stores: store.map { [$0] } ?? [], buildLog: log)
             if let store {
                 reportError("   the store it left is marked as coming from a failed build: \(store)")
             }
@@ -517,6 +537,7 @@ func runIndex(arguments: [String]) -> Int32 {
     }
     guard status == 0 else {
         reportError("sextant index: umbrella build failed (code \(status)).")
+        captureCompileDatabaseFromFailedBuild(root: rootPath, stores: umbrellaStore.map { [$0] } ?? [], buildLog: log)
         return 1
     }
     guard let store = umbrellaStore else {

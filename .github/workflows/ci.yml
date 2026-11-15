@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
 
+# Least privilege: the job only reads the repository.
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -51,7 +55,8 @@ jobs:
       # skip themselves when it is not. Without this step the whole clang layer skipped on CI and
       # the run was green about code nobody had exercised.
       - name: Prepare the fixture (index store + compile flags)
-        run: $(swift build --show-bin-path)/sextant index --project Tests/Fixtures/IndexFixture
+        # In the home the tests start from (see Makefile and Tests/TestHome), not the runner's own.
+        run: CFFIXED_USER_HOME="$PWD/.build/fixture-home" $(swift build --show-bin-path)/sextant index --project Tests/Fixtures/IndexFixture
 
       # The semantic integration test and the MCP protocol e2e test need a built binary and a
       # toolchain; the runner has both, so green here means the layer was genuinely exercised.
@@ -59,13 +64,13 @@ jobs:
         run: swift test
 
       - name: Hygiene self-check (dogfood)
-        run: $(swift build --show-bin-path)/sextant lint --project . --rules sextant-rules.json
+        run: CFFIXED_USER_HOME="$PWD/.build/fixture-home" $(swift build --show-bin-path)/sextant lint --project . --rules sextant-rules.json
 
       # The store `sextant index` built for the fixture above is the one checked; a second build
       # into the fixture's `.build` would add a second store and leave the choice to a policy.
       - name: Golden — semantic regressions on the fixture
         run: |
-          $(swift build --show-bin-path)/sextant golden \
+          CFFIXED_USER_HOME="$PWD/.build/fixture-home" $(swift build --show-bin-path)/sextant golden \
             --project Tests/Fixtures/IndexFixture \
             --spec Tests/Fixtures/IndexFixture/golden.json
 

@@ -47,6 +47,28 @@ struct MCPClientTests {
         #expect((updated["sextant"] as? [String: Any])?["command"] as? String == binary)
     }
 
+    /// Claude Desktop keeps one list for the machine, so its `sextant` entry may serve another
+    /// project; "already registered" there told the user this one was served when it was not.
+    @Test("An entry for another project is named as such, and the same project spelled another way is not")
+    func registeredForAnotherProject() throws {
+        let existing: [String: Any] = ["mcpServers": ["sextant": ["command": "/bin/sextant", "args": ["mcp", "--project", "/other"]]]]
+        let (json, outcome) = MCPRegistration.merge(existing: existing, client: .claudeDesktop,
+                                                    binary: binary, projectRoot: "/p", force: false)
+        #expect(outcome == .registeredForAnotherProject(
+            "⚠ sextant is registered for claude-desktop with another project (/other), not this one (--force to point it here)"))
+        let servers = try #require(json["mcpServers"] as? [String: Any])
+        #expect(((servers["sextant"] as? [String: Any])?["args"] as? [String])?.last == "/other")
+
+        let same: [String: Any] = ["mcpServers": ["sextant": ["command": "/bin/sextant", "args": ["mcp", "--project", "/tmp/"]]]]
+        let (_, sameOutcome) = MCPRegistration.merge(existing: same, client: .claudeDesktop,
+                                                     binary: binary, projectRoot: "/private/tmp", force: false)
+        if case .alreadyRegistered = sameOutcome {} else { Issue.record("expected alreadyRegistered, got \(sameOutcome)") }
+
+        let (_, forced) = MCPRegistration.merge(existing: existing, client: .claudeDesktop,
+                                                binary: binary, projectRoot: "/p", force: true)
+        if case .written = forced {} else { Issue.record("--force should rewrite") }
+    }
+
     @Test("Each client is written where that client reads")
     func configurationLocations() {
         let home = URL(fileURLWithPath: "/Users/someone")

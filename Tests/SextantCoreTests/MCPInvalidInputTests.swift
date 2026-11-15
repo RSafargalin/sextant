@@ -21,7 +21,8 @@ struct MCPInvalidInputTests {
         defer { try? FileManager.default.removeItem(at: home) }
 
         let process = Process()
-        process.executableURL = try #require(Self.binary, "sextant is not built — run `swift build` first")
+        let executable: URL = try #require(Self.binary, "sextant is not built — run `swift build` first")
+        process.executableURL = executable
         process.arguments = ["mcp", "--project", Self.fixture.path]
         var environment = ProcessInfo.processInfo.environment
         environment["SEXTANT_STORE_POLICY"] = nil

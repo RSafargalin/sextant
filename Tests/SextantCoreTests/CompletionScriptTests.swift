@@ -52,6 +52,16 @@ struct CompletionScriptTests {
         #expect(bash.contains("compgen -f"))          // files for --rules and --spec
     }
 
+    @Test("Which flags complete paths is read from the catalog's flag kinds, not a list of its own")
+    func pathKindsComeFromTheCatalog() {
+        // `--derived-data` takes a directory and was missing from a hand-kept list.
+        #expect(CompletionScript.directoryFlags == ["--project", "--scope", "--index-store", "--derived-data"])
+        #expect(CompletionScript.fileFlags == ["--rules", "--spec", "--index-lib"])
+        let bash = CompletionScript.script(for: .bash)
+        let directoryCase = bash.components(separatedBy: "\n").first { $0.contains("--derived-data") && $0.hasSuffix(")") }
+        #expect(directoryCase?.contains("--project") == true)
+    }
+
     /// The real check: a shell parses what was generated. An unescaped `:` or `[` in a future
     /// command summary would produce a script that looks fine and fails on load.
     @Test("The generated script is accepted by the shell itself", arguments: CompletionScript.Shell.allCases)

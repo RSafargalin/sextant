@@ -39,8 +39,8 @@ git push -u origin HEAD && gh pr create
 make ci
 ```
 
-That is build + tests + sextant linting its own sources. CI runs the same thing plus the
-golden semantic regression set, so a green `make ci` locally is a good predictor.
+That is build + tests + sextant linting its own sources + the golden semantic regression set on
+the fixture — what CI runs, so a green `make ci` locally is a good predictor.
 
 Please also:
 

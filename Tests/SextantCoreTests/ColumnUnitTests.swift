@@ -156,8 +156,12 @@ struct ColumnUnitTests {
 
     private func json(_ arguments: [String]) throws -> Any {
         let run = try sextant(arguments + ["--project", Self.fixture.path, "--json"])
-        return try #require(try JSONSerialization.jsonObject(with: Data(run.stdout.utf8)),
-                            "not JSON:\n\(run.stdout)\n\(run.stderr)")
+        do {
+            return try JSONSerialization.jsonObject(with: Data(run.stdout.utf8))
+        } catch {
+            Issue.record("not JSON:\n\(run.stdout)\n\(run.stderr)")
+            throw error
+        }
     }
 
     /// (file name, line, column) of the references in a `refs --json` answer.

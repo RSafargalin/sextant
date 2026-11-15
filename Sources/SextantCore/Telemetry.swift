@@ -24,7 +24,8 @@ public enum Telemetry {
 
         // Atomic append: O_APPEND plus a single write(2) (atomic below PIPE_BUF), so concurrent
         // processes do not tear lines apart (FileHandle seek+write is not atomic across processes).
-        let fd = open(path, O_WRONLY | O_APPEND | O_CREAT, 0o644)
+        // Created readable by the owner only: the entries name the queries asked.
+        let fd = open(path, O_WRONLY | O_APPEND | O_CREAT, 0o600)
         guard fd >= 0 else { return }
         var payload = data
         payload.append(0x0A)

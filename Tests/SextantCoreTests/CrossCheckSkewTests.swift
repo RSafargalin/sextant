@@ -59,13 +59,13 @@ struct CrossCheckSkewTests {
     /// include it".
     @Test("occurrences in an unbuilt #if branch are named as the reason for the gap")
     func conditionalOccurrencesAreNamed() throws {
-        guard let fixture = buildFixture("""
+        let fixture = try #require(buildFixture("""
             public struct Gadget {}
             public func used() { _ = Gadget() }
             #if os(Linux)
             public func linuxOnly() { _ = Gadget(); _ = Gadget() }
             #endif
-            """) else { return }
+            """), "the throwaway package did not build, so nothing here would be checked")
         defer { try? FileManager.default.removeItem(at: fixture.root) }
 
         let output = try sextant(["refs", "Gadget", "--project", fixture.root.path,
@@ -79,10 +79,10 @@ struct CrossCheckSkewTests {
     /// prints on every run is one nobody reads.
     @Test("counts that agree say nothing extra")
     func agreeingCountsAreSilent() throws {
-        guard let fixture = buildFixture("""
+        let fixture = try #require(buildFixture("""
             public struct Plain {}
             public func used() { _ = Plain() }
-            """) else { return }
+            """), "the throwaway package did not build, so nothing here would be checked")
         defer { try? FileManager.default.removeItem(at: fixture.root) }
 
         let output = try sextant(["refs", "Plain", "--project", fixture.root.path,

@@ -35,9 +35,12 @@ let package = Package(
             name: "sextant",
             dependencies: ["SextantCore"]
         ),
+        // Gives the test process a home of its own before any test runs, so no test reads or
+        // writes the real `~/Library/Caches/sextant` or a client's configuration.
+        .target(name: "TestHome", path: "Tests/TestHome"),
         .testTarget(
             name: "SextantCoreTests",
-            dependencies: ["SextantCore"]
+            dependencies: ["SextantCore", "TestHome"]
         )
     ]
 )

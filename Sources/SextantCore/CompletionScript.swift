@@ -11,10 +11,14 @@ public enum CompletionScript {
     }
 
     /// Flags whose value is a directory: completion offers directories only, because offering
-    /// files there is noise the user has to step over every time.
-    static let directoryFlags: Set<String> = ["--project", "--scope", "--index-store"]
+    /// files there is noise the user has to step over every time. Read from the catalog's flag kinds.
+    static var directoryFlags: Set<String> { flagNames(where: { $0 == .directory || $0 == .subdirectory }) }
     /// Flags whose value is a file.
-    static let fileFlags: Set<String> = ["--rules", "--spec", "--index-lib"]
+    static var fileFlags: Set<String> { flagNames(where: { $0 == .path }) }
+
+    private static func flagNames(where kind: (FlagValue) -> Bool) -> Set<String> {
+        Set(CommandCatalog.commands.flatMap(\.flags).filter { kind($0.value) }.map(\.name))
+    }
 
     public static func script(for shell: Shell) -> String {
         switch shell {

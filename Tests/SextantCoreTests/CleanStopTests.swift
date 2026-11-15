@@ -45,7 +45,8 @@ struct CleanStopTests {
 
         func process(_ arguments: [String], daemon: Bool) throws -> Process {
             let process = Process()
-            process.executableURL = try #require(BuildProducts.sextantBinary(under: CleanStopTests.packageRoot))
+            let executable: URL = try #require(BuildProducts.sextantBinary(under: CleanStopTests.packageRoot))
+            process.executableURL = executable
             process.arguments = arguments
             process.currentDirectoryURL = home
             process.environment = environment(daemon: daemon)

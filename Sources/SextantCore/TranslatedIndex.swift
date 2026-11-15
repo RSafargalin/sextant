@@ -70,6 +70,13 @@ public struct TranslatedIndex: SemanticIndex {
         translated(base.resolveSymbols(forName: name), sorting: false)
     }
 
+    /// Whether the index knows a symbol of this name at all: one it has a definition for, or one
+    /// it records only declarations or uses of (a C function declared in a header and defined
+    /// nowhere the index saw).
+    public func knowsSymbol(named name: String) -> Bool {
+        !resolveSymbols(forName: name).isEmpty || !lookup(name: name, query: .references, limit: 1).isEmpty
+    }
+
     public func calls(ofUSR usr: String, direction: CallDirection) -> [RelatedSymbol] {
         translated(base.calls(ofUSR: usr, direction: direction))
     }

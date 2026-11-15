@@ -140,6 +140,10 @@ The column counts UTF-16 code units, the unit an LSP client uses by default: an 
 Cyrillic letter 1, a tab 1, so a column can be handed to an editor as it is. A position whose
 recorded line can no longer be read (a deleted file, say) states no column rather than a guess.
 
+Exit codes: `0` success; `1` a failure that is not a usage error (a build, a write, git, a check
+that found problems); `2` a usage error — a flag, a value or an argument the command does not
+understand.
+
 ### Big projects: a bounded answer, never a refusal
 
 The four file-walking commands are minutes of work on a large project — measured on one with

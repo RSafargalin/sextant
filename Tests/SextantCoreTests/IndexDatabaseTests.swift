@@ -281,7 +281,8 @@ struct IndexDatabaseTests {
         let store = try scratch.store(at: "pkg/index/store")
         let home = scratch.base.appendingPathComponent("home")
         let process = Process()
-        process.executableURL = try #require(BuildProducts.sextantBinary(under: Self.repositoryRoot))
+        let executable: URL = try #require(BuildProducts.sextantBinary(under: Self.repositoryRoot))
+        process.executableURL = executable
         process.arguments = ["defs", "EnglishGreeter", "--project", Self.fixture.path, "--index-store", store]
         var environment = ProcessInfo.processInfo.environment
         for name in ["SEXTANT_STORE_POLICY", "SEXTANT_DERIVED_DATA", "CLAUDE_PROJECT_DIR", "SEXTANT_TELEMETRY"] {

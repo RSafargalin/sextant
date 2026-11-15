@@ -135,7 +135,13 @@ public enum SwiftDeclarationExtractor {
         if let node = decl.as(VariableDeclSyntax.self) {
             let bindings = node.bindings.map { binding -> String in
                 var text = binding.pattern.trimmedDescription
-                if let type = binding.typeAnnotation { text += clean(type) }
+                if let type = binding.typeAnnotation {
+                    text += clean(type)
+                } else if binding.initializer != nil {
+                    // No type is written: it is inferred from the initial value, which is shown as
+                    // elided rather than replaced by a type the source does not state.
+                    text += " = …"
+                }
                 if let accessors = accessorSummary(binding.accessorBlock) { text += " " + accessors }
                 return text
             }
@@ -180,6 +186,17 @@ public enum SwiftDeclarationExtractor {
             if let whereClause = node.genericWhereClause { header += " " + clean(whereClause) }
             return Declaration(kind: .macroKind, header: header, access: explicitAccess(node.modifiers) ?? defaultAccess,
                                name: node.name.text)
+        }
+        // An operator and a precedence group are visible to every module that imports the one
+        // declaring them; they take no access modifier.
+        if let node = decl.as(OperatorDeclSyntax.self) {
+            return Declaration(kind: .operatorKind, header: clean(node), access: .public, name: node.name.text)
+        }
+        if let node = decl.as(PrecedenceGroupDeclSyntax.self) {
+            var header = "precedencegroup \(node.name.text) {"
+            let attributes = node.groupAttributes.map { clean($0) }
+            header += attributes.isEmpty ? " }" : " " + attributes.joined(separator: " ") + " }"
+            return Declaration(kind: .precedenceGroupKind, header: header, access: .public, name: node.name.text)
         }
         // A deinitializer cannot be called or referred to: adding or removing one changes nothing
         // another declaration can rely on, so it is not part of the surface.

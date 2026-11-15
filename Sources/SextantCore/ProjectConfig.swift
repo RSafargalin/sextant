@@ -13,6 +13,9 @@ public struct ProjectConfig: Codable, Sendable {
     /// reader's and is recorded here by `sextant store use`.
     public var storePolicy: String?
 
+    /// How many files a file-walking command reads when neither a flag nor the config says.
+    public static let defaultMaxFiles = 4000
+
     public init(budget: Int? = nil, maxFiles: Int? = nil, scope: String? = nil, rules: String? = nil,
                 exclude: [String]? = nil, storePolicy: String? = nil) {
         self.budget = budget
@@ -43,6 +46,15 @@ public struct ProjectConfig: Codable, Sendable {
             // an unknown key was silence.
             if let raw = config.storePolicy, StorePolicy.named(raw) == nil {
                 return .invalid("\(StorePolicy.configKey): unknown value '\(raw)' — known values are \(StorePolicy.known)")
+            }
+            // A number the matching flag would refuse is refused here too, by the same rule: a
+            // `maxFiles` of 0 used to be raised to 1 and a negative `budget` emptied the map, and
+            // neither said so.
+            for (key, value, flag) in [("budget", config.budget, CommandCatalog.apiBudget),
+                                       ("maxFiles", config.maxFiles, CommandCatalog.maxFiles)] {
+                if let value, let problem = flag.value.problem(with: String(value)) {
+                    return .invalid("\(key): \(value) \(problem)")
+                }
             }
             let unknown = unknownKeys(in: data)
             guard unknown.isEmpty else {

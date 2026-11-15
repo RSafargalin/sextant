@@ -38,26 +38,6 @@ func launchURL() -> URL {
         : URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent(raw)
 }
 
-/// Registers sextant in `.mcp.json` without losing anyone else's servers: only our own key is
-/// touched. nil means the file exists but `mcpServers` is not an object — overwriting would
-/// silently destroy a structure we do not own.
-private func mcpRegistration(existing: [String: Any]?, project: String, force: Bool) -> (json: [String: Any], status: String)? {
-    var root = existing ?? [:]
-    if let servers = root["mcpServers"], !(servers is [String: Any]) {
-        return nil
-    }
-    var servers = (root["mcpServers"] as? [String: Any]) ?? [:]
-    if servers["sextant"] != nil, !force {
-        return (root, "· .mcp.json: sextant is already registered (--force to overwrite)")
-    }
-    servers["sextant"] = [
-        "command": executablePath(),
-        "args": ["mcp", "--project", project]
-    ]
-    root["mcpServers"] = servers
-    return (root, existing == nil ? "✅ .mcp.json created" : "✅ .mcp.json: sextant server added (the others were kept)")
-}
-
 private func writeJSON(_ object: [String: Any], to url: URL) throws {
     let data = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
     try (String(decoding: data, as: UTF8.self) + "\n").write(to: url, atomically: true, encoding: .utf8)
@@ -105,6 +85,9 @@ func runInit(arguments: [String]) -> Int32 {
             mcpOK = false
         case .alreadyRegistered(let note):
             print(note)
+        case .registeredForAnotherProject(let note):
+            print(note)
+            mcpOK = false
         case .written(let note):
             do {
                 try FileManager.default.createDirectory(at: mcpURL.deletingLastPathComponent(),

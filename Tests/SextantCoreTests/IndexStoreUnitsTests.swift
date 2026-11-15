@@ -6,7 +6,8 @@ import Testing
 /// files on disk rather than against itself: an ABI declared by hand (the toolchain ships no
 /// headers) is exactly the kind of thing that looks plausible and returns rubbish, and a test that
 /// only compared the reader to its own output would not notice.
-@Suite("Index store units", .serialized)
+@Suite("Index store units", .serialized,
+       .enabled(if: BuildProducts.indexStoreLibrary != nil, "no libIndexStore beside the toolchain's swiftc"))
 struct IndexStoreUnitsTests {
 
     /// A built package, kept for the whole suite: the build is the expensive part.
@@ -39,14 +40,18 @@ struct IndexStoreUnitsTests {
         return BuildProducts.indexStore(under: root).map { store in (root, store) }
     }()
 
-    private func reader() throws -> IndexStoreUnits? {
-        guard IndexStoreUnits.discoverLibrary() != nil else { return nil }   // no toolchain: not applicable
-        return try IndexStoreUnits.shared()
+    private func reader() throws -> IndexStoreUnits {
+        try IndexStoreUnits.shared()
+    }
+
+    /// The suite's package, or a failure: a test that returned without it would check nothing.
+    private func builtFixture() throws -> (root: URL, store: String) {
+        try #require(Self.fixture, "the throwaway package did not build, so nothing here would be checked")
     }
 
     @Test("the units name the source files the build compiled")
     func mainFilesMatchTheSources() throws {
-        guard let fixture = Self.fixture, let reader = try reader() else { return }
+        let fixture = try builtFixture(), reader = try reader()
         let mainFiles = try reader.mainFiles(inStore: fixture.store)
 
         // Ground truth: the files on disk, not another query to the same library.
@@ -61,7 +66,7 @@ struct IndexStoreUnitsTests {
 
     @Test("a unit carries its target and its configuration")
     func unitsCarryBuildIdentity() throws {
-        guard let fixture = Self.fixture, let reader = try reader() else { return }
+        let fixture = try builtFixture(), reader = try reader()
         let units = try reader.units(inStore: fixture.store).filter { $0.mainFile.hasSuffix(".swift") }
         #expect(!units.isEmpty)
         for unit in units {
@@ -76,7 +81,7 @@ struct IndexStoreUnitsTests {
     /// early would still return plausible data.
     @Test("every unit in the store is read")
     func allUnitsAreWalked() throws {
-        guard let fixture = Self.fixture, let reader = try reader() else { return }
+        let fixture = try builtFixture(), reader = try reader()
         let onDisk = StoreCandidate.unitCount(ofStore: fixture.store)
         #expect(try reader.units(inStore: fixture.store).count == onDisk)
     }
@@ -87,7 +92,7 @@ struct IndexStoreUnitsTests {
     /// refuses a store without a `v*/units` directory before it ever gets here.
     @Test("a path that is not a store reads as empty, so emptiness is not evidence")
     func nonStoreReadsAsEmpty() throws {
-        guard let reader = try reader() else { return }
+        let reader = try reader()
         let empty = FileManager.default.temporaryDirectory.appendingPathComponent("sextant-not-a-store-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: empty, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: empty) }

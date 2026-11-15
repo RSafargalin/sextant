@@ -14,13 +14,13 @@ struct IndexStoreIntegrationTests {
             .appendingPathComponent("Fixtures/IndexFixture")
     }
 
-    @Test("build → defs/refs/impls against a real index store")
+    @Test("build → defs/refs/impls against a real index store",
+          .enabled(if: BuildProducts.indexStoreLibrary != nil, "no libIndexStore beside the toolchain's swiftc"))
     func endToEnd() throws {
         let fixture = Self.fixture
-        guard FileManager.default.fileExists(atPath: fixture.appendingPathComponent("Package.swift").path) else { return }
-        guard let swiftc = run("/usr/bin/xcrun", ["--find", "swiftc"]) else { return }
-        let library = (swiftc as NSString).deletingLastPathComponent.replacingOccurrences(of: "/bin", with: "/lib") + "/libIndexStore.dylib"
-        guard FileManager.default.fileExists(atPath: library) else { return }
+        try #require(FileManager.default.fileExists(atPath: fixture.appendingPathComponent("Package.swift").path),
+                     "the fixture package is missing")
+        let library = try #require(BuildProducts.indexStoreLibrary)
 
         _ = run("/usr/bin/env", ["swift", "build", "--enable-index-store", "--package-path", fixture.path])
 

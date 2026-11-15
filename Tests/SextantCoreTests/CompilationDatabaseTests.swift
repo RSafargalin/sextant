@@ -175,12 +175,86 @@ struct CompilationDatabaseTests {
         #expect(CompilationDatabase.commands(forFilesUnder: sibling.path).map(\.file) == [files[1].path])
     }
 
+    /// Before entries were named by a hash, a project's flags lived in `compile-db/<root with / as _>.json`.
+    @Test("The flags of the earlier naming are carried over once, for exactly this root, with their capture time")
+    func legacyEntryIsMigrated() throws {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("sextant-compile-db-legacy-\(UUID().uuidString.prefix(8))").resolvingSymlinksInPath()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let home = base.appendingPathComponent("home")
+        let root = base.appendingPathComponent("a")
+        let neighbour = base.appendingPathComponent("a_b")
+        let compileDB = CacheEviction.root(home: home).appendingPathComponent("compile-db")
+        try FileManager.default.createDirectory(at: compileDB, withIntermediateDirectories: true)
+        var files: [URL] = []
+        for project in [root, neighbour] {
+            try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+            let file = project.appendingPathComponent("c.c")
+            try "int c;\n".write(to: file, atomically: true, encoding: .utf8)
+            files.append(file)
+        }
+        func legacy(_ project: URL, files: [String]) throws -> URL {
+            let url = compileDB.appendingPathComponent(project.path.replacingOccurrences(of: "/", with: "_") + ".json")
+            let commands = files.map { CompileCommand(directory: project.path, file: $0, arguments: ["clang", "-c", $0]) }
+            try JSONEncoder().encode(commands).write(to: url)
+            return url
+        }
+        // Only the neighbour's file of the earlier naming exists: `/…/a` is a prefix of its name,
+        // and that is no reason to take it.
+        let neighbourFile = try legacy(neighbour, files: [files[1].path])
+        #expect(CompilationDatabase.migrateLegacyEntry(forRoot: root.path, home: home) == nil)
+        #expect(CompilationDatabase.load(forRoot: root.path, home: home).isEmpty)
+
+        let old = try legacy(root, files: [files[0].path, root.appendingPathComponent("gone.c").path])
+        let captured = Date(timeIntervalSince1970: 1_700_000_000)
+        try FileManager.default.setAttributes([.modificationDate: captured], ofItemAtPath: old.path)
+        #expect(CompilationDatabase.migrateLegacyEntry(forRoot: root.path, home: home) == 1)
+        #expect(CompilationDatabase.load(forRoot: root.path, home: home).map(\.file) == [files[0].path])
+        let written = try CompilationDatabase.path(forRoot: root.path, home: home)
+            .resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        #expect(written == captured)
+        let owner = try String(contentsOf: CompilationDatabase.entry(forRoot: root.path, home: home)
+            .appendingPathComponent(CacheEviction.ownerFileName), encoding: .utf8)
+        #expect(owner == root.path)
+        // Once: an entry with flags is never overwritten by the old file.
+        #expect(CompilationDatabase.migrateLegacyEntry(forRoot: root.path, home: home) == nil)
+        #expect(FileManager.default.fileExists(atPath: neighbourFile.path))
+    }
+
     @Test("An unknown project has an empty database, not a crash")
     func loadsNothingForUnknownProject() {
         #expect(CompilationDatabase.load(forRoot: "/nowhere-\(UUID().uuidString)").isEmpty)
     }
 
     // MARK: - Against a real build
+
+    /// Under SwiftPM's Swift Build system the flags are read from what the build prints, and a
+    /// file prints its flags only when it compiles. A first build that failed after the C file
+    /// compiled stored nothing, and the next, successful one compiled nothing and asked for
+    /// `swift package clean`.
+    @Test("The flags a failed build printed are kept, and a later incremental build finds them",
+          .enabled(if: BuildProducts.hasSextantBinary, "sextant is not built — run `swift build` first"),
+          .timeLimit(.minutes(5)))
+    func failedBuildKeepsTheFlagsItPrinted() throws {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("sextant-failed-flags-\(UUID().uuidString.prefix(8))").resolvingSymlinksInPath()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let home = base.appendingPathComponent("home"), root = base.appendingPathComponent("pkg")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        try BuildProducts.writeCPackage(at: root, swift: "import CLib\nlet broken: Int = \"text\"\n")
+
+        let failed = try BuildProducts.runSextant(["index", "--project", root.path], home: home)
+        #expect(failed.code == 1, "\(failed.errors)")
+        #expect(CompilationDatabase.load(forRoot: root.path, home: home).map { ($0.file as NSString).lastPathComponent } == ["lib.c"],
+                "\(failed.output)\n\(failed.errors)")
+
+        try "import CLib\nlet fixed = lib_value()\n".write(to: root.appendingPathComponent("Sources/App/app.swift"),
+                                                          atomically: true, encoding: .utf8)
+        let fixed = try BuildProducts.runSextant(["index", "--project", root.path], home: home)
+        #expect(fixed.code == 0, "\(fixed.errors)")
+        #expect(!fixed.errors.contains("swift package clean"), "\(fixed.errors)")
+        #expect(CompilationDatabase.load(forRoot: root.path, home: home).count == 1)
+    }
 
     private static var fixture: URL {
         URL(fileURLWithPath: #filePath)

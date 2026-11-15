@@ -28,7 +28,7 @@ struct InputValidationTests {
                 switch flag.value {
                 case .integer, .choice:
                     garbage = [[flag.name, "garbage-8k"], [flag.name, ""], [flag.name], [flag.name, "--json"]]
-                case .text, .path, .none:
+                case .text, .path, .directory, .subdirectory, .none:
                     garbage = [[flag.name, ""], [flag.name], [flag.name, "--json"]]
                 }
                 for arguments in garbage {
@@ -49,7 +49,7 @@ struct InputValidationTests {
                 switch flag.value {
                 case .integer(let minimum): values = [String(minimum), String(minimum + 1000)]
                 case .choice(let words): values = words
-                case .text, .path, .none: values = ["Sources"]
+                case .text, .path, .directory, .subdirectory, .none: values = ["Sources"]
                 }
                 for value in values {
                     let found = CommandCatalog.usageProblems(in: [flag.name, value], for: spec, environment: Self.noEnvironment)

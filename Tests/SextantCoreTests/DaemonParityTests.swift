@@ -156,6 +156,38 @@ struct DaemonParityTests {
         #expect(viaDaemon == direct)
     }
 
+    /// Regression: the daemon returned stdout and stderr apart and the client wrote stdout first,
+    /// so with both streams on one file a warning came after the results instead of before.
+    @Test("With stdout and stderr on one file, the daemon keeps the order a direct run has", .timeLimit(.minutes(2)))
+    func sharedStreamsKeepTheirOrder() throws {
+        let binary = try #require(BuildProducts.sextantBinary(under: Self.packageRoot), "sextant is not built")
+        let sandbox = try Sandbox()
+        let project = try sandbox.package(named: "order")
+        try "public func second() { Kept().work() }\n"
+            .write(to: project.appendingPathComponent("Sources/parity/second.swift"), atomically: true, encoding: .utf8)
+        let daemon = try Daemon(binary: binary, project: project, sandbox: sandbox)
+        defer { daemon.stop() }
+
+        func merged(daemon: Bool) throws -> String {
+            let process = Process()
+            process.executableURL = binary
+            process.arguments = ["search", "$X.work()", "--max-files", "1"]
+            process.currentDirectoryURL = project
+            process.environment = sandbox.environment(daemon ? [:] : ["SEXTANT_NO_DAEMON": "1"])
+            let both = Pipe()
+            process.standardOutput = both
+            process.standardError = both
+            process.standardInput = FileHandle.nullDevice
+            try process.run()
+            return OutputCapture.collect(from: [both]) { process.waitUntilExit() }[0]
+        }
+        let direct = try merged(daemon: false)
+        let viaDaemon = try merged(daemon: true)
+        #expect(daemon.answered("search"), "the daemon never answered:\n\(daemon.text)")
+        #expect(direct.contains("⚠ covered 1 of") && direct.contains("No matches."), "\(direct)")
+        #expect(viaDaemon == direct)
+    }
+
     /// Regression: the socket was named after the resolved path but the daemon compared the
     /// request against its own spelling, so a project reached through a symlink was refused.
     @Test("A project reached through a symlink is answered by its daemon", .timeLimit(.minutes(2)))

@@ -176,7 +176,8 @@ struct UncheckedInputTests {
 
     private func run(_ arguments: [String], input: String? = nil, home: URL) throws -> (code: Int32, out: String, err: String) {
         let process = Process()
-        process.executableURL = try #require(Self.binary, "sextant is not built — run `swift build` first")
+        let executable: URL = try #require(Self.binary, "sextant is not built — run `swift build` first")
+        process.executableURL = executable
         process.arguments = arguments
         var environment = ProcessInfo.processInfo.environment
         for name in ["SEXTANT_STORE_POLICY", "SEXTANT_DERIVED_DATA", "CLAUDE_PROJECT_DIR", "SEXTANT_TELEMETRY"] {

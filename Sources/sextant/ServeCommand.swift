@@ -70,8 +70,13 @@ func runServe(arguments: [String]) -> Int32 {
             // is what answers on a real project.
             SwiftSources.clearFileListMemo()
             clearConfigMemo()
+            // A caller whose stdout and stderr are one file sees the order the command wrote them
+            // in, so the two are captured as one stream for it.
             let captured = CallerContext.during(request.caller) {
-                OutputCapture.capture { dispatch(request.arguments) }
+                OutputCapture.capture(mergingStreams: request.caller?.outputSharesErrorStream == true,
+                                      lineBufferedOutput: request.caller?.outputIsTerminal == true) {
+                    dispatch(request.arguments)
+                }
             }
             response = DaemonResponse(exitCode: captured.value, output: captured.output, errorOutput: captured.errorOutput)
         } else {

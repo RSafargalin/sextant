@@ -50,6 +50,22 @@ struct RuleSetTests {
         #expect(try RuleEngine.loadRules(fromJSONAt: path).rules.map(\.id) == ["mine"])
     }
 
+    /// An array with a broken rule used to fall through to the object form, and the error said an
+    /// object was expected — about the one shape the file did not have.
+    @Test("An error in a rules array names the broken rule, not the object form")
+    func arrayErrorNamesTheRule() throws {
+        let path = try write("""
+        [{ "id": "mine", "message": "m", "pattern": "try! $X" }]
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        #expect {
+            try RuleEngine.loadRules(fromJSONAt: path)
+        } throws: { error in
+            guard case DecodingError.keyNotFound(let key, _) = error else { return false }
+            return key.stringValue == "patterns"
+        }
+    }
+
     @Test("The built-in set names itself a starting point, not a verdict")
     func builtinSaysWhatItIs() {
         // There is no universal default: `print-call` is wrong for a CLI, `force-unwrap` is noise

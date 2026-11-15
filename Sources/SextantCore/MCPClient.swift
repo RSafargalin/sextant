@@ -70,6 +70,9 @@ public enum MCPRegistration {
         /// overwriting a config the user hand-edited is not a repair.
         case refused(String)
         case alreadyRegistered(String)
+        /// A `sextant` entry exists and serves another project. Left alone without `force`; this
+        /// project is not served by it.
+        case registeredForAnotherProject(String)
     }
 
     /// Merges sextant into the servers of an existing configuration.
@@ -87,7 +90,12 @@ public enum MCPRegistration {
             }
             servers = object
         }
-        if servers["sextant"] != nil, !force {
+        if let present = servers["sextant"], !force {
+            if let other = registeredProject(present), CanonicalPath.of(other) != CanonicalPath.of(projectRoot) {
+                return (root, .registeredForAnotherProject(
+                    "⚠ sextant is registered for \(client.name) with another project (\(other)), not this one "
+                    + "(--force to point it here)"))
+            }
             return (root, .alreadyRegistered("· sextant is already registered for \(client.name) (--force to overwrite)"))
         }
 
@@ -96,5 +104,12 @@ public enum MCPRegistration {
         servers["sextant"] = entry
         root[client.serversKey] = servers
         return (root, .written("✅ registered for \(client.name)"))
+    }
+
+    /// The project an existing entry passes as `--project`, or nil when it names none.
+    static func registeredProject(_ entry: Any) -> String? {
+        guard let arguments = (entry as? [String: Any])?["args"] as? [String],
+              let flag = arguments.firstIndex(of: "--project"), flag + 1 < arguments.count else { return nil }
+        return arguments[flag + 1]
     }
 }

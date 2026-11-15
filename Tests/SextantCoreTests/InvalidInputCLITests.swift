@@ -31,7 +31,8 @@ struct InvalidInputCLITests {
 
     private func run(_ arguments: [String], scratch: Scratch, environment extra: [String: String] = [:]) throws -> Run {
         let process = Process()
-        process.executableURL = try #require(Self.binary, "sextant is not built — run `swift build` first")
+        let executable: URL = try #require(Self.binary, "sextant is not built — run `swift build` first")
+        process.executableURL = executable
         process.arguments = arguments
         var environment = ProcessInfo.processInfo.environment
         for name in ["SEXTANT_STORE_POLICY", "SEXTANT_DERIVED_DATA", "CLAUDE_PROJECT_DIR", "SEXTANT_TELEMETRY"] {

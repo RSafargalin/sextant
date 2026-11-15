@@ -135,8 +135,9 @@ private func useStorePolicy(named name: String, arguments: [String]) -> Int32 {
                                               options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
         try (String(decoding: data, as: UTF8.self) + "\n").write(toFile: path, atomically: true, encoding: .utf8)
     } catch {
+        // Not a usage error: the command was understood and the file system refused it.
         reportError("sextant store use: could not write \(shorten(path)): \(error)")
-        return 2
+        return 1
     }
     print("── store policy: \(policy.title)")
     print("   \(policy.what)")

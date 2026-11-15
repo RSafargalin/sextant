@@ -34,6 +34,8 @@ public enum DeclarationKind: String, Sendable, Codable {
     case caseKind = "case"
     case associatedtypeKind = "associatedtype"
     case macroKind = "macro"
+    case operatorKind = "operator"
+    case precedenceGroupKind = "precedencegroup"
 
     /// Whether the declaration is a container type, and so can have members.
     public var isType: Bool {
@@ -41,7 +43,7 @@ public enum DeclarationKind: String, Sendable, Codable {
         case .structKind, .classKind, .enumKind, .protocolKind, .actorKind, .extensionKind:
             return true
         case .function, .property, .initializer, .typealiasKind, .subscriptKind, .caseKind,
-             .associatedtypeKind, .macroKind:
+             .associatedtypeKind, .macroKind, .operatorKind, .precedenceGroupKind:
             return false
         }
     }

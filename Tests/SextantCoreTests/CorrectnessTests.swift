@@ -172,6 +172,17 @@ struct MCPToolsTests {
         }
     }
 
+    @Test("Which tools need a scope and which carry the index label is declared with the tools")
+    func traitsAreDeclaredWithTheTools() {
+        #expect(MCPTools.names(with: .readsArea) == ["repo_map", "structural_search", "lint", "api", "changed"])
+        #expect(MCPTools.names(with: .answersFromIndex) == [
+            "context", "body", "blast_radius", "who_defines", "find_references", "find_callers",
+            "list_implementations", "call_hierarchy", "api", "repo_map",
+        ])
+        // Traits are not part of the wire format.
+        for tool in MCPTools.definitions() { #expect(Set(tool.keys) == ["name", "description", "inputSchema", "annotations"]) }
+    }
+
     @Test("Server instructions are assembled from definitions, so the lists cannot drift")
     func instructionsListEveryTool() {
         let instructions = MCPTools.instructions()
@@ -330,6 +341,33 @@ struct ProjectConfigTests {
         }
         #expect(ProjectConfig.load(projectRoot: directory.path) == nil)
     }
+
+    @Test("A raised value names the request and the value used; one at the minimum is left alone")
+    func raisedValueNamesTheChange() {
+        let raised = RaisedValue(50, minimum: 200, name: "--budget")
+        #expect(raised.value == 200)
+        #expect(raised.note == "--budget 50 is below the minimum of 200; 200 was used")
+        #expect(RaisedValue(200, minimum: 200, name: "--budget").note == nil)
+        #expect(RaisedValue(201, minimum: 200, name: "--budget").value == 201)
+    }
+
+    @Test("A number the matching flag would refuse is named, not clamped or used as it is")
+    func outOfRangeNumbersAreNamed() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("sextant-cfg-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent(".sextant.json")
+        for (text, reason) in [(#"{"maxFiles": 0}"#, "maxFiles: 0 is out of range; expected a positive integer"),
+                               (#"{"budget": -1}"#, "budget: -1 is out of range; expected a positive integer")] {
+            try text.write(to: file, atomically: true, encoding: .utf8)
+            guard case .invalid(let found) = ProjectConfig.read(projectRoot: directory.path) else {
+                Issue.record("\(text) was accepted"); continue
+            }
+            #expect(found == reason)
+        }
+        try #"{"maxFiles": 1, "budget": 1}"#.write(to: file, atomically: true, encoding: .utf8)
+        #expect(ProjectConfig.load(projectRoot: directory.path)?.maxFiles == 1)
+    }
 }
 
 @Suite("gitignore scoping")
@@ -428,6 +466,20 @@ struct DeclarationDiffTests {
         #expect(result.removed.map { $0.name } == ["C"])
         #expect(result.changed.map { $0.new.name } == ["f"])   // the signature of f changed
         #expect(!result.isEmpty)
+    }
+
+    /// An extension's header names only the type it extends, so `+ extension Foo` alone said
+    /// nothing of what was added.
+    @Test("An extension added or removed whole lists its members after it")
+    func wholeExtensionListsItsMembers() {
+        let old = DeclarationDiff.declarations(fromSource: "struct Foo {}\nextension Bar { func gone() {} }")
+        let new = DeclarationDiff.declarations(fromSource: "struct Foo {}\nextension Foo: Equatable {\n    func a() {}\n    var b: Int { 0 }\n}")
+        let result = DeclarationDiff.compare(old: old, new: new)
+        #expect(result.added.map(\.header) == ["extension Foo: Equatable", "Foo.func a()", "Foo.var b: Int { get }"])
+        #expect(result.removed.map(\.header) == ["extension Bar", "Bar.func gone()"])
+        // An extension that stays compares its members as before, one by one.
+        let grown = DeclarationDiff.declarations(fromSource: "struct Foo {}\nextension Bar { func gone() {}\n func more() {} }")
+        #expect(DeclarationDiff.compare(old: old, new: grown).added.map(\.header) == ["Bar.func more()"])
     }
 
     @Test("Overloads: an added overload is visible, with no false changed")

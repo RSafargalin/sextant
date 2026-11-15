@@ -142,7 +142,10 @@ func runAPI(arguments: [String]) -> Int32 {
     let fileLimit = scaleLimit(in: arguments)
     // A surface has no default budget: cutting one silently would change what every existing
     // answer says. Asked for, it bounds the output and the header states what it left out.
-    let tokenBudget = optionValue("--budget", in: arguments).flatMap(Int.init).map { max(200, $0) }
+    // Below 200 tokens a surface holds nothing useful; a smaller budget is raised and the raise named.
+    let raisedBudget = optionValue("--budget", in: arguments).flatMap(Int.init)
+        .map { RaisedValue($0, minimum: 200, name: "--budget") }
+    let tokenBudget = raisedBudget?.value
     let package = optionValue("--package", in: arguments)
     let type = optionValue("--type", in: arguments)
     // A filter that matches nothing must not be answered with "there is nothing": those are
@@ -176,6 +179,7 @@ func runAPI(arguments: [String]) -> Int32 {
     }
     print(PublicAPI.generate(projectRoot: root, package: package, type: type, index: index,
                              compileDatabaseRoot: databaseRoot, fileLimit: fileLimit, tokenBudget: tokenBudget))
+    raisedBudget?.note.map { reportError("sextant api: \($0).") }
     conditional.forEach(reportError)
     StructuralCoverage.report(unanswered).forEach(reportError)
     StructuralCoverage.exclusionNote().forEach(reportError)

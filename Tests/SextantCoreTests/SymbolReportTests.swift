@@ -44,7 +44,7 @@ struct SymbolReportTests {
     /// A bare name is not a symbol. `request` on Alamofire resolves to 337 of them, and every one
     /// of them used to be printed — an answer whose size is the reason the tool exists.
     @Test("Many symbols sharing a name: the most used are printed, the rest are counted")
-    func manySymbolsAreCappedAndCounted() {
+    func manySymbolsAreCappedAndCounted() throws {
         let hits = (1...25).map { index in
             SymbolHit(name: "request(_:)", usr: "s:request\(index)", kind: "instanceMethod",
                       definition: location("/repo/Sources/File\(index).swift", index, 1, isDefinition: true),
@@ -54,12 +54,12 @@ struct SymbolReportTests {
                            symbol: "request").lines
 
         #expect(lines.filter { $0.hasPrefix("── request(_:)") }.count == 10)
-        let tail = try? #require(lines.first { $0.contains("more symbol") })
-        #expect(tail?.contains("15 more symbol(s) named 'request'") == true)
+        let tail = try #require(lines.first { $0.contains("more symbol") })
+        #expect(tail.contains("15 more symbol(s) named 'request'"))
         // The symbols left out carry usages, and the count of those is the part a reader needs:
         // "10 shown" without it reads as if the rest were empty.
-        #expect(tail?.contains("120 usage(s) between them") == true)
-        #expect(tail?.contains("--json") == true)
+        #expect(tail.contains("120 usage(s) between them"))
+        #expect(tail.contains("--json"))
     }
 
     /// The index merges hits in USR order, and only the CLI used to re-sort them. MCP passed

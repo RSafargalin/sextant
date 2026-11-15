@@ -47,7 +47,8 @@ struct DeletedSourceTests {
 
         func run(_ arguments: [String], input: String? = nil) throws -> (code: Int32, output: String, errors: String) {
             let process = Process()
-            process.executableURL = try #require(DeletedSourceTests.binary)
+            let executable: URL = try #require(DeletedSourceTests.binary)
+            process.executableURL = executable
             process.arguments = arguments
             var environment = ProcessInfo.processInfo.environment
             for name in ["SEXTANT_STORE_POLICY", "SEXTANT_DERIVED_DATA", "CLAUDE_PROJECT_DIR", "SEXTANT_TELEMETRY"] {

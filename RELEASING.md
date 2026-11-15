@@ -69,7 +69,8 @@ version in `sextant --version` and in the MCP handshake.
 [`.github/workflows/release.yml`](.github/workflows/release.yml) then, without further input:
 
 - selects the newest Xcode and refuses to continue on a toolchain older than Swift 6.2;
-- runs the tests again (a tag can be placed on a commit that never went through a PR);
+- builds the fixture's index store and compile flags, then runs the tests again (a tag can be
+  placed on a commit that never went through a PR);
 - builds arm64 and x86_64 in separate passes and joins them with `lipo`, asserting that the
   result really carries both architectures;
 - checks that the binary reports the expected version and that `sextant help` runs;
@@ -78,8 +79,10 @@ version in `sextant --version` and in the MCP handshake.
 - prints a ready-made `version` / `url` / `sha256` block for the formula into the release
   notes.
 
-If it fails halfway, fix the cause and re-run the workflow on the same tag: publishing is
-idempotent — a repeat run re-uploads the artefacts instead of failing.
+If it fails before the archive is uploaded, fix the cause and re-run the workflow on the same
+tag: a repeat run completes a release that has no archive yet. It never replaces an archive that
+is already published — its sha256 is in the release notes and the formula, and a rebuild is not
+byte-identical — so once the archive is up, a fix ships under a new tag.
 
 ## 4. Update the formula
 
