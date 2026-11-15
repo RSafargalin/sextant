@@ -67,6 +67,60 @@ public enum MCPTools {
         definitions().compactMap { $0["name"] as? String }
     }
 
+    /// The declaration of one tool, or nil for a name that is not declared.
+    public static func definition(named name: String) -> [String: Any]? {
+        definitions().first { $0["name"] as? String == name }
+    }
+
+    /// Why the `params` of a `tools/call` are not acceptable, or nil when they are: no tool
+    /// name, a tool that is not declared, or arguments that do not satisfy the tool's
+    /// `inputSchema` — a required argument missing, an argument of the wrong JSON type, a value
+    /// outside its `enum`, and an argument the schema does not name only where the schema says
+    /// `additionalProperties: false`. The schemas in `definitions()` are the only description of
+    /// the arguments; this reads them rather than restating them. In MCP 2025-06-18 each of these
+    /// is a protocol error, `-32602` (Invalid params).
+    public static func callProblem(_ params: [String: Any]) -> String? {
+        guard let name = params["name"] as? String else { return "tools/call: name is required (a string)" }
+        guard let tool = definition(named: name) else { return "Unknown tool: \(name)" }
+        let arguments: [String: Any]
+        switch params["arguments"] {
+        case nil: arguments = [:]
+        case let object as [String: Any]: arguments = object
+        case let other?: return "Invalid arguments for tool '\(name)': arguments must be an object, got \(JSONValue.typeName(of: other))"
+        }
+        let schema = tool["inputSchema"] as? [String: Any] ?? [:]
+        let problems = argumentProblems(arguments, schema: schema)
+        guard !problems.isEmpty else { return nil }
+        return "Invalid arguments for tool '\(name)': " + problems.joined(separator: "; ")
+    }
+
+    /// Every way `arguments` fails the object schema `schema`, one sentence each, in a stable order.
+    static func argumentProblems(_ arguments: [String: Any], schema: [String: Any]) -> [String] {
+        let properties = schema["properties"] as? [String: Any] ?? [:]
+        var problems: [String] = []
+        for key in (schema["required"] as? [String] ?? []) where arguments[key] == nil {
+            let type = (properties[key] as? [String: Any])?["type"] as? String
+            problems.append("'\(key)' is required" + (type.map { " (\($0))" } ?? ""))
+        }
+        for key in arguments.keys.sorted() {
+            let value = arguments[key]!
+            guard let property = properties[key] as? [String: Any] else {
+                if schema["additionalProperties"] as? Bool == false {
+                    problems.append("'\(key)' is not an argument of this tool")
+                }
+                continue
+            }
+            if let type = property["type"] as? String, !JSONValue.matches(value, type: type) {
+                problems.append("'\(key)' must be \("aeiou".contains(type.prefix(1)) ? "an" : "a") \(type), got \(JSONValue.typeName(of: value))")
+                continue
+            }
+            if let allowed = property["enum"] as? [String], !allowed.contains(where: { $0 == value as? String }) {
+                problems.append("'\(key)' must be one of: \(allowed.joined(separator: ", "))")
+            }
+        }
+        return problems
+    }
+
     /// Server instructions sent at `initialize` — assembled from `definitions()`, so they cannot
     /// drift from the actual set of tools.
     public static func instructions() -> String {

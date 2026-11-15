@@ -36,11 +36,20 @@ func runMCP(arguments: [String]) -> Int32 {
 
     while let line = readLine(strippingNewline: true) {
         if line.isEmpty { continue }
-        guard let data = line.data(using: .utf8),
-              let message = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let method = message["method"] as? String else { continue }
-        var id = message["id"]
-        if id is NSNull { id = nil }
+        // A line that is not a request is answered with the error that says why, never dropped:
+        // a client waiting on a dropped request waits forever, with nothing in its log.
+        let method: String, id: Any?, params: [String: Any]
+        switch MCPMessage.parse(line) {
+        case .response:
+            continue
+        case .invalid(let invalidID, let code, let message):
+            emitMCP(["jsonrpc": "2.0", "id": invalidID ?? NSNull(), "error": ["code": code, "message": message]])
+            continue
+        case .notification(let name, let given):
+            (method, id, params) = (name, nil, given)
+        case .request(let given, let name, let arguments):
+            (method, id, params) = (name, given, arguments)
+        }
 
         // Checked on every call that needs the index, not only while there is none. The signature
         // covers the chosen store paths and their unit times, so it moves when the project is
@@ -75,7 +84,7 @@ func runMCP(arguments: [String]) -> Int32 {
         let context = makeToolContext(project: project, index: index, translated: translated,
                                       provenance: { provenance.value?.summary },
                                       indexProblem: { indexUnavailableReason(arguments) }, warnedInvalidConfig: &configWarned)
-        handleMCP(method: method, id: id, params: message["params"] as? [String: Any] ?? [:], context: context)
+        handleMCP(method: method, id: id, params: params, context: context)
     }
     return 0
 }
@@ -260,6 +269,13 @@ private func handleMCP(method: String, id: Any?, params: [String: Any], context:
         index?.pollForChanges()              // pick up reindexing on a hot store
         SwiftSources.clearFileListMemo()     // fresh file list per call, so new files are seen
         clearConfigMemo()                    // and a `.sextant.json` edited mid-session takes effect
+        // An undeclared tool or arguments its schema does not admit are refused before anything
+        // runs: a value of the wrong type used to be replaced by the default, and the answer did
+        // not say so.
+        if let problem = MCPTools.callProblem(params) {
+            errorMCP(id: id, code: JSONRPCErrorCode.invalidParams, problem)
+            break
+        }
         let name = params["name"] as? String ?? ""
         let toolArgs = params["arguments"] as? [String: Any] ?? [:]
         let started = DispatchTime.now()
@@ -280,7 +296,7 @@ private func handleMCP(method: String, id: Any?, params: [String: Any], context:
         )
         resultMCP(id: id, ["content": [["type": "text", "text": text]], "isError": isError])
     default:
-        errorMCP(id: id, code: -32601, "Method not supported: \(method)")
+        errorMCP(id: id, code: JSONRPCErrorCode.methodNotFound, "Method not supported: \(method)")
     }
 }
 

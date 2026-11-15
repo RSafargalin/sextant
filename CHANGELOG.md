@@ -39,7 +39,72 @@ Human-readable text output is not covered — parse `--json`, not prose.
   64 MB in all) `sextant index` keeps a copy in `~/Library/Caches/sextant/index-snapshot-text/`,
   addressed by its blob hash and pruned when no snapshot refers to it — never in the project.
 
+### Changed
+
+- **Input the tool does not understand is refused with a message naming it, never replaced by a
+  default.** Each value-taking flag now declares in `CommandCatalog` what it takes — an integer
+  with a minimum, one of a set, a path, or text — and every invocation is checked against that
+  before the command runs or is forwarded to `sextant serve`, so the refusal is the same with a
+  daemon and without one. **Behaviour change** — these used to run (exit 0, with the default in
+  the place of the value) and now exit `2` with `sextant <command>: <flag> '<value>' …` on stderr:
+  - a non-integer value of `--budget` (`map`, `api`), `--max-files` (`map`, `api`, `search`,
+    `lint`), `--limit`, `--symbols` (`refs`, `defs`, `callers`), `--context-lines` (`body`),
+    `--depth` (`hierarchy`) or `--iterations` (`bench`) — `--budget 8k`, `--max-files abc`;
+  - zero or a negative number where it meant nothing and was quietly raised: `--budget`,
+    `--max-files`, `--symbols`, `--depth` and `--iterations` below 1; `--limit` below 1 on
+    `search`, `callees`, `impls`, `supertypes`, `context`, `body` and `construct`; `--limit` below
+    0 on `refs`, `defs` and `callers` (where `--limit 0` still lists no positions and keeps the
+    counts); `--context-lines` below 0;
+  - `--store-policy` with anything but `recency`, `union` or `coverage` — it used to be dropped,
+    and the store was chosen as if no policy had been given;
+  - any value-taking flag given last, followed by another `--` flag, or given an empty value —
+    `--project`, which fell back to `CLAUDE_PROJECT_DIR` or the current directory, `--from`, which
+    fell back to `HEAD`, and every other one: `--scope`, `--exclude`, `--package`, `--type`, `--to`,
+    `--rules`, `--spec`, `--scheme`, `--destination`, `--client`, `--index-store`, `--index-lib`,
+    `--derived-data` and the numeric ones above (`golden` without a `--spec` value already
+    refused). Every occurrence of a repeated flag is checked;
+  - a non-empty `SEXTANT_STORE_POLICY` that is not a policy, for every command that takes
+    `--store-policy` (the semantic commands, `mcp`, `serve`, `store`, `doctor`, `golden`, `bench`)
+    unless `--store-policy` is given. It used to be ignored the same way; it is refused rather than
+    warned about because a warning on stderr still answers from a store chosen without the policy
+    meant, and an agent never sees stderr. An empty value still reads as unset.
+  `init --client <unknown>` was already refused with exit 2 and still is, now by the same check.
+- **The MCP server answers every line that is not a valid request, and validates tool calls
+  against the declared input schemas.** Errors follow JSON-RPC 2.0 as MCP 2025-06-18 — the
+  revision the server declares — narrows it. **Behaviour change** — these used to be dropped
+  without a reply, or (marked †) processed as if they were valid:
+  - a line that is not JSON → `-32700` Parse error, `id: null`;
+  - JSON that is not a request object — a number, a string, `null`, and any array: MCP
+    2025-06-18 removed JSON-RPC batching, so `[]` and a batch of requests are one `-32600`
+    Invalid Request, `id: null`;
+  - a request whose `id` is `null` (†, run as a notification), a boolean, a fraction or a
+    structured value → `-32600`, `id: null`; one whose `jsonrpc` is missing or not `"2.0"` (†),
+    whose `method` is missing or not a string, or whose `params` is not an object → `-32600`, with
+    the request's `id`; `params` given as an array → `-32602`.
+  A notification still gets no reply, and a response sent by the client is still ignored.
+  In `tools/call`, each of these is now a `-32602` Invalid params protocol error, as MCP
+  2025-06-18 classifies unknown tools and invalid arguments, instead of a tool result:
+  - an undeclared tool, or no `name` — a result with `isError: true` and `unknown tool: …` before;
+  - `arguments` that is not an object (†, read as no arguments);
+  - a missing required `symbol` or `pattern` — `isError: true` and "the … parameter is required"
+    before;
+  - an argument of the wrong JSON type (†, the default used in its place): `depth` or `budget`
+    that is not an integer (a string, a fraction, a boolean, `null`), and `symbol`, `pattern`,
+    `package`, `type`, `scope`, `from`, `to` or `direction` that is not a string;
+  - `direction` other than `callees` or `callers` (†, read as `callees`).
+  The check reads the schemas in `MCPTools.definitions()`; none of them sets
+  `additionalProperties`, so an argument a tool does not declare is still accepted. Tool names,
+  input schemas and the `-32601` for an unknown method are unchanged.
+
 ### Fixed
+
+- **`--reindex --json` printed the build's progress into the JSON, and a failed rebuild answered
+  from the old index.** With `--json` the progress of the rebuild now goes to stderr and stdout
+  carries the JSON document alone. A rebuild that fails ends the command with exit `1` — what
+  `sextant index` returns for a failed build — and `--reindex failed — not answering from the
+  index that was there before the rebuild` on stderr, instead of an exit `0` answer from a store
+  marked as coming from a failed build. **Behaviour change** for scripts that ran
+  `--reindex` against a project that does not build: they now see exit `1`.
 
 - **Positions in a file edited since indexing could be dropped as macro duplicates.** The check
   that drops a second position a macro records on one line read the file as it is now at the

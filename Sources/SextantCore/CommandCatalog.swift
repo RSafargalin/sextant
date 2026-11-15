@@ -1,19 +1,68 @@
 import Foundation
 
+/// What a flag takes after it. Every value-taking flag is checked against its kind before a
+/// command runs, so a value the command would not understand is refused instead of being
+/// replaced by the default.
+public enum FlagValue: Sendable, Equatable {
+    /// A switch: the flag takes no value.
+    case none
+    /// Any non-empty text.
+    case text
+    /// A file-system path, read relative to the working directory of the process that was invoked.
+    case path
+    /// A whole number no smaller than `minimum`.
+    case integer(minimum: Int)
+    /// One of a fixed set of words.
+    case choice([String])
+
+    /// What the value has to be, in words, for an error message.
+    public var expectation: String {
+        switch self {
+        case .none: return "no value"
+        case .text: return "a value"
+        case .path: return "a path"
+        case .integer(let minimum) where minimum == 1: return "a positive integer"
+        case .integer(let minimum) where minimum == 0: return "a non-negative integer"
+        case .integer(let minimum): return "an integer of at least \(minimum)"
+        case .choice(let words): return "one of: \(words.joined(separator: ", "))"
+        }
+    }
+
+    /// Why `value` is not acceptable, or nil when it is.
+    public func problem(with value: String) -> String? {
+        guard !value.isEmpty else { return "is empty; expected \(expectation)" }
+        switch self {
+        case .none, .text, .path:
+            return nil
+        case .integer(let minimum):
+            guard let number = Int(value) else { return "is not an integer; expected \(expectation)" }
+            return number < minimum ? "is out of range; expected \(expectation)" : nil
+        case .choice(let words):
+            return words.contains(value) ? nil : "is not recognised; expected \(expectation)"
+        }
+    }
+}
+
 /// A command flag: either value-taking (`--project <path>`) or a switch (`--json`).
 public struct FlagSpec: Sendable, Equatable {
     public let name: String
-    public let takesValue: Bool
-    /// The value is a file-system path, read relative to the working directory of the process
-    /// that was invoked.
-    public let takesPath: Bool
+    /// What the flag takes after it.
+    public let value: FlagValue
     public let summary: String
 
-    public init(_ name: String, takesValue: Bool = false, takesPath: Bool = false, _ summary: String) {
+    public var takesValue: Bool { value != .none }
+    /// The value is a file-system path, read relative to the working directory of the process
+    /// that was invoked.
+    public var takesPath: Bool { value == .path }
+
+    public init(_ name: String, value: FlagValue, _ summary: String) {
         self.name = name
-        self.takesValue = takesValue || takesPath
-        self.takesPath = takesPath
+        self.value = value
         self.summary = summary
+    }
+
+    public init(_ name: String, takesValue: Bool = false, takesPath: Bool = false, _ summary: String) {
+        self.init(name, value: takesPath ? .path : takesValue ? .text : .none, summary)
     }
 }
 
@@ -70,15 +119,18 @@ public enum CommandCatalog {
     static let project = FlagSpec("--project", takesPath: true, "project root (otherwise CLAUDE_PROJECT_DIR or the current directory)")
     static let json = FlagSpec("--json", "structured output instead of text")
     static let scope = FlagSpec("--scope", takesValue: true, "narrow the area to a subdirectory")
-    static let maxFiles = FlagSpec("--max-files", takesValue: true,
+    static let maxFiles = FlagSpec("--max-files", value: .integer(minimum: 1),
                                    "how many files to read (default 4000); the answer names what it left out")
-    static let apiBudget = FlagSpec("--budget", takesValue: true, "token budget for the surface (unbounded by default)")
+    static let apiBudget = FlagSpec("--budget", value: .integer(minimum: 1), "token budget for the surface (unbounded by default)")
     static let exclude = FlagSpec("--exclude", takesValue: true, "glob to leave out; repeatable, replaces the config list")
     static let includeTests = FlagSpec("--include-tests", "include test files")
-    static let limit = FlagSpec("--limit", takesValue: true, "how many entries to show")
-    static let symbols = FlagSpec("--symbols", takesValue: true,
+    static let limit = FlagSpec("--limit", value: .integer(minimum: 1), "how many entries to show")
+    /// For refs, defs and callers, where `0` lists no positions and keeps the counts.
+    static let referenceLimit = FlagSpec("--limit", value: .integer(minimum: 0),
+                                         "how many positions to list per symbol (default 40; 0 lists none, counts stay)")
+    static let symbols = FlagSpec("--symbols", value: .integer(minimum: 1),
                                   "how many symbols sharing the name to show (default 10; the rest are counted)")
-    static let contextLines = FlagSpec("--context-lines", takesValue: true,
+    static let contextLines = FlagSpec("--context-lines", value: .integer(minimum: 0),
                                        "lines of surrounding source around the declaration (default 0)")
     static let fullPaths = FlagSpec("--full-paths", "full paths instead of shortened ones")
     static let full = FlagSpec("--full", "line by line, with snippets")
@@ -89,11 +141,11 @@ public enum CommandCatalog {
     static let indexLib = FlagSpec("--index-lib", takesPath: true, "path to libIndexStore.dylib")
     static let derivedData = FlagSpec("--derived-data", takesPath: true,
                                       "Xcode DerivedData directory (default: ~/Library/Developer/Xcode/DerivedData)")
-    static let storePolicyFlag = FlagSpec("--store-policy", takesValue: true,
+    static let storePolicyFlag = FlagSpec("--store-policy", value: .choice(StorePolicy.allCases.map(\.rawValue)),
                                           "for this command only: \(StorePolicy.known) (see `sextant store`)")
 
     static var semanticFlags: [FlagSpec] {
-        [project, indexStore, indexLib, storePolicyFlag, derivedData, reindex, limit, symbols, fullPaths, full, compact, verify, json]
+        [project, indexStore, indexLib, storePolicyFlag, derivedData, reindex, referenceLimit, symbols, fullPaths, full, compact, verify, json]
     }
 
     // MARK: Commands
@@ -102,7 +154,7 @@ public enum CommandCatalog {
         CommandSpec(
             name: "map", summary: "repository map under a token budget",
             group: navigationGroup,
-            flags: [project, FlagSpec("--budget", takesValue: true, "token budget for the map (default 6000)"),
+            flags: [project, FlagSpec("--budget", value: .integer(minimum: 1), "token budget for the map (default 6000)"),
                     FlagSpec("--semantic", "types by usage count (needs an index)"),
                     FlagSpec("--pagerank", "files by centrality (needs an index)"),
                     includeTests, scope, maxFiles, exclude, json],
@@ -176,7 +228,7 @@ public enum CommandCatalog {
             name: "hierarchy", argument: "<symbol>", summary: "transitive call graph, as a tree",
             group: semanticsGroup,
             flags: [project, FlagSpec("--callees", "down the call graph (default)"), FlagSpec("--callers", "up to the callers"),
-                    FlagSpec("--depth", takesValue: true, "traversal depth (default 3)"), indexStore, indexLib, storePolicyFlag, derivedData, reindex, json],
+                    FlagSpec("--depth", value: .integer(minimum: 1), "traversal depth (default 3)"), indexStore, indexLib, storePolicyFlag, derivedData, reindex, json],
             servedByDaemon: true
         ),
         CommandSpec(name: "context", argument: "<symbol>", summary: "everything about one symbol in a single query",
@@ -198,7 +250,7 @@ public enum CommandCatalog {
         CommandSpec(name: "init", summary: "set up a project: .sextant.json, MCP registration, and a check",
                     group: "Integration and setup",
                     flags: [project, FlagSpec("--force", "overwrite existing files"),
-                            FlagSpec("--client", takesValue: true, "MCP client to register with (default claude-code)")],
+                            FlagSpec("--client", value: .choice(MCPClient.supported.map(\.name)), "MCP client to register with (default claude-code)")],
                     details: ["clients: " + MCPClient.supported.map { $0.name }.joined(separator: ", ") + ".",
                               "Only clients verified against the running application are listed: a config written",
                               "from documentation and never launched fails silently, and the user blames the tool."]),
@@ -227,7 +279,7 @@ public enum CommandCatalog {
         CommandSpec(name: "bench", summary: "latency (p50/p95), payload proxy, peak RSS",
                     group: "Trust and measurability",
                     flags: [project, FlagSpec("--symbols", takesValue: true, "symbols, comma separated"),
-                            FlagSpec("--iterations", takesValue: true, "number of iterations (default 20)"), indexStore, indexLib, storePolicyFlag, derivedData, json],
+                            FlagSpec("--iterations", value: .integer(minimum: 1), "number of iterations (default 20)"), indexStore, indexLib, storePolicyFlag, derivedData, json],
                     details: ["payload is compact JSON as a RELATIVE proxy for volume, NOT tokens."]),
         CommandSpec(name: "adoption", summary: "how much code navigation went through sextant, not grep",
                     group: "Trust and measurability",
@@ -271,6 +323,48 @@ public enum CommandCatalog {
             // A negative number is a value, not a flag.
             return argument.hasPrefix("--") || Double(argument) == nil
         }
+    }
+
+    /// The environment variable that sets the store policy when `--store-policy` is not given.
+    public static let storePolicyVariable = "SEXTANT_STORE_POLICY"
+
+    /// Every value a command would not understand, as sentences naming the flag and the value:
+    /// a value-taking flag given last or followed by another flag, a value of the wrong kind, and,
+    /// for a command that reads index stores, an unknown store policy in the environment. Empty
+    /// when the command may run. Checked before a command runs or is forwarded to a daemon, so
+    /// a value is refused the same way wherever the command would have been answered.
+    ///
+    /// An empty `SEXTANT_STORE_POLICY` reads as unset. An unknown one is refused rather than
+    /// warned about: the store would otherwise be chosen without the policy its author meant,
+    /// and a warning on stderr never reaches an agent reading the answer.
+    public static func usageProblems(in arguments: [String], for spec: CommandSpec,
+                                     environment: (String) -> String? = { CallerContext.environmentValue($0) }) -> [String] {
+        let kinds = Dictionary(spec.flags.filter(\.takesValue).map { ($0.name, $0.value) }, uniquingKeysWith: { first, _ in first })
+        var problems: [String] = []
+        var index = arguments.startIndex
+        while index < arguments.endIndex {
+            let argument = arguments[index]
+            guard let kind = kinds[argument] else {
+                index += 1
+                continue
+            }
+            let next = index + 1 < arguments.endIndex ? arguments[index + 1] : nil
+            guard let value = next, !value.hasPrefix("--") else {
+                problems.append("\(argument) expects \(kind.expectation), and none was given.")
+                index += 1
+                continue
+            }
+            if let problem = kind.problem(with: value) {
+                problems.append("\(argument) '\(value)' \(problem).")
+            }
+            index += 2
+        }
+        if let policyFlag = spec.flags.first(where: { $0.name == "--store-policy" }), !arguments.contains(policyFlag.name),
+           let raw = environment(storePolicyVariable), !raw.isEmpty, let problem = policyFlag.value.problem(with: raw) {
+            problems.append("\(storePolicyVariable) '\(raw)' \(problem). Unset it or correct it: "
+                            + "no store is read under a policy that was not understood.")
+        }
+        return problems
     }
 
     /// The closest known flag by spelling — used to suggest a correction for a typo.

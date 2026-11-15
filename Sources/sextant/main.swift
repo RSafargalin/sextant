@@ -207,9 +207,10 @@ extension String {
 
 // MARK: - Entry point
 
-/// Per-command help, and a refusal on an unknown flag. A typo that was silently ignored
-/// (`--budjet`) quietly reverted behaviour to the default — the UX equivalent of a wrong answer.
-/// Returns an exit code when the command should not run.
+/// Per-command help, and a refusal on an unknown flag or on a value the command would not
+/// understand. A typo that was silently ignored (`--budjet`, `--budget 8k`) quietly reverted
+/// behaviour to the default — the UX equivalent of a wrong answer. Returns an exit code when the
+/// command should not run.
 func precheck(_ name: String, _ arguments: [String]) -> Int32? {
     guard let spec = CommandCatalog.command(named: name) else { return nil }
     if arguments.contains("--help") || arguments.contains("-h") {
@@ -222,6 +223,12 @@ func precheck(_ name: String, _ arguments: [String]) -> Int32? {
             let suggestion = CommandCatalog.closestFlag(to: flag, in: spec).map { " Did you mean: \($0)?" } ?? ""
             reportError("sextant \(name): unknown flag '\(flag)'.\(suggestion)")
         }
+        reportError("Help: sextant \(name) --help")
+        return 2
+    }
+    let problems = CommandCatalog.usageProblems(in: arguments, for: spec)
+    guard problems.isEmpty else {
+        problems.forEach { reportError("sextant \(name): \($0)") }
         reportError("Help: sextant \(name) --help")
         return 2
     }
@@ -287,7 +294,9 @@ if let root = optionValue("--project", in: arguments) {
 
 let started = DispatchTime.now()
 // Use the warm-index daemon if one is running; otherwise the normal path — no daemon is not an error.
-let code = runViaDaemon(arguments) ?? dispatch(arguments)
+// Checked here, before a daemon is asked, so that a refusal does not depend on whether one runs.
+let code = arguments.first.flatMap { precheck($0, Array(arguments.dropFirst())) }
+    ?? runViaDaemon(arguments) ?? dispatch(arguments)
 Telemetry.record(
     command: arguments.first ?? "",
     argument: firstPositional(Array(arguments.dropFirst())),

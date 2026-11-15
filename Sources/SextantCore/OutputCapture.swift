@@ -54,6 +54,21 @@ public enum OutputCapture {
         return boxes.map(\.text)
     }
 
+    /// Runs `body` with everything it writes to standard output sent to standard error instead,
+    /// in the order it was written.
+    ///
+    /// Swapping descriptors is process-global, as in `capture`.
+    public static func sendingOutputToStandardError(_ body: () -> Int32) -> Int32 {
+        fflush(stdout)
+        let savedOut = dup(STDOUT_FILENO)
+        dup2(STDERR_FILENO, STDOUT_FILENO)
+        let code = body()
+        fflush(stdout)
+        dup2(savedOut, STDOUT_FILENO)
+        Darwin.close(savedOut)
+        return code
+    }
+
     /// Runs `body` with stdout and stderr captured, returning its code and its output.
     ///
     /// Swapping descriptors is process-global: the caller must guarantee there are no concurrent

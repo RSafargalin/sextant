@@ -237,6 +237,35 @@ struct DaemonParityTests {
         #expect(setViaDaemon == setDirect)
     }
 
+    /// A value a command does not understand is refused by the client, before anything is
+    /// forwarded: the same message and exit code with a daemon running as without one, and the
+    /// daemon never sees the request.
+    @Test("An invalid value is refused the same way with a daemon up", .timeLimit(.minutes(2)))
+    func invalidValueIsRefusedBeforeForwarding() throws {
+        let binary = try #require(BuildProducts.sextantBinary(under: Self.packageRoot), "sextant is not built")
+        let sandbox = try Sandbox()
+        let project = try sandbox.package(named: "invalid")
+        let daemon = try Daemon(binary: binary, project: project, sandbox: sandbox)
+        defer { daemon.stop() }
+
+        let (viaDaemon, direct) = try bothWays(["map", "--budget", "8k"], in: project, sandbox: sandbox)
+        #expect(direct.exitCode == 2, "\(direct)")
+        #expect(direct.errorOutput.contains("--budget '8k'"), "\(direct)")
+        #expect(viaDaemon == direct)
+
+        let (policyViaDaemon, policyDirect) = try bothWays(["defs", "Kept"], in: project, sandbox: sandbox,
+                                                           environment: ["SEXTANT_STORE_POLICY": "bogus"])
+        #expect(policyDirect.exitCode == 2, "\(policyDirect)")
+        #expect(policyViaDaemon == policyDirect)
+
+        // A valid request in the same session shows the daemon was there to be asked.
+        _ = try sextant(["map"], in: project, sandbox: sandbox, daemon: true)
+        #expect(daemon.answered("map"), "the daemon never answered, so this compared two local runs:\n\(daemon.text)")
+        #expect(!daemon.text.contains("sextant serve: defs"), "the invalid request reached the daemon:\n\(daemon.text)")
+        #expect(daemon.text.components(separatedBy: "sextant serve: map →").count == 2,
+                "the invalid map request reached the daemon:\n\(daemon.text)")
+    }
+
     /// An answer over a stale index is mapped onto the current text per request, never from
     /// anything the daemon kept: through it, the same edit gives the same unconfirmed position.
     @Test("A stale answer is mapped the same way through the daemon", .timeLimit(.minutes(5)))

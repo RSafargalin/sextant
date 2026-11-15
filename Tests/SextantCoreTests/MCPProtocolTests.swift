@@ -103,6 +103,8 @@ struct MCPProtocolTests {
         #expect(responses.count == MCPTools.names.count + 1)
 
         for (name, response) in zip(MCPTools.names, responses.dropFirst()) {
+            // A protocol error here would leave the text empty and the check below vacuous.
+            #expect(response["result"] != nil, "\(name) was refused before reaching the dispatcher: \(response)")
             #expect(!text(of: response).contains("unknown tool"), "\(name) is not handled in callMCPTool")
         }
     }

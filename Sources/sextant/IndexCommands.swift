@@ -544,9 +544,20 @@ func recordSnapshot(store: String, root: String, sources captured: Result<Source
 
 // MARK: - Opening the index (shared helper)
 
-/// With --reindex, rebuilds the index before the query (freshness per build).
-func ensureFreshIndex(_ arguments: [String]) {
-    if arguments.contains("--reindex") { _ = runIndex(arguments: arguments) }
+/// With --reindex, rebuilds the index before the query. Returns false when the rebuild failed:
+/// the query then has no index it asked for, and answering from the previous one would present
+/// an old answer as a fresh one. Under `--json` the build's progress goes to stderr, so standard
+/// output carries the JSON document alone.
+func ensureFreshIndex(_ arguments: [String], label: String) -> Bool {
+    guard arguments.contains("--reindex") else { return true }
+    let status = arguments.contains("--json")
+        ? OutputCapture.sendingOutputToStandardError { runIndex(arguments: arguments) }
+        : runIndex(arguments: arguments)
+    guard status == 0 else {
+        reportError("sextant \(label): --reindex failed — not answering from the index that was there before the rebuild.")
+        return false
+    }
+    return true
 }
 
 /// Indexes opened within this process. For a one-shot CLI run that is a single open, as
@@ -587,7 +598,7 @@ func openTranslatedIndex(_ arguments: [String], label: String) -> TranslatedInde
 /// `openIndex`, together with the freshness report its label was printed from.
 func openIndexReporting(_ arguments: [String], label: String, listen: Bool = false,
                         quiet: Bool = false) -> (set: IndexStoreSet, report: IndexFreshness.Report?)? {
-    ensureFreshIndex(arguments)
+    guard ensureFreshIndex(arguments, label: label) else { return nil }
     let (resolution, source) = resolveStores(in: arguments)
     let storePaths = resolution.chosen.map(\.path)
     guard !storePaths.isEmpty,
