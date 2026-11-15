@@ -11,10 +11,13 @@ enum BuildProducts {
         return FileManager.default.isExecutableFile(atPath: candidate.path) ? candidate : nil
     }
 
-    /// The debug index store a `swift build --enable-index-store` of a package wrote, found the
-    /// way the tool itself finds it.
+    /// The debug index store of a package, found the way the tool itself finds it: the one
+    /// `sextant index` wrote in its own build tree when there is one, otherwise the one a
+    /// `swift build --enable-index-store` wrote in `.build`.
     static func indexStore(under root: URL) -> String? {
-        IndexStoreLocator.usableStorePaths(under: root).first
+        let usable = IndexStoreLocator.usableStorePaths(under: root)
+        let own = IndexStoreLocator.indexBuildDirectory(ofPackage: root).path + "/"
+        return usable.first { $0.hasPrefix(own) } ?? usable.first
     }
 
     /// The compile flags of a built and indexed package. The native build system leaves a graph

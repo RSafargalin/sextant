@@ -67,18 +67,30 @@ public enum CompilationDatabase {
         return results
     }
 
-    /// Build manifests belonging to an index store: `<root>/.build/<triple>/<configuration>/index/store`
-    /// is written by the build whose manifest is `<root>/.build/<configuration>.yaml`.
+    /// Build manifests belonging to an index store: `<build>/<triple>/<configuration>/index/store`
+    /// is written by the build whose manifest is `<build>/<configuration>.yaml`, where `<build>` is
+    /// a package's `.build` or the build tree `sextant index` keeps inside it.
     /// An empty result means the store has no manifest beside it (a DerivedData store, for
     /// instance) — the Xcode build describes itself elsewhere.
     public static func manifestPaths(forStore store: String) -> [String] {
         let suffix = "/index/store"
         guard store.hasSuffix(suffix) else { return [] }
-        let configurationDirectory = String(store.dropLast(suffix.count)) as NSString   // …/.build/<triple>/<configuration>
+        let configurationDirectory = String(store.dropLast(suffix.count)) as NSString   // …/<build>/<triple>/<configuration>
         let configuration = configurationDirectory.lastPathComponent
         let buildDirectory = (configurationDirectory.deletingLastPathComponent as NSString).deletingLastPathComponent
-        guard (buildDirectory as NSString).lastPathComponent == ".build", !configuration.isEmpty else { return [] }
+        guard !configuration.isEmpty, packageDirectory(ofBuildDirectory: buildDirectory) != nil else { return [] }
         return ["\(buildDirectory)/\(configuration).yaml"]
+    }
+
+    /// The package a build directory belongs to: the parent of `.build`, whether the build
+    /// directory is `.build` itself or the build tree of `sextant index` inside it.
+    static func packageDirectory(ofBuildDirectory buildDirectory: String) -> String? {
+        let build = buildDirectory as NSString
+        if build.lastPathComponent == ".build" { return build.deletingLastPathComponent }
+        let parent = build.deletingLastPathComponent as NSString
+        guard build.lastPathComponent == IndexStoreLocator.indexBuildDirectoryName,
+              parent.lastPathComponent == ".build" else { return nil }
+        return parent.deletingLastPathComponent
     }
 
     /// Compile commands for a project, read from the manifests of the given index stores.
@@ -89,9 +101,9 @@ public enum CompilationDatabase {
         var order: [String] = []
         for store in stores {
             for manifest in manifestPaths(forStore: store) {
-                guard let text = try? String(contentsOfFile: manifest, encoding: .utf8) else { continue }
-                // The package directory holds `.build`, which holds the manifest.
-                let directory = ((manifest as NSString).deletingLastPathComponent as NSString).deletingLastPathComponent
+                guard let text = try? String(contentsOfFile: manifest, encoding: .utf8),
+                      let directory = packageDirectory(ofBuildDirectory: (manifest as NSString).deletingLastPathComponent)
+                else { continue }
                 for command in commands(inManifest: text, directory: directory) where byFile[command.file] == nil {
                     byFile[command.file] = command
                     order.append(command.file)

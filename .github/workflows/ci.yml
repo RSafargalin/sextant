@@ -61,9 +61,10 @@ jobs:
       - name: Hygiene self-check (dogfood)
         run: $(swift build --show-bin-path)/sextant lint --project . --rules sextant-rules.json
 
+      # The store `sextant index` built for the fixture above is the one checked; a second build
+      # into the fixture's `.build` would add a second store and leave the choice to a policy.
       - name: Golden — semantic regressions on the fixture
         run: |
-          swift build --package-path Tests/Fixtures/IndexFixture --enable-index-store
           $(swift build --show-bin-path)/sextant golden \
             --project Tests/Fixtures/IndexFixture \
             --spec Tests/Fixtures/IndexFixture/golden.json

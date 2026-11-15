@@ -233,7 +233,7 @@ func runDoctor(arguments: [String]) -> Int32 {
             case .fresh:
                 print("✅ index store: \(shorten(store))")
             case .stale:
-                print("⚠ index store: \(shorten(store))  (older than the sources — rebuild the project or run `sextant index`)")
+                print("⚠ index store: \(shorten(store))  (older than the sources — run `sextant index`, or rebuild whatever wrote it)")
             case .unknown:
                 print("⚠ index store: \(shorten(store))  (empty or unreadable — freshness unknown)")
                 ok = false
@@ -380,10 +380,13 @@ func runIndex(arguments: [String]) -> Int32 {
         return 1
     }
 
-    // A single package is built directly — IndexStoreLocator will find its .build store.
+    // A single package is built directly, in a build tree of its own inside `.build`, where
+    // IndexStoreLocator finds the store beside the ordinary ones.
     if packageDirs.count == 1 {
         let package = packageDirs[0]
-        let build = IndexBuild.swiftBuildArguments(buildTests: !arguments.contains("--no-tests"))
+        let scratch = IndexStoreLocator.indexBuildDirectory(ofPackage: package)
+        let build = IndexBuild.swiftBuildArguments(scratchPath: scratch.path,
+                                                   buildTests: !arguments.contains("--no-tests"))
         print("▶ swift \(build.joined(separator: " ")): \(package.lastPathComponent)")
         let log = IndexBuild.buildLog(forRoot: rootPath)
         let status = runSwiftBuild(build, in: package, log: log)
@@ -391,12 +394,17 @@ func runIndex(arguments: [String]) -> Int32 {
             reportError("sextant index: build failed (code \(status)).")
             return 1
         }
-        guard let store = IndexStoreLocator.candidates(under: root).first(where: \.isUsable)?.path else {
-            reportError("sextant index: the build succeeded, but it left no index store with units under \(package.path)/.build.")
-            reportError(IndexBuild.upToDateBuildNote)
+        let built = IndexStoreLocator.storePaths(inBuildDirectory: scratch)
+        let candidates = IndexStoreLocator.candidates(under: root)
+        guard let store = candidates.first(where: { $0.isUsable && built.contains($0.path) })?.path else {
+            reportError("sextant index: the build succeeded, but it left no index store with units under \(scratch.path).")
             return 1
         }
         print("\nindex ready: \(store)")
+        if candidates.filter(\.isUsable).count > 1, storePolicy(in: arguments) == nil {
+            reportError("⚠ this is one of \(candidates.filter(\.isUsable).count) usable index stores for this project, and no store policy is set —")
+            reportError("   semantic commands will refuse rather than guess between them. `sextant store` compares them.")
+        }
         reportTestCoverage(ofStore: store, root: rootPath, arguments: arguments, isXcode: false)
         captureCompileDatabase(root: rootPath, stores: [store], buildLog: log)
         return 0
@@ -433,7 +441,8 @@ func runIndex(arguments: [String]) -> Int32 {
         return 1
     }
 
-    let build = IndexBuild.swiftBuildArguments(buildTests: !arguments.contains("--no-tests"))
+    let build = IndexBuild.swiftBuildArguments(scratchPath: IndexBuild.umbrellaBuildDirectory(forRoot: rootPath).path,
+                                               buildTests: !arguments.contains("--no-tests"))
     print("▶ umbrella build (\(packages.count) packages, one pass): swift \(build.joined(separator: " "))")
     let log = IndexBuild.buildLog(forRoot: rootPath)
     let status = runSwiftBuild(build, in: umbrella, log: log)
@@ -442,8 +451,7 @@ func runIndex(arguments: [String]) -> Int32 {
         return 1
     }
     guard let store = IndexBuild.umbrellaStorePath(forRoot: rootPath) else {
-        reportError("sextant index: the umbrella build succeeded, but it left no index store with units under \(umbrella.path)/.build.")
-        reportError(IndexBuild.upToDateBuildNote)
+        reportError("sextant index: the umbrella build succeeded, but it left no index store with units under \(IndexBuild.umbrellaBuildDirectory(forRoot: rootPath).path).")
         return 1
     }
     print("\nindex ready (single store): \(store)")

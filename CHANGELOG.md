@@ -24,10 +24,21 @@ Human-readable text output is not covered — parse `--json`, not prose.
 - **Objective-C, C and C++ had no compile flags under the Swift Build system.** It writes no
   build graph with arguments in it, so the flags are read from the verbose output of the build
   `sextant index` runs. Its output therefore goes to a log, whose path is printed, instead of the
-  terminal. One limit follows and is stated when it applies: a build that compiles nothing states
-  no flags, so a package built before its first `sextant index` needs `swift package clean`
-  once. Flags captured earlier are kept. The same holds for the store itself: a package already
-  built without an index store counts as up to date and gets none, and the message now says so.
+  terminal. A build that compiles nothing states no flags, so flags captured earlier are kept.
+- **`sextant index` left no store, or a partial one, in a package that had been built before.**
+  Under the Swift Build system a package already built without an index store counts as up to
+  date when built with one: nothing compiles, no store is written, and the C-family flags are
+  never printed. Where only some files recompiled, the store covered those alone and was still
+  reported as `index ready`. `sextant index` now builds a package in a tree of its own,
+  `.build/sextant-index`, which nothing else builds and which is always built with the index
+  store on, on either build system — whatever was built before, the store covers every file that
+  compiles. The cost: a second build tree on disk beside `.build`, the dependencies fetched into it
+  once more, and a full build the first time. `swift package clean` removes it with the rest. Its
+  store is found beside the ordinary ones, so where an ordinary build also wrote a store (the
+  native build system does by default) there are two, and the store policy decides between them
+  as it does for any two; `sextant index` says so when no policy is set. An ordinary `swift build`
+  does not refresh this store — `sextant index` (or `--reindex`) does, and the stale-index hint
+  now says that.
 - **Over MCP, "the 10 most used" symbols sharing a name were the first ten by USR.** The cut
   relied on an order only the CLI produced. The answer now orders the symbols itself, so every
   surface keeps the most used, and the usages of the symbols left out are counted from the

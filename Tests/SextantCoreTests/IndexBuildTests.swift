@@ -23,8 +23,21 @@ struct IndexBuildTests {
     /// package holds. The usages are in the code either way — only the index forgets them.
     @Test("The index build takes the test targets in by default")
     func swiftBuildIncludesTests() {
-        #expect(IndexBuild.swiftBuildArguments() == ["build", "--enable-index-store", "--build-tests", "-v"])
-        #expect(IndexBuild.swiftBuildArguments(buildTests: false) == ["build", "--enable-index-store", "-v"])
+        #expect(IndexBuild.swiftBuildArguments(scratchPath: "/pkg/.build/sextant-index")
+                == ["build", "--scratch-path", "/pkg/.build/sextant-index", "--enable-index-store", "--build-tests", "-v"])
+        #expect(IndexBuild.swiftBuildArguments(scratchPath: "/pkg/.build/sextant-index", buildTests: false)
+                == ["build", "--scratch-path", "/pkg/.build/sextant-index", "--enable-index-store", "-v"])
+    }
+
+    /// Under SwiftPM's Swift Build system a tree built without an index store counts as up to date
+    /// when asked for one, compiles nothing and writes nothing. The tree the index is built in is
+    /// therefore one nobody else builds, inside `.build` so it is ignored wherever `.build` is.
+    @Test("A package is indexed in a build tree of its own, inside .build")
+    func packageIsIndexedInItsOwnBuildTree() {
+        let scratch = IndexStoreLocator.indexBuildDirectory(ofPackage: URL(fileURLWithPath: "/pkg", isDirectory: true))
+        #expect(scratch.path == "/pkg/.build/sextant-index")
+        #expect(IndexBuild.umbrellaBuildDirectory(forRoot: "/Users/x/App").path
+                == IndexBuild.umbrellaDirectory(forRoot: "/Users/x/App").appendingPathComponent(".build").path)
     }
 
     /// The Xcode path cannot be fixed the way the SwiftPM one was: `xcodebuild build-for-testing`
@@ -149,6 +162,84 @@ struct IndexBuildTests {
         let directory = IndexBuild.umbrellaDirectory(forRoot: "/Users/x/Projects/App").path
         #expect(directory.contains("Library/Caches/sextant/umbrella"))
         #expect(!directory.hasPrefix("/Users/x/Projects/App"))
+    }
+}
+
+/// `sextant index` run for real on a package someone already built the ordinary way. Under
+/// SwiftPM's Swift Build system that build left the package up to date, and an index build in the
+/// same tree compiled nothing and wrote no store; built in a tree of its own, it covers every file.
+@Suite("Index build on a package built before", .serialized)
+struct IndexBuildRunTests {
+    private static var binary: URL? {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        return BuildProducts.sextantBinary(under: root)
+    }
+
+    private static let files = [
+        "Package.swift": """
+            // swift-tools-version: 5.9
+            import PackageDescription
+            let package = Package(name: "prebuilt", platforms: [.macOS(.v13)], targets: [
+                .target(name: "CLib"),
+                .target(name: "Lib", dependencies: ["CLib"]),
+                .testTarget(name: "LibTests", dependencies: ["Lib"]),
+            ])
+            """,
+        "Sources/CLib/include/clib.h": "int clib(void);\n",
+        "Sources/CLib/clib.c": "#include \"clib.h\"\nint clib(void) { return 1; }\n",
+        "Sources/Lib/A.swift": "public struct A { public init() {} }\n",
+        "Sources/Lib/B.swift": "import CLib\npublic func b() -> Int32 { _ = A(); return clib() }\n",
+        "Tests/LibTests/LibTests.swift": "import XCTest\nimport Lib\nfinal class LibTests: XCTestCase { func testB() { XCTAssertEqual(b(), 1) } }\n",
+    ]
+
+    private func run(_ executable: URL, _ arguments: [String]) throws -> (code: Int32, output: String) {
+        let process = Process()
+        process.executableURL = executable
+        process.arguments = arguments
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        try process.run()
+        let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        process.waitUntilExit()
+        return (process.terminationStatus, output)
+    }
+
+    @Test("Indexing a package already built without an index store covers all of its sources",
+          .enabled(if: binary != nil, "sextant is not built — run `swift build` first"))
+    func indexesAPackageBuiltWithoutAStore() throws {
+        let created = FileManager.default.temporaryDirectory.appendingPathComponent("sextant-prebuilt-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: created, withIntermediateDirectories: true)
+        // Units record real paths, and the temporary directory is reached through a symlink.
+        let root = created.resolvingSymlinksInPath()
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: IndexBuild.umbrellaDirectory(forRoot: root.path))
+            try? FileManager.default.removeItem(at: CompilationDatabase.path(forRoot: root.path))
+        }
+        for (path, contents) in Self.files {
+            let file = root.appendingPathComponent(path)
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try contents.write(to: file, atomically: true, encoding: .utf8)
+        }
+
+        let env = URL(fileURLWithPath: "/usr/bin/env")
+        let ordinary = try run(env, ["swift", "build", "--build-tests", "--package-path", root.path])
+        try #require(ordinary.code == 0, "the ordinary build failed:\n\(ordinary.output)")
+
+        let index = try run(try #require(Self.binary), ["index", "--project", root.path])
+        #expect(index.code == 0, "\(index.output)")
+
+        let store = try #require(IndexStoreLocator.candidates(under: root).first {
+            $0.isUsable && $0.path.hasPrefix(IndexStoreLocator.indexBuildDirectory(ofPackage: root).path + "/")
+        }, "no store in sextant's own build tree:\n\(index.output)")
+        // Every file that compiles is a main file of some unit; headers and the manifest never are.
+        let mainFiles = try IndexStoreUnits.shared(libraryPath: nil).mainFiles(inStore: store.path)
+        let compiled = ["Sources/CLib/clib.c", "Sources/Lib/A.swift", "Sources/Lib/B.swift", "Tests/LibTests/LibTests.swift"]
+            .map { root.appendingPathComponent($0).path }
+        #expect(Set(compiled).subtracting(mainFiles).isEmpty, "missing from the store: \(Set(compiled).subtracting(mainFiles).sorted())")
+        #expect(CompilationDatabase.load(forRoot: root.path).map { ($0.file as NSString).lastPathComponent } == ["clib.c"])
     }
 }
 

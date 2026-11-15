@@ -34,7 +34,11 @@ public struct IndexProvenance: Sendable {
         case .fresh:
             label = "fresh"
         case .stale:
-            label = "⚠ STALE — sources are newer: rebuild the project (an ordinary build updates the index) or run `sextant index`"
+            // An Xcode build refreshes the store it reads from; the store `sextant index` builds in a
+            // tree of its own is refreshed only by running it again.
+            label = source == .derivedData
+                ? "⚠ STALE — sources are newer: rebuild the project (an ordinary build updates the index) or run `sextant index`"
+                : "⚠ STALE — sources are newer: run `sextant index`, or rebuild whatever wrote this store"
         case .unknown:
             // Absence of data is not passed off as freshness: a trust label must not lie.
             label = "⚠ freshness unknown (the store is empty or unreadable)"

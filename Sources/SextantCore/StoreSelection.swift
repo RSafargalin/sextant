@@ -278,6 +278,9 @@ public enum StoreSelection {
     /// which store is theirs and which one an editor keeps for itself.
     public static func writer(ofPath path: String) -> String? {
         if path.contains("/.build/index-build/") { return "sourcekit-lsp's own index, filled in the background" }
+        if path.contains("/.build/\(IndexStoreLocator.indexBuildDirectoryName)/") {
+            return "written by `sextant index`, in a build tree of its own"
+        }
         if path.contains("/Index.noindex/DataStore") { return "Xcode's own index" }
         return nil
     }

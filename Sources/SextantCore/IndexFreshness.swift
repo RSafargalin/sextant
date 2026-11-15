@@ -6,8 +6,8 @@ import Foundation
 /// all of them by the mtime of the store directory. That signal is wrong: a build rewrites unit
 /// files inside `<store>/v*/units`, and the directory mtime does not move when files are merely
 /// overwritten. Hence false "⚠ STALE" on a freshly built index — and the opposite failure, where
-/// MCP did not notice an ordinary rebuild. The correct signal is the newest unit file: a plain
-/// `swift build` updates it, so no build hook is needed — the index is fresh as a side effect.
+/// MCP did not notice a rebuild. The correct signal is the newest unit file: every build that
+/// writes the store updates it, so no build hook is needed — the index is fresh as a side effect.
 public enum IndexFreshness {
     /// Index freshness. `unknown` means there is no data (no store, or an empty units directory);
     /// passing that off as "fresh" would put a trust label on something there is no basis to trust.

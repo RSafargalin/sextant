@@ -2,6 +2,14 @@ import Foundation
 
 /// Finds a project's SPM packages and their deterministic index stores (`.build/.../index/store`).
 public enum IndexStoreLocator {
+    /// The build tree `sextant index` builds a package in, inside its `.build`. Nothing else builds
+    /// there, and every build there writes an index store, so a store in it covers what compiled.
+    public static func indexBuildDirectory(ofPackage package: URL) -> URL {
+        package.appendingPathComponent(".build/\(indexBuildDirectoryName)")
+    }
+
+    static let indexBuildDirectoryName = "sextant-index"
+
     /// SPM package directories: the root (if it has a Package.swift) plus `Packages/*`.
     public static func swiftPackages(under root: URL) -> [URL] {
         var directories: [URL] = []
@@ -37,11 +45,13 @@ public enum IndexStoreLocator {
     /// SwiftPM has two build systems and each lays `.build` out its own way: the native one writes
     /// `<triple>/<configuration>/index/store`, the Swift Build one `out/Products/<Configuration>/index/store`.
     /// `.build/debug` is a symlink into whichever was used last, so it is never listed on its own —
-    /// it would name the same store twice.
+    /// it would name the same store twice. For the same reason the build tree of `sextant index`
+    /// inside `.build` is not read as a triple: its own `debug` symlink would name its store once
+    /// more under a path of the wrong shape.
     public static func storePaths(inBuildDirectory build: URL) -> [String] {
         var paths: [String] = []
         let entries = (try? FileManager.default.contentsOfDirectory(atPath: build.path)) ?? []
-        for triple in entries.sorted() {
+        for triple in entries.sorted() where triple != indexBuildDirectoryName {
             for configuration in ["debug", "release"] {
                 paths.append(build.appendingPathComponent("\(triple)/\(configuration)/index/store").path)
             }
@@ -52,9 +62,13 @@ public enum IndexStoreLocator {
         return paths
     }
 
+    /// The stores of one package: those of its ordinary `.build` and those of the build tree
+    /// `sextant index` keeps for itself, in either build system's layout.
     private static func candidates(inPackage directory: URL) -> [StoreCandidate] {
         var found: [StoreCandidate] = []
-        for path in storePaths(inBuildDirectory: directory.appendingPathComponent(".build")) {
+        let paths = storePaths(inBuildDirectory: directory.appendingPathComponent(".build"))
+            + storePaths(inBuildDirectory: indexBuildDirectory(ofPackage: directory))
+        for path in paths {
             guard FileManager.default.fileExists(atPath: path) else { continue }
             // A store with no units is not a candidate — there is nothing in it to open.
             let modified = IndexFreshness.timestamp(ofStore: path)

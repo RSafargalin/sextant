@@ -128,7 +128,7 @@ Working CLI and MCP server, version 0.9.x. 27 commands:
 | `serve` | daemon with a warm index: cold CLI start 2.6s → 0.27s (measured on sextant itself) | integration |
 | `store` | index stores in reach, and the policy that decides between them (`store use <policy>`) | diagnostics |
 | `doctor` | self-check of the setup (sources, libIndexStore, index store, freshness) | diagnostics |
-| `index` | build an index store and capture the C-family compile flags: SPM (`swift build`) or an app target (`--app`, xcodebuild) | build |
+| `index` | build an index store and capture the C-family compile flags: SPM (`swift build`, in a build tree of its own, `.build/sextant-index`) or an app target (`--app`, xcodebuild) | build |
 
 Shared flags, each on the commands it makes sense for: `--project <path>` (every command),
 `--json` (structured output, on every command that answers a query), `--reindex` (rebuild the
@@ -158,8 +158,9 @@ budget does have a default — an agent reads the answer into a context window.
 
 ### Which index store answers
 
-A project routinely has more than one index store: `swift build` writes one, an editor's own
-indexer writes another, a second checkout brings its own. They answer the same question
+A project routinely has more than one index store: `sextant index` writes one in a build tree of
+its own (`.build/sextant-index`), `swift build --enable-index-store` writes another in `.build`, an
+editor's own indexer a third, a second checkout brings its own. They answer the same question
 differently — measured on this repository, `refs SwiftSources` gives **83** usages in 22 files
 from the store built last and **34** in 12 files from a store seven days older, while merging
 both gives **91** — and nothing in the answer shows which was read.

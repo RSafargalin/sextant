@@ -8,7 +8,7 @@ breaking something invisible.
 ## Build and verify
 
 ```bash
-swift build && swift test          # 396 tests
+swift build && swift test          # 401 tests
 make ci                            # build + test + self-lint — run this before committing
 swift test --filter "<suite name>" # one suite
 ```
@@ -73,7 +73,7 @@ wrong answer rather than a crash.
   the handler. Do not hand-maintain a parallel list.
 - **`IndexFreshness`** is the only place that decides whether an index is fresh, and the only
   place that reads a store's timestamp. It reads the mtime of `<store>/v*/units`, because a
-  build rewrites unit files without touching the store directory. Selecting or judging a
+  build that writes the store rewrites unit files without touching the store directory. Selecting or judging a
   store by directory mtime is the specific bug that made semantic queries go blind; if you
   need a freshness signal, call this layer.
 
@@ -111,6 +111,13 @@ confident wrong answers, and a contributor who reports the same way is part of t
 - **`sextant index` executes the target project's build** — its `Package.swift`, its SwiftPM
   plugins, its Xcode run-script phases. Never point it at a repository you do not trust. The
   MCP server deliberately refuses to trigger builds; keep it that way.
+- **`sextant index` builds a SwiftPM package in `.build/sextant-index`, not in `.build`.** That
+  tree is only ever built with the index store on, so its store covers every file that compiles
+  whatever was built before — in a tree built without the store, SwiftPM's Swift Build system
+  compiles nothing and writes nothing. An ordinary `swift build` does not refresh that store;
+  `sextant index` or `--reindex` does. A store an ordinary build writes in `.build` is a second
+  candidate, and the store policy decides between them. Tests find stores and binaries through
+  `BuildProducts`, never through a hard-coded layout.
 - **Semantic commands need a built index store.** A test that queries semantics without one
   will pass vacuously. The integration fixture exists so this does not happen silently.
 - **Do not add a fourth patch for index staleness.** Four separate mechanisms existed once;

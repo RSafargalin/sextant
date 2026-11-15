@@ -137,6 +137,8 @@ public enum CommandCatalog {
                     FlagSpec("--no-tests", "skip the test targets (a faster build, and their usages go missing)"),
                     FlagSpec("--no-build", "only locate an existing index, do not build")],
             details: [BuildTrust.summary,
+                      "A package is built in a tree of its own, `.build/sextant-index`, always with the index",
+                      "store on: a second build tree on disk, and a full build the first time.",
                       "Test targets are built into the index. Measured on Alamofire: without them the",
                       "store covers 43 of 98 files and `refs Session` answers 25 instead of 504."]
         ),

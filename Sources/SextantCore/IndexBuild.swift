@@ -12,16 +12,21 @@ public enum IndexBuild {
     ///
     /// The build is verbose because its output is where one of SwiftPM's two build systems states
     /// the C-family compile flags, and nowhere else — the caller sends it to a log, not a terminal.
-    public static func swiftBuildArguments(buildTests: Bool = true) -> [String] {
-        ["build", "--enable-index-store"] + (buildTests ? ["--build-tests"] : []) + ["-v"]
+    ///
+    /// The build runs in `scratchPath`, a tree only this command builds, and always with the index
+    /// store on. In a tree built earlier without it, SwiftPM's Swift Build system counts every file
+    /// as up to date, compiles nothing and writes no store — and a tree where only some files
+    /// recompile gets a partial store, and flags for those files alone.
+    public static func swiftBuildArguments(scratchPath: String, buildTests: Bool = true) -> [String] {
+        ["build", "--scratch-path", scratchPath, "--enable-index-store"]
+            + (buildTests ? ["--build-tests"] : []) + ["-v"]
     }
 
-    /// What to say when a build succeeds and leaves no store. SwiftPM's Swift Build system treats
-    /// a package built without an index store as up to date when asked to build it with one, and
-    /// a build that compiles nothing indexes nothing.
-    public static let upToDateBuildNote =
-        "   A package that was already built without an index store counts as up to date, and an "
-        + "up-to-date build indexes nothing: `swift package clean`, then run this again."
+    /// The build tree of the umbrella package. Only this command builds the umbrella, so its
+    /// ordinary `.build` is already a tree that is never built without an index store.
+    public static func umbrellaBuildDirectory(forRoot root: String) -> URL {
+        umbrellaDirectory(forRoot: root).appendingPathComponent(".build")
+    }
 
     /// Where the output of the last `swift build` run for a project is kept.
     public static func buildLog(forRoot root: String) -> URL {
@@ -114,8 +119,7 @@ public enum IndexBuild {
     /// Path to the umbrella's index store, if built (the freshest across triple × configuration).
     /// Freshness is measured by unit update time, exactly as in `IndexStoreLocator`.
     public static func umbrellaStorePath(forRoot root: String) -> String? {
-        let build = umbrellaDirectory(forRoot: root).appendingPathComponent(".build")
-        let candidates = IndexStoreLocator.storePaths(inBuildDirectory: build).compactMap { candidate in
+        let candidates = IndexStoreLocator.storePaths(inBuildDirectory: umbrellaBuildDirectory(forRoot: root)).compactMap { candidate in
             IndexFreshness.timestamp(ofStore: candidate).map { (path: candidate, modified: $0) }
         }
         return DerivedDataLocator.freshest(from: candidates)

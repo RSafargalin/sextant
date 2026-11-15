@@ -65,6 +65,42 @@ struct IndexStoreLocatorTests {
             .map { $0.hasSuffix(".build/out/Products/Debug/index/store") } == [true])
     }
 
+    /// `sextant index` builds in `.build/sextant-index`, so its store sits one level deeper than an
+    /// ordinary build's, in whichever layout the toolchain's build system writes.
+    @Test("The store of sextant's own build tree is found in either layout, and only once")
+    func findsTheIndexBuildTreeInBothLayouts() throws {
+        let native = try package(withStoresAt: ["sextant-index/arm64-apple-macosx/debug/index/store"])
+        defer { try? FileManager.default.removeItem(at: native) }
+        // Each build tree has its own `debug` symlink; read as a triple of `.build`, the tree's
+        // symlink would list its store a second time under another path.
+        try FileManager.default.createSymbolicLink(
+            atPath: native.appendingPathComponent(".build/sextant-index/debug").path,
+            withDestinationPath: "arm64-apple-macosx/debug")
+        #expect(IndexStoreLocator.usableStorePaths(under: native)
+            .map { $0.hasSuffix(".build/sextant-index/arm64-apple-macosx/debug/index/store") } == [true])
+
+        let swiftBuild = try package(withStoresAt: ["sextant-index/out/Products/Debug/index/store"])
+        defer { try? FileManager.default.removeItem(at: swiftBuild) }
+        try FileManager.default.createSymbolicLink(
+            atPath: swiftBuild.appendingPathComponent(".build/sextant-index/debug").path,
+            withDestinationPath: "out/Products/Debug")
+        #expect(IndexStoreLocator.usableStorePaths(under: swiftBuild)
+            .map { $0.hasSuffix(".build/sextant-index/out/Products/Debug/index/store") } == [true])
+    }
+
+    /// A store of an ordinary build and the one `sextant index` wrote are two candidates, and the
+    /// store policy decides between them like any other two.
+    @Test("An ordinary build's store and sextant's own are both candidates")
+    func ordinaryAndIndexBuildStoresAreBothCandidates() throws {
+        let root = try package(withStoresAt: ["out/Products/Debug/index/store",
+                                              "sextant-index/out/Products/Debug/index/store"])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let usable = IndexStoreLocator.candidates(under: root).filter(\.isUsable).map(\.path)
+        #expect(usable.count == 2)
+        #expect(usable.contains { $0.hasSuffix("/.build/out/Products/Debug/index/store") })
+        #expect(usable.contains { $0.hasSuffix("/.build/sextant-index/out/Products/Debug/index/store") })
+    }
+
     @Test("Debug and release are told apart whichever build system spelled them")
     func configurationIsReadFromEitherSpelling() throws {
         let root = try package(withStoresAt: ["out/Products/Debug/index/store", "out/Products/Release/index/store"])

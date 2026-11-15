@@ -67,8 +67,27 @@ struct CompilationDatabaseTests {
                 == ["/pkg/.build/debug.yaml"])
         #expect(CompilationDatabase.manifestPaths(forStore: "/pkg/.build/arm64-apple-macosx/release/index/store")
                 == ["/pkg/.build/release.yaml"])
+        // The build tree `sextant index` keeps inside `.build` has its manifest at its own root.
+        #expect(CompilationDatabase.manifestPaths(forStore: "/pkg/.build/sextant-index/arm64-apple-macosx/debug/index/store")
+                == ["/pkg/.build/sextant-index/debug.yaml"])
         // A DerivedData store has no manifest beside it: an empty result, not a fabricated path.
         #expect(CompilationDatabase.manifestPaths(forStore: "/Users/x/Library/Developer/Xcode/DerivedData/App-abc/Index.noindex/DataStore").isEmpty)
+    }
+
+    /// The native build system writes the graph at the root of the build tree, and the tree
+    /// `sextant index` builds in sits inside `.build`: the flags still belong to the package.
+    @Test("Flags captured from sextant's own build tree belong to the package, not to .build")
+    func capturesFromTheIndexBuildTree() throws {
+        let package = FileManager.default.temporaryDirectory.appendingPathComponent("sextant-cdb-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: package) }
+        let scratch = IndexStoreLocator.indexBuildDirectory(ofPackage: package)
+        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        try manifest.write(to: scratch.appendingPathComponent("debug.yaml"), atomically: true, encoding: .utf8)
+
+        let store = scratch.appendingPathComponent("arm64-apple-macosx/debug/index/store").path
+        let commands = CompilationDatabase.capture(fromStores: [store])
+        #expect(commands.map(\.file) == ["/pkg/Sources/ObjCFixture/ObjCFixture.m"])
+        #expect(commands.map(\.directory) == [package.path])
     }
 
     @Test("A malformed args line is skipped, not guessed at")

@@ -80,6 +80,8 @@ struct StoreSelectionTests {
                 == "sourcekit-lsp's own index, filled in the background")
         #expect(StoreSelection.writer(ofPath: "/Users/x/Library/Developer/Xcode/DerivedData/App-abc/Index.noindex/DataStore")
                 == "Xcode's own index")
+        #expect(StoreSelection.writer(ofPath: "/repo/.build/sextant-index/out/Products/Debug/index/store")
+                == "written by `sextant index`, in a build tree of its own")
         // An ordinary build's store gets no label: the reader's own build needs no explanation,
         // and a line under every candidate would bury the one that does.
         #expect(StoreSelection.writer(ofPath: "/repo/.build/x86_64-apple-macosx/debug/index/store") == nil)
