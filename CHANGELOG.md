@@ -61,6 +61,23 @@ Human-readable text output is not covered — parse `--json`, not prose.
   read no index and dropped the notes on files past `maxFiles` and on non-Swift files left out of
   the map. Both now produce the same answer through one code path; the resource's default budget
   is the tool's (4 000 tokens, or `budget` from `.sextant.json`).
+- **With `sextant serve` running, some commands answered differently or not at all.** The
+  daemon refused a short list of commands and answered every other one, so `hook` read the
+  daemon's stdin and recorded nothing, `completion` failed on the `--project` the client adds,
+  and `store use` wrote its policy from inside the daemon. The daemon now answers only the
+  read-only queries the command catalog marks as such; a command added later runs in the client
+  until it is marked.
+- **A command run through the daemon read the daemon's surroundings, not the caller's.** A
+  relative `--rules`, `--index-store`, `--index-lib` or `--derived-data` was opened in the
+  daemon's working directory, and `SEXTANT_STORE_POLICY` and `SEXTANT_DERIVED_DATA` came from
+  the daemon's environment — so a daemon started with one store policy answered every client with
+  it. `context` printed its compact form on a terminal, because the daemon's output is a pipe.
+  Paths are now made absolute by the client, and the caller's values of those variables and of
+  "is the output a terminal" travel with the request and are the ones in force.
+- **A project reached through a symlink was refused by its own daemon, with exit 2.** The socket
+  was named after the resolved path, but the request was compared with the daemon's own spelling.
+  Both sides now use one canonical root. A daemon that declines a command, or one left running
+  from another version, no longer answers in the command's place: the client runs it itself.
 
 ## [0.9.1] — 2026-11-04
 

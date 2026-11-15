@@ -8,8 +8,7 @@ func runServe(arguments: [String]) -> Int32 {
     // A client dropping the connection (Ctrl-C on a command) would otherwise kill the daemon
     // with SIGPIPE.
     signal(SIGPIPE, SIG_IGN)
-    let project = URL(fileURLWithPath: projectRoot(in: arguments), isDirectory: true)
-        .standardizedFileURL.path
+    let project = DaemonSocket.canonicalProjectRoot(projectRoot(in: arguments))
     let socketPath = DaemonSocket.path(forProject: project)
 
     let listener: DaemonSocket.Listener
@@ -42,8 +41,14 @@ func runServe(arguments: [String]) -> Int32 {
     }
     defer { interrupts.forEach { $0.cancel() } }
 
-    // The index is opened once — that is the entire reason the daemon exists.
-    let warm = openIndex(arguments, label: "serve") != nil
+    // The index is opened once — that is the entire reason the daemon exists. It is opened with
+    // the arguments spelled the way a client forwards them, so a request finds this open index
+    // instead of opening its own.
+    let spelled = DaemonPolicy.forwardedArguments(
+        ["serve"] + arguments,
+        projectRoot: URL(fileURLWithPath: projectRoot(in: arguments), isDirectory: true).standardizedFileURL.path,
+        workingDirectory: FileManager.default.currentDirectoryPath)
+    let warm = openIndex(Array(spelled.dropFirst()), label: "serve") != nil
     reportError("sextant serve: listening on \(socketPath) · project \(project) · index \(warm ? "warm" : "unavailable (build it later with `sextant index`)")")
     reportError("Stop with Ctrl-C; clients use the daemon automatically (SEXTANT_NO_DAEMON=1 disables it).")
 
@@ -55,12 +60,13 @@ func runServe(arguments: [String]) -> Int32 {
 
         let name = request.arguments.first ?? ""
         let response: DaemonResponse
-        if request.projectRoot != project {
+        if DaemonSocket.canonicalProjectRoot(request.projectRoot) != project {
             // The socket is named after the project root, but a request can also arrive
             // directly. Answering about someone else's project is exactly the kind of quiet
             // wrongness a grep replacement must never produce.
             response = DaemonResponse(exitCode: 2, output: "",
-                                      errorOutput: "sextant serve: request is about a different project (\(request.projectRoot)) — this daemon serves \(project).\n")
+                                      errorOutput: "sextant serve: request is about a different project (\(request.projectRoot)) — this daemon serves \(project).\n",
+                                      declined: true)
         } else if DaemonPolicy.servesRequest(request.arguments) {
             // A fresh file list per request, as the MCP server does: the memo exists to keep one
             // command from walking the project twice, not to freeze the project for the life of
@@ -68,12 +74,17 @@ func runServe(arguments: [String]) -> Int32 {
             // is what answers on a real project.
             SwiftSources.clearFileListMemo()
             clearConfigMemo()
-            let captured = OutputCapture.capture { dispatch(request.arguments) }
+            let captured = CallerContext.during(request.caller) {
+                OutputCapture.capture { dispatch(request.arguments) }
+            }
             response = DaemonResponse(exitCode: captured.value, output: captured.output, errorOutput: captured.errorOutput)
         } else {
-            // The daemon never builds or sets up: those run foreign code and write into the project.
-            response = DaemonResponse(exitCode: 2, output: "", errorOutput: "sextant serve: '\(name)' runs only directly (it builds or configures).\n")
+            // The daemon answers read-only queries only: anything else runs where it was invoked.
+            response = DaemonResponse(exitCode: 2, output: "",
+                                      errorOutput: "sextant serve: '\(name)' runs only directly, not through the daemon.\n",
+                                      declined: true)
         }
+        reportError("sextant serve: \(name) → \(response.declined == true ? "declined" : "exit \(response.exitCode)")")
         if let encoded = try? JSONEncoder().encode(response) {
             DaemonSocket.send(String(decoding: encoded, as: UTF8.self), to: client)
         }
@@ -84,36 +95,35 @@ func runServe(arguments: [String]) -> Int32 {
 // MARK: - Daemon client
 
 /// Tries to run a command through the daemon. nil means there is no daemon, or the command is
-/// not one it serves: the caller then runs it itself. Falling back is the normal path, not an error.
+/// not one it serves, or the daemon declined it: the caller then runs it itself. Falling back is
+/// the normal path, not an error.
 func runViaDaemon(_ arguments: [String]) -> Int32? {
     guard ProcessInfo.processInfo.environment["SEXTANT_NO_DAEMON"] == nil,
-          let name = arguments.first, DaemonPolicy.servesRequest(arguments) else { return nil }
+          DaemonPolicy.servesRequest(arguments) else { return nil }
 
+    // Everything that depends on where the client stands is resolved HERE: the daemon has its own
+    // working directory and environment, where "--project ." or "--rules rules.json" would mean
+    // something else.
     let rest = Array(arguments.dropFirst())
-    // The root is resolved ON THE CLIENT: the daemon has its own working directory, where
-    // "--project ." would mean a different project. This also pins the output mode, since
-    // inside the daemon stdout is always a pipe.
-    let root = URL(fileURLWithPath: projectRoot(in: rest), isDirectory: true).standardizedFileURL.path
-    var forwarded = arguments.filter { $0 != "--project" }
-    if let index = arguments.firstIndex(of: "--project"), index + 1 < arguments.count {
-        forwarded = arguments.enumerated().filter { $0.offset != index && $0.offset != index + 1 }.map { $0.element }
-    }
-    forwarded += ["--project", root]
-    if let spec = CommandCatalog.command(named: name), spec.flags.contains(where: { $0.name == "--compact" }),
-       !arguments.contains("--compact"), !arguments.contains("--full") {
-        forwarded.append(isCompact(rest) ? "--compact" : "--full")
-    }
+    let given = projectRoot(in: rest)
+    let root = DaemonSocket.canonicalProjectRoot(given)
+    let forwarded = DaemonPolicy.forwardedArguments(
+        arguments,
+        projectRoot: URL(fileURLWithPath: given, isDirectory: true).standardizedFileURL.path,
+        workingDirectory: FileManager.default.currentDirectoryPath)
 
     let socketPath = DaemonSocket.path(forProject: root)
     // The timeout is insurance: a hung daemon must not hang the CLI — the command runs locally.
     guard let handle = DaemonSocket.connect(to: socketPath, readTimeout: 120) else { return nil }
     defer { DaemonSocket.close(handle) }
 
-    guard let request = try? JSONEncoder().encode(DaemonRequest(arguments: forwarded, projectRoot: root)),
-          DaemonSocket.send(String(decoding: request, as: UTF8.self), to: handle),
+    let request = DaemonRequest(arguments: forwarded, projectRoot: root, caller: .current())
+    guard let encoded = try? JSONEncoder().encode(request),
+          DaemonSocket.send(String(decoding: encoded, as: UTF8.self), to: handle),
           let line = DaemonSocket.Reader(handle).line(),
           let data = line.data(using: .utf8),
-          let response = try? JSONDecoder().decode(DaemonResponse.self, from: data) else { return nil }
+          let response = try? JSONDecoder().decode(DaemonResponse.self, from: data),
+          response.answersForThisVersion else { return nil }
 
     if !response.output.isEmpty { FileHandle.standardOutput.write(Data(response.output.utf8)) }
     if !response.errorOutput.isEmpty { FileHandle.standardError.write(Data(response.errorOutput.utf8)) }

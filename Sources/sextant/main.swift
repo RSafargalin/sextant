@@ -139,10 +139,11 @@ func shorten(_ path: String) -> String {
 
 /// Compact output: yes for an agent (piped), no for a human (TTY). `--full` and `--compact`
 /// force it either way. A histogram by file without snippets instead of a full list saves tokens.
+/// Under the daemon the terminal is the client's, not the daemon's pipe.
 func isCompact(_ arguments: [String]) -> Bool {
     if arguments.contains("--full") { return false }
     if arguments.contains("--compact") { return true }
-    return isatty(STDOUT_FILENO) == 0
+    return !CallerContext.outputIsTerminal()
 }
 
 /// Prints a value as pretty JSON (for `--json`).

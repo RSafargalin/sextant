@@ -140,6 +140,110 @@ struct DaemonSocketTests {
         #expect(!DaemonPolicy.servesCommand("no-such-command"))
     }
 
+    /// Regression: the daemon refused a list of commands and answered everything else, so `hook`
+    /// read the daemon's stdin instead of the caller's and recorded nothing, `completion` failed on
+    /// the `--project` the client appends, and `store use` wrote its policy from inside the daemon.
+    @Test("Commands that read stdin, write, or take no --project are not served")
+    func servesOnlyQueries() {
+        for command in ["hook", "completion", "store", "adoption", "golden", "bench"] {
+            #expect(!DaemonPolicy.servesCommand(command), "\(command) must run where it was invoked")
+        }
+    }
+
+    /// The allow-list is a mark in the catalog, not a list beside it. Changing what the daemon
+    /// answers has to change this test too, so it is never a side effect of adding a command.
+    @Test("The daemon answers exactly the read-only queries the catalog marks")
+    func servedSetIsPinned() {
+        #expect(DaemonPolicy.servedCommands == [
+            "map", "api", "search", "lint", "changed",
+            "refs", "defs", "callers", "callees", "impls", "supertypes", "hierarchy", "context", "blast", "body", "construct",
+        ])
+        let unmarked = CommandSpec(name: "new-command", summary: "", group: "")
+        #expect(!unmarked.servedByDaemon, "a new command must not be forwarded until it is marked")
+    }
+
+    /// The client always appends `--project`; a served command that did not take it would fail
+    /// through the daemon and succeed without one.
+    @Test("Every served command takes --project")
+    func servedCommandsTakeProject() {
+        for spec in CommandCatalog.commands where spec.servedByDaemon {
+            #expect(spec.flags.contains { $0.name == "--project" }, "\(spec.name) is served but takes no --project")
+        }
+    }
+
+    @Test("Relative paths are made absolute against the client's directory; --project is replaced")
+    func forwardedArgumentsResolvePaths() {
+        let forwarded = DaemonPolicy.forwardedArguments(
+            ["lint", "--rules", "rules/my.json", "--scope", "Sources", "--project", ".", "--json"],
+            projectRoot: "/repo/app", workingDirectory: "/repo/app")
+        #expect(forwarded == ["lint", "--rules", "/repo/app/rules/my.json", "--scope", "Sources", "--json",
+                              "--project", "/repo/app"],
+                "--scope is relative to the project, not to the working directory, and stays as given")
+
+        let semantic = DaemonPolicy.forwardedArguments(
+            ["refs", "Event", "--index-store", "../store", "--index-lib", "/abs/lib.dylib", "--derived-data", "dd"],
+            projectRoot: "/repo/app", workingDirectory: "/work")
+        #expect(semantic == ["refs", "Event", "--index-store", "/work/../store", "--index-lib", "/abs/lib.dylib",
+                             "--derived-data", "/work/dd", "--project", "/repo/app"])
+    }
+
+    @Test("Every path flag the daemon could receive is known to be a path")
+    func pathFlagsAreMarked() {
+        let flags = Dictionary(CommandCatalog.commands.flatMap(\.flags).map { ($0.name, $0) }) { first, _ in first }
+        for name in ["--project", "--rules", "--index-store", "--derived-data", "--index-lib"] {
+            #expect(flags[name]?.takesPath == true, "\(name) would be read in the daemon's directory")
+        }
+    }
+
+    /// Regression: the daemon compared the request's root with its own spelling, so a project
+    /// reached through a symlink found the right socket and was then refused with exit 2.
+    @Test("A symlinked spelling of a project reaches the same daemon as the real one")
+    func symlinkedProjectSharesDaemon() throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("sextant-link-\(UUID().uuidString.prefix(8))")
+        let real = base.appendingPathComponent("real")
+        let link = base.appendingPathComponent("link")
+        try FileManager.default.createDirectory(at: real, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: real)
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        #expect(DaemonSocket.canonicalProjectRoot(link.path) == DaemonSocket.canonicalProjectRoot(real.path))
+        #expect(DaemonSocket.canonicalProjectRoot(real.path + "/") == DaemonSocket.canonicalProjectRoot(real.path))
+        #expect(DaemonSocket.path(forProject: link.path) == DaemonSocket.path(forProject: real.path))
+    }
+
+    @Test("The caller's environment and terminal travel with the request and take effect inside it")
+    func callerContextOverridesTheDaemon() throws {
+        let daemon = ["SEXTANT_STORE_POLICY": "union", "SEXTANT_DERIVED_DATA": "/daemon/dd", "UNRELATED": "x"]
+        let caller = CallerContext.current(environment: ["SEXTANT_DERIVED_DATA": "/caller/dd", "UNRELATED": "y"],
+                                           outputIsTerminal: true)
+        #expect(caller.environment == ["SEXTANT_DERIVED_DATA": "/caller/dd"], "only the variables that change an answer")
+
+        let decoded = try JSONDecoder().decode(DaemonRequest.self, from: JSONEncoder().encode(
+            DaemonRequest(arguments: ["refs", "X"], projectRoot: "/repo", caller: caller)))
+        #expect(decoded.caller == caller)
+
+        #expect(CallerContext.environmentValue("SEXTANT_STORE_POLICY", process: daemon) == "union")
+        CallerContext.during(decoded.caller) {
+            #expect(CallerContext.environmentValue("SEXTANT_DERIVED_DATA", process: daemon) == "/caller/dd")
+            #expect(CallerContext.environmentValue("SEXTANT_STORE_POLICY", process: daemon) == nil,
+                    "unset by the caller means unset, whatever the daemon has")
+            #expect(CallerContext.outputIsTerminal(process: { false }))
+        }
+        #expect(CallerContext.environmentValue("SEXTANT_DERIVED_DATA", process: daemon) == "/daemon/dd")
+        #expect(!CallerContext.outputIsTerminal(process: { false }))
+    }
+
+    @Test("A client takes an answer only from a daemon of its own version that did not decline")
+    func responseFromAnotherVersionIsNotAnAnswer() throws {
+        #expect(DaemonResponse(exitCode: 0, output: "", errorOutput: "").answersForThisVersion)
+        #expect(!DaemonResponse(exitCode: 2, output: "", errorOutput: "", declined: true).answersForThisVersion)
+        #expect(!DaemonResponse(exitCode: 0, output: "", errorOutput: "", version: "0.0.1").answersForThisVersion)
+        // A daemon that predates the field sends no version at all.
+        let old = try JSONDecoder().decode(DaemonResponse.self,
+                                           from: Data(#"{"exitCode":0,"output":"x","errorOutput":""}"#.utf8))
+        #expect(!old.answersForThisVersion)
+    }
+
     @Test("`--reindex` does not bypass the ban on building through the daemon")
     func refusesReindex() {
         // The flag triggers the same runIndex as the forbidden `index`: the daemon would build an

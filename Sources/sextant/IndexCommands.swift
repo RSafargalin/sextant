@@ -47,7 +47,7 @@ func storePolicy(in arguments: [String]) -> (policy: StorePolicy, origin: String
         guard let policy = StorePolicy.named(raw) else { return nil }
         return (policy, "--store-policy")
     }
-    if let raw = ProcessInfo.processInfo.environment["SEXTANT_STORE_POLICY"], let policy = StorePolicy.named(raw) {
+    if let raw = CallerContext.environmentValue("SEXTANT_STORE_POLICY"), let policy = StorePolicy.named(raw) {
         return (policy, "SEXTANT_STORE_POLICY")
     }
     if let raw = loadConfig(arguments)?.storePolicy, let policy = StorePolicy.named(raw) {
@@ -81,7 +81,7 @@ func resolveStorePaths(in arguments: [String]) -> [String] { resolveIndex(in: ar
 /// for a project that has one.
 func derivedDataRoot(in arguments: [String]) -> String {
     if let explicit = optionValue("--derived-data", in: arguments) { return explicit }
-    if let environment = ProcessInfo.processInfo.environment["SEXTANT_DERIVED_DATA"], !environment.isEmpty {
+    if let environment = CallerContext.environmentValue("SEXTANT_DERIVED_DATA"), !environment.isEmpty {
         return (environment as NSString).standardizingPath
     }
     return "\(FileManager.default.homeDirectoryForCurrentUser.path)/Library/Developer/Xcode/DerivedData"

@@ -274,9 +274,12 @@ sextant serve --project /path/to/project &   # in the background, one per projec
 ```
 
 Clients use it automatically; with no daemon running they fall back to the normal path, which
-is not an error. `SEXTANT_NO_DAEMON=1` disables the daemon entirely. Builds and setup
-(`index`, `init`, `doctor`) are never executed by the daemon — they run foreign code and write
-into the project.
+is not an error. `SEXTANT_NO_DAEMON=1` disables the daemon entirely. The daemon answers
+read-only queries about the code and nothing else: builds and setup (`index`, `init`, `doctor`)
+run foreign code and write into the project, and commands such as `store`, `hook` and
+`completion` run where they were invoked. A command answers the same with a daemon as without
+one — relative paths, `SEXTANT_STORE_POLICY`, `SEXTANT_DERIVED_DATA` and whether the output is a
+terminal are the caller's.
 
 Measured on sextant itself (53 MB store, identical state): `refs` **2.6s → 0.27s**, roughly
 10×. On a small freshly built store the difference is smaller, because reusing the database

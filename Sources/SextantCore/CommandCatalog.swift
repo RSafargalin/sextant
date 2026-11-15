@@ -4,11 +4,15 @@ import Foundation
 public struct FlagSpec: Sendable, Equatable {
     public let name: String
     public let takesValue: Bool
+    /// The value is a file-system path, read relative to the working directory of the process
+    /// that was invoked.
+    public let takesPath: Bool
     public let summary: String
 
-    public init(_ name: String, takesValue: Bool = false, _ summary: String) {
+    public init(_ name: String, takesValue: Bool = false, takesPath: Bool = false, _ summary: String) {
         self.name = name
-        self.takesValue = takesValue
+        self.takesValue = takesValue || takesPath
+        self.takesPath = takesPath
         self.summary = summary
     }
 }
@@ -21,14 +25,21 @@ public struct CommandSpec: Sendable {
     public let group: String
     public let flags: [FlagSpec]
     public let details: [String]
+    /// A running `sextant serve` may answer this command for a client. Only read-only queries
+    /// about the code qualify: the daemon answers from its own process, so a command that reads
+    /// stdin, writes into the project, builds, or serves something itself must run where it was
+    /// invoked. Off unless a command says otherwise.
+    public let servedByDaemon: Bool
 
-    public init(name: String, argument: String? = nil, summary: String, group: String, flags: [FlagSpec] = [], details: [String] = []) {
+    public init(name: String, argument: String? = nil, summary: String, group: String, flags: [FlagSpec] = [],
+                details: [String] = [], servedByDaemon: Bool = false) {
         self.name = name
         self.argument = argument
         self.summary = summary
         self.group = group
         self.flags = flags
         self.details = details
+        self.servedByDaemon = servedByDaemon
     }
 
     public var invocation: String {
@@ -56,7 +67,7 @@ public enum CommandCatalog {
 
     // MARK: Shared flag sets
 
-    static let project = FlagSpec("--project", takesValue: true, "project root (otherwise CLAUDE_PROJECT_DIR or the current directory)")
+    static let project = FlagSpec("--project", takesPath: true, "project root (otherwise CLAUDE_PROJECT_DIR or the current directory)")
     static let json = FlagSpec("--json", "structured output instead of text")
     static let scope = FlagSpec("--scope", takesValue: true, "narrow the area to a subdirectory")
     static let maxFiles = FlagSpec("--max-files", takesValue: true,
@@ -74,9 +85,9 @@ public enum CommandCatalog {
     static let compact = FlagSpec("--compact", "compact: a histogram by file")
     static let verify = FlagSpec("--verify", "cross-check semantics against the textual occurrence count")
     static let reindex = FlagSpec("--reindex", "rebuild the index before the query")
-    static let indexStore = FlagSpec("--index-store", takesValue: true, "path to an index store")
-    static let indexLib = FlagSpec("--index-lib", takesValue: true, "path to libIndexStore.dylib")
-    static let derivedData = FlagSpec("--derived-data", takesValue: true,
+    static let indexStore = FlagSpec("--index-store", takesPath: true, "path to an index store")
+    static let indexLib = FlagSpec("--index-lib", takesPath: true, "path to libIndexStore.dylib")
+    static let derivedData = FlagSpec("--derived-data", takesPath: true,
                                       "Xcode DerivedData directory (default: ~/Library/Developer/Xcode/DerivedData)")
     static let storePolicyFlag = FlagSpec("--store-policy", takesValue: true,
                                           "for this command only: \(StorePolicy.known) (see `sextant store`)")
@@ -95,7 +106,8 @@ public enum CommandCatalog {
                     FlagSpec("--semantic", "types by usage count (needs an index)"),
                     FlagSpec("--pagerank", "files by centrality (needs an index)"),
                     includeTests, scope, maxFiles, exclude, json],
-            details: ["Defaults are taken from .sextant.json."]
+            details: ["Defaults are taken from .sextant.json."],
+            servedByDaemon: true
         ),
         CommandSpec(
             name: "api", summary: "public surface of a package, subdirectory, or type",
@@ -105,19 +117,22 @@ public enum CommandCatalog {
                     apiBudget, scope, maxFiles, exclude, json],
             details: ["A replacement for reading sources: signatures and doc summaries in one call.",
                       "The surface is unbounded by default — a contract cut in silence is not one.",
-                      "`--budget <tokens>` bounds it, and the header then says what was left out."]
+                      "`--budget <tokens>` bounds it, and the header then says what was left out."],
+            servedByDaemon: true
         ),
         CommandSpec(
             name: "search", argument: "<pattern>", summary: "structural search over the AST (a grep replacement)",
             group: navigationGroup,
             flags: [project, scope, maxFiles, exclude, includeTests, limit, json],
-            details: ["Metavariables: $X (an expression), variadic $$$. For example 'try? $X.save()'."]
+            details: ["Metavariables: $X (an expression), variadic $$$. For example 'try? $X.save()'."],
+            servedByDaemon: true
         ),
         CommandSpec(
             name: "lint", summary: "structural code-hygiene rules",
             group: navigationGroup,
-            flags: [project, FlagSpec("--rules", takesValue: true, "JSON rules file (otherwise the built-in set)"),
-                    scope, maxFiles, exclude, includeTests, json]
+            flags: [project, FlagSpec("--rules", takesPath: true, "JSON rules file (otherwise the built-in set)"),
+                    scope, maxFiles, exclude, includeTests, json],
+            servedByDaemon: true
         ),
         CommandSpec(
             name: "changed", summary: "symbol-level git diff: added, removed, or changed signature",
@@ -125,7 +140,8 @@ public enum CommandCatalog {
             flags: [project, FlagSpec("--from", takesValue: true, "baseline revision (default HEAD)"),
                     FlagSpec("--to", takesValue: true, "second revision; omit to use the working tree"), json],
             details: ["Compares SYMBOLS, not lines: body edits and reformatting do not add noise.",
-                      "Swift only. Changed C, C++ and Objective-C files are listed as not compared, never dropped."]
+                      "Swift only. Changed C, C++ and Objective-C files are listed as not compared, never dropped."],
+            servedByDaemon: true
         ),
 
         CommandSpec(
@@ -144,36 +160,37 @@ public enum CommandCatalog {
         ),
         CommandSpec(name: "refs", argument: "<symbol>", summary: "every usage of a symbol",
                     group: semanticsGroup, flags: semanticFlags,
-                    details: ["Default when piped (an agent) is a histogram by file; TTY or --full gives line by line."]),
+                    details: ["Default when piped (an agent) is a histogram by file; TTY or --full gives line by line."], servedByDaemon: true),
         CommandSpec(name: "defs", argument: "<symbol>", summary: "where a symbol is defined",
-                    group: semanticsGroup, flags: semanticFlags),
+                    group: semanticsGroup, flags: semanticFlags, servedByDaemon: true),
         CommandSpec(name: "callers", argument: "<symbol>", summary: "call sites, accounting for protocol dispatch",
                     group: semanticsGroup, flags: semanticFlags,
-                    details: ["Types have no call sites — use refs, context, or blast for those."]),
+                    details: ["Types have no call sites — use refs, context, or blast for those."], servedByDaemon: true),
         CommandSpec(name: "callees", argument: "<symbol>", summary: "what a symbol calls (best effort)",
-                    group: semanticsGroup, flags: [project, indexStore, indexLib, storePolicyFlag, derivedData, reindex, limit, json]),
+                    group: semanticsGroup, flags: [project, indexStore, indexLib, storePolicyFlag, derivedData, reindex, limit, json], servedByDaemon: true),
         CommandSpec(name: "impls", argument: "<type>", summary: "implementations and subtypes of a protocol or class",
-                    group: semanticsGroup, flags: [project, indexStore, indexLib, storePolicyFlag, derivedData, reindex, limit, json]),
+                    group: semanticsGroup, flags: [project, indexStore, indexLib, storePolicyFlag, derivedData, reindex, limit, json], servedByDaemon: true),
         CommandSpec(name: "supertypes", argument: "<type>", summary: "bases and protocols of a type",
-                    group: semanticsGroup, flags: [project, indexStore, indexLib, storePolicyFlag, derivedData, reindex, limit, json]),
+                    group: semanticsGroup, flags: [project, indexStore, indexLib, storePolicyFlag, derivedData, reindex, limit, json], servedByDaemon: true),
         CommandSpec(
             name: "hierarchy", argument: "<symbol>", summary: "transitive call graph, as a tree",
             group: semanticsGroup,
             flags: [project, FlagSpec("--callees", "down the call graph (default)"), FlagSpec("--callers", "up to the callers"),
-                    FlagSpec("--depth", takesValue: true, "traversal depth (default 3)"), indexStore, indexLib, storePolicyFlag, derivedData, reindex, json]
+                    FlagSpec("--depth", takesValue: true, "traversal depth (default 3)"), indexStore, indexLib, storePolicyFlag, derivedData, reindex, json],
+            servedByDaemon: true
         ),
         CommandSpec(name: "context", argument: "<symbol>", summary: "everything about one symbol in a single query",
                     group: semanticsGroup, flags: [project, indexStore, indexLib, storePolicyFlag, derivedData, reindex, limit, json],
-                    details: ["Definition, usages, callers, callees, hierarchy — instead of a series of greps."]),
+                    details: ["Definition, usages, callers, callees, hierarchy — instead of a series of greps."], servedByDaemon: true),
         CommandSpec(name: "blast", argument: "<symbol>", summary: "impact analysis: what a change would touch",
-                    group: semanticsGroup, flags: [project, indexStore, indexLib, storePolicyFlag, derivedData, reindex, json]),
+                    group: semanticsGroup, flags: [project, indexStore, indexLib, storePolicyFlag, derivedData, reindex, json], servedByDaemon: true),
         CommandSpec(name: "body", argument: "<symbol>", summary: "full text of a declaration (signature and body)",
                     group: semanticsGroup,
                     flags: [project, indexStore, indexLib, storePolicyFlag, derivedData, reindex, limit, contextLines, json],
-                    details: ["`--context-lines N` adds N lines on each side, marked apart from the declaration."]),
+                    details: ["`--context-lines N` adds N lines on each side, marked apart from the declaration."], servedByDaemon: true),
         CommandSpec(name: "construct", argument: "<type>", summary: "construction and injection sites of a type",
                     group: semanticsGroup, flags: [project, indexStore, indexLib, storePolicyFlag, derivedData, reindex, limit, json],
-                    details: ["A `Type(` heuristic over usages — not exact semantics."]),
+                    details: ["A `Type(` heuristic over usages — not exact semantics."], servedByDaemon: true),
 
         CommandSpec(name: "mcp", summary: "MCP server (stdio) for an agent",
                     group: "Integration and setup", flags: [project, indexStore, indexLib, storePolicyFlag, derivedData],
@@ -206,7 +223,7 @@ public enum CommandCatalog {
 
         CommandSpec(name: "golden", summary: "semantic regression check against a spec",
                     group: "Trust and measurability",
-                    flags: [project, FlagSpec("--spec", takesValue: true, "JSON spec of assertions"), indexStore, indexLib, storePolicyFlag, derivedData, json]),
+                    flags: [project, FlagSpec("--spec", takesPath: true, "JSON spec of assertions"), indexStore, indexLib, storePolicyFlag, derivedData, json]),
         CommandSpec(name: "bench", summary: "latency (p50/p95), payload proxy, peak RSS",
                     group: "Trust and measurability",
                     flags: [project, FlagSpec("--symbols", takesValue: true, "symbols, comma separated"),

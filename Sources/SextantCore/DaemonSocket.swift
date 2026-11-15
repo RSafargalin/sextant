@@ -12,15 +12,21 @@ public enum DaemonSocket {
         let lock: Int32
     }
 
-    /// Socket path for a project. The name is a hash of the path: `sun_path` is limited to about
-    /// 104 bytes, and project roots get long (worktrees, nested packages).
-    public static func path(forProject root: String) -> String {
-        let resolved = URL(fileURLWithPath: root, isDirectory: true).resolvingSymlinksInPath().standardizedFileURL.path
-        let directory = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Caches/sextant/serve")
+    /// The one spelling of a project root that the daemon and its clients agree on: absolute,
+    /// standardized, with symlinks resolved. Two spellings of one directory give the same root,
+    /// so they reach the same daemon and the daemon recognises the request as its own.
+    public static func canonicalProjectRoot(_ root: String) -> String {
+        URL(fileURLWithPath: root, isDirectory: true).resolvingSymlinksInPath().standardizedFileURL.path
+    }
+
+    /// Socket path for a project. The name is a hash of the canonical root: `sun_path` is limited
+    /// to about 104 bytes, and project roots get long (worktrees, nested packages).
+    public static func path(forProject root: String,
+                            home: URL = FileManager.default.homeDirectoryForCurrentUser) -> String {
+        let directory = home.appendingPathComponent("Library/Caches/sextant/serve")
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
                                                  attributes: [.posixPermissions: 0o700])
-        return directory.appendingPathComponent("\(ContentHash.of(resolved).prefix(16)).sock").path
+        return directory.appendingPathComponent("\(ContentHash.of(canonicalProjectRoot(root)).prefix(16)).sock").path
     }
 
     public enum Failure: Error, Equatable {
@@ -174,13 +180,18 @@ public enum DaemonSocket {
 /// Daemon request and response.
 public struct DaemonRequest: Codable, Sendable {
     public let arguments: [String]
-    /// Project root, ALREADY resolved by the client. Without it the daemon would resolve
-    /// `--project .` and relative paths in ITS OWN working directory, quietly answering about a
+    /// Project root, ALREADY resolved by the client to its canonical spelling. Without it the
+    /// daemon would resolve `--project .` and relative paths in ITS OWN working directory, quietly
+    /// answering about a different project.
     public let projectRoot: String
+    /// What the command reads from the caller's process rather than the daemon's. nil from a
+    /// client that does not send it; the daemon then answers with its own.
+    public let caller: CallerContext?
 
-    public init(arguments: [String], projectRoot: String) {
+    public init(arguments: [String], projectRoot: String, caller: CallerContext? = nil) {
         self.arguments = arguments
         self.projectRoot = projectRoot
+        self.caller = caller
     }
 }
 
@@ -188,27 +199,80 @@ public struct DaemonResponse: Codable, Sendable {
     public let exitCode: Int32
     public let output: String
     public let errorOutput: String
+    /// The version of the daemon that answered. A client accepts an answer only from its own
+    /// version: a daemon left running across an upgrade answers the way the old version did.
+    public let version: String?
+    /// The daemon did not run the command (not one it serves, or another project's). The client
+    /// then runs it itself, so a refusal never stands in for the command's own answer.
+    public let declined: Bool?
 
-    public init(exitCode: Int32, output: String, errorOutput: String) {
+    public init(exitCode: Int32, output: String, errorOutput: String,
+                version: String? = Sextant.version, declined: Bool? = nil) {
         self.exitCode = exitCode
         self.output = output
         self.errorOutput = errorOutput
+        self.version = version
+        self.declined = declined
+    }
+
+    /// Whether a client of this version may print this answer as the command's own.
+    public var answersForThisVersion: Bool {
+        declined != true && version == Sextant.version
     }
 }
 
-/// Commands the daemon will NOT serve: a build executes foreign code, setup writes into the
-/// project, and server modes make no sense over a socket. The client runs these itself.
+/// Which commands a running daemon answers, and what a client sends it. The rule a forwarded
+/// command has to keep: the same output and exit code as when the client runs it itself.
 public enum DaemonPolicy {
-    public static let refusedCommands: Set<String> = ["index", "serve", "mcp", "init", "doctor", "golden", "bench"]
-
-    public static func servesCommand(_ name: String) -> Bool {
-        !refusedCommands.contains(name) && CommandCatalog.command(named: name) != nil
+    /// Commands the daemon answers, as the catalog marks them. A command is not served unless
+    /// it says so: one that reads stdin, writes into the project, builds, or does not take
+    /// `--project` would answer differently, or not at all, from inside the daemon.
+    public static var servedCommands: Set<String> {
+        Set(CommandCatalog.commands.filter(\.servedByDaemon).map(\.name))
     }
 
-    /// `--reindex` triggers the same build as the forbidden `index`, so it must not go through the
-    /// daemon: it runs with the owner's environment and would build an arbitrary project on request.
+    public static func servesCommand(_ name: String) -> Bool {
+        CommandCatalog.command(named: name)?.servedByDaemon ?? false
+    }
+
+    /// `--reindex` triggers the same build as `index`, so it must not go through the daemon: it
+    /// runs with the owner's environment and would build an arbitrary project on request.
     public static func servesRequest(_ arguments: [String]) -> Bool {
         guard let name = arguments.first, servesCommand(name) else { return false }
         return !arguments.contains("--reindex")
+    }
+
+    /// The arguments a client sends: `--project` replaced by the project root, and every
+    /// relative path the command takes made absolute against the client's working directory —
+    /// the daemon has a working directory of its own, where the same relative path names a
+    /// different file or none.
+    public static func forwardedArguments(_ arguments: [String], projectRoot: String,
+                                          workingDirectory: String) -> [String] {
+        guard let name = arguments.first else { return arguments }
+        let pathFlags = Set((CommandCatalog.command(named: name)?.flags ?? []).filter(\.takesPath).map(\.name))
+        var forwarded = [name]
+        var index = 1
+        while index < arguments.count {
+            let argument = arguments[index]
+            let value = index + 1 < arguments.count ? arguments[index + 1] : nil
+            if argument == "--project" {
+                // Its value is dropped with it, unless the next token is a flag rather than a value.
+                index += (value.map { !$0.hasPrefix("--") } ?? false) ? 2 : 1
+                continue
+            }
+            if pathFlags.contains(argument), let value, !value.hasPrefix("--") {
+                forwarded += [argument, absolutePath(value, in: workingDirectory)]
+                index += 2
+                continue
+            }
+            forwarded.append(argument)
+            index += 1
+        }
+        return forwarded + ["--project", projectRoot]
+    }
+
+    /// A path as the client's own process would open it.
+    static func absolutePath(_ path: String, in workingDirectory: String) -> String {
+        path.hasPrefix("/") ? path : (workingDirectory as NSString).appendingPathComponent(path)
     }
 }
