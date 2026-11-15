@@ -207,13 +207,18 @@ public enum StoreSelection {
         + "first (an explicit store policy overrides)"
 
     /// The whole decision, in order:
-    /// 1. With no explicit policy, a usable store `sextant index` built answers, and the stores an
-    ///    ordinary build left are set aside. Only that tool writes it, so it is the one whose
-    ///    contents are known.
-    /// 2. Of the SwiftPM stores of one package that remain, only the configuration built last
-    ///    takes part: debug and release are different builds of different code.
+    /// 1. With no explicit policy, a usable store `sextant index` built answers — in a package's own
+    ///    build tree, or the umbrella it builds in the cache for a project of several packages —
+    ///    and the stores an ordinary build or an editor left are set aside. Only that tool writes
+    ///    it, so it is the one whose contents are known.
+    /// 2. With no explicit policy, of the SwiftPM stores of one package that remain, only the
+    ///    configuration built last takes part: debug and release are different builds of
+    ///    different code.
     /// 3. One store left needs no policy. Several are measured with `measure` (coverage, where a
     ///    reader needs it to decide), then the policy picks; without one, nothing is picked.
+    ///
+    /// An explicit policy is applied to every usable candidate: neither rule runs before it, so
+    /// neither can remove the store the policy would have chosen.
     public static func resolve(_ candidates: [StoreCandidate], policy: StorePolicy?,
                                measure: (StoreCandidate) -> StoreCandidate = { $0 }) -> StoreResolution {
         var all = candidates
@@ -228,8 +233,8 @@ public enum StoreSelection {
                         ? candidate.settingAside(ownStoreRuleReason) : candidate
                 }
             }
+            all = restrictingToLastBuiltConfiguration(all)
         }
-        all = restrictingToLastBuiltConfiguration(all)
         if all.filter(\.isUsable).count > 1 { all = all.map { $0.isUsable ? measure($0) : $0 } }
         let usable = all.filter(\.isUsable)
         let chosen: [StoreCandidate]
@@ -389,12 +394,32 @@ public enum StoreSelection {
     /// which store is theirs and which one an editor keeps for itself.
     public static func writer(ofPath path: String) -> String? {
         if path.contains("/.build/index-build/") { return "sourcekit-lsp's own index, filled in the background" }
+        if IndexBuild.isUmbrellaStore(path) {
+            return "written by `sextant index`, as the umbrella of the project's packages (in the cache)"
+        }
         if IndexStoreLocator.isBuiltBySextant(storePath: path) {
             return "written by `sextant index`, in a build tree of its own"
         }
         if path.contains("/Index.noindex/DataStore") { return "Xcode's own index" }
         return nil
     }
+
+    /// What refreshes the stores an answer was read from, as advice a reader can follow. A store
+    /// `sextant index` built — in a build tree of its own, or the umbrella in the cache — is
+    /// refreshed only by running it again: an ordinary build writes somewhere else. Xcode's own
+    /// index is refreshed by building the project. For anything else the tool cannot name the
+    /// writer, and says so.
+    public static func refreshAdvice(forStores paths: [String]) -> String {
+        if !paths.isEmpty, paths.allSatisfy({ IndexStoreLocator.isBuiltBySextant(storePath: $0) }) {
+            return "run `sextant index`"
+        }
+        if !paths.isEmpty, paths.allSatisfy({ $0.contains("/Index.noindex/DataStore") }) {
+            return xcodeRefreshAdvice
+        }
+        return "run `sextant index`, or rebuild whatever wrote this store"
+    }
+
+    static let xcodeRefreshAdvice = "rebuild the project (an ordinary build updates the index) or run `sextant index`"
 
     static func describe(_ candidate: StoreCandidate) -> String {
         var parts: [String] = []

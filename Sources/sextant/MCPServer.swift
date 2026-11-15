@@ -241,7 +241,12 @@ private func handleMCP(method: String, id: Any?, params: [String: Any], context:
         ]])
     case "resources/read":
         let uri = params["uri"] as? String ?? ""
-        let resource = readResource(uri: uri, context: context)
+        var resource = readResource(uri: uri, context: context)
+        // The same trust label a tool answer carries: a resource read from the index is the same
+        // answer asked another way, and an agent cannot see stderr either way.
+        if resource.ok, let provenance = context.provenance() {
+            resource.text += "\n\n\(provenance)"
+        }
         if resource.ok {
             resultMCP(id: id, ["contents": [["uri": uri, "mimeType": "text/plain", "text": resource.text]]])
         } else {
@@ -361,7 +366,7 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
             })
         guard !bodies.isEmpty else {
             guard !staleness.isEmpty else {
-                return ("could not extract the body of '\(symbol)': \(SourceBody.unextractableReason)", true)
+                return ("could not extract the body of '\(symbol)': \(SourceBody.unextractableReason(refresh: StoreSelection.refreshAdvice(forStores: set.base.storePaths)))", true)
             }
             return ((["could not extract the body of '\(symbol)' from the current text"] + staleness).joined(separator: "\n"), false)
         }
@@ -677,7 +682,8 @@ private func lookupText(_ symbol: String?, _ index: TranslatedIndex?, query: Sym
         query: query,
         style: .mcp,
         path: shorten,
-        snippet: { reader.line($0.line, inFile: $0.path) }
+        snippet: { reader.line($0.line, inFile: $0.path) },
+        refresh: StoreSelection.refreshAdvice(forStores: set.base.storePaths)
     )
     // The agent reads the advisory as part of the answer (isError is often ignored).
     let lines = rendering.lines + (rendering.advisory.map { [$0] } ?? [])

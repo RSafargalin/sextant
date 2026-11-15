@@ -86,7 +86,7 @@ public enum CFamilySearch {
 
         // The database is stored per project, while the search may be narrowed to a subdirectory.
         var commandByFile: [String: CompileCommand] = [:]
-        for command in CompilationDatabase.load(forRoot: projectRoot) {
+        for command in CompilationDatabase.commands(forFilesUnder: projectRoot) {
             commandByFile[URL(fileURLWithPath: command.file).resolvingSymlinksInPath().path] = command
         }
 

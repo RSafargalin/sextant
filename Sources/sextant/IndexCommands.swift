@@ -4,11 +4,12 @@ import Foundation
 
 // MARK: - Index store resolution
 
-/// Index store paths plus their source: `--index-store`, else the umbrella cache, else the
-/// project's SPM stores (a single root gives clean dedup), else DerivedData matched by
-/// WorkspacePath ⊂ project (reliable for any scheme name or layout; excludes other worktrees).
-/// SPM and DerivedData are deliberately NOT merged: different roots and configurations would
-/// double-count. An app target (xcodeproj) is covered through DerivedData.
+/// Index store paths plus their source: `--index-store`, else every store in reach — the umbrella
+/// `sextant index` builds in the cache for a project of several packages, the project's SPM stores
+/// (a single root gives clean dedup), else DerivedData matched by WorkspacePath ⊂ project (reliable
+/// for any scheme name or layout; excludes other worktrees). SPM and DerivedData are deliberately
+/// NOT merged: different roots and configurations would double-count. An app target (xcodeproj) is
+/// covered through DerivedData. Which of them answers is `StoreSelection.resolve`'s decision.
 /// Freshness and its warning live in `openIndex` via provenance — one place, not duplicated.
 ///
 /// The decision over the candidates, with coverage measured only where several remain to choose
@@ -21,26 +22,30 @@ func resolveStores(in arguments: [String]) -> (resolution: StoreResolution, sour
     let resolution = StoreSelection.resolve(candidates, policy: storePolicy(in: arguments)?.policy) {
         $0.measuringCoverage(projectRoot: root, libraryPath: library)
     }
-    return (resolution, source)
+    // The label names where the store that answers came from, not where the first candidate did.
+    guard source != .explicit, let first = resolution.chosen.first else { return (resolution, source) }
+    return (resolution, IndexProvenance.Source.of(storePath: first.path))
 }
 
-/// Every store the tool could use, in the order sources take precedence, together with where they
-/// came from. The policy is applied afterwards — this only finds them.
+/// Every store the tool could use, together with where they came from. The policy is applied
+/// afterwards — this only finds them. The umbrella is a candidate beside the others rather than in
+/// place of them: it is a store `sextant index` built, so with no policy set it answers ahead of
+/// what an ordinary build left, and an explicit policy weighs it against them.
 func indexCandidates(in arguments: [String]) -> (candidates: [StoreCandidate], source: IndexProvenance.Source) {
     if let explicit = optionValue("--index-store", in: arguments) {
         return ([StoreCandidate(path: explicit, unitCount: StoreCandidate.unitCount(ofStore: explicit),
                                 modified: IndexFreshness.timestamp(ofStore: explicit))], .explicit)
     }
     let rootPath = projectRoot(in: arguments)
-    if let umbrella = IndexBuild.umbrellaStorePath(forRoot: rootPath) {
-        return ([StoreCandidate(path: umbrella, unitCount: StoreCandidate.unitCount(ofStore: umbrella),
-                                modified: IndexFreshness.timestamp(ofStore: umbrella))], .umbrella)
-    }
+    let umbrella = IndexBuild.umbrellaStorePath(forRoot: rootPath).map {
+        [StoreCandidate(path: $0, origin: IndexBuild.umbrellaDirectory(forRoot: rootPath).path,
+                        unitCount: StoreCandidate.unitCount(ofStore: $0), modified: IndexFreshness.timestamp(ofStore: $0))]
+    } ?? []
     let spm = IndexStoreLocator.candidates(under: URL(fileURLWithPath: rootPath, isDirectory: true))
-    if spm.contains(where: \.isUsable) { return (spm, .spm) }
+    if spm.contains(where: \.isUsable) { return (umbrella + spm, umbrella.isEmpty ? .spm : .umbrella) }
     let xcode = DerivedDataLocator.candidates(forProjectRoot: rootPath, derivedData: derivedDataRoot(in: arguments))
-    if xcode.contains(where: \.isUsable) { return (xcode, .derivedData) }
-    return (spm + xcode, spm.isEmpty ? .derivedData : .spm)
+    if xcode.contains(where: \.isUsable) { return (umbrella + xcode, umbrella.isEmpty ? .derivedData : .umbrella) }
+    return (umbrella + spm + xcode, !umbrella.isEmpty ? .umbrella : spm.isEmpty ? .derivedData : .spm)
 }
 
 /// The policy in force and where it came from, so the answer can say so.
@@ -88,7 +93,7 @@ func indexProvenance(_ resolution: StoreResolution, source: IndexProvenance.Sour
         ? "the store `sextant index` built, ahead of \(aside) ordinary build store(s) (rule; a store policy overrides)"
         : nil
     return IndexProvenance(source: source, storeCount: paths.count, report: report, selection: selection,
-                           coverage: coverage)
+                           coverage: coverage, storePaths: paths)
 }
 
 /// Where Xcode keeps its build products. The default location is a default, not a rule: a project
@@ -255,7 +260,7 @@ func runDoctor(arguments: [String]) -> Int32 {
             case .stale:
                 let reasons = report.reasons()
                 let why = reasons.isEmpty ? "older than the sources" : reasons.joined(separator: "; ")
-                print("⚠ index store: \(shorten(store))  (\(why) — \(report.basisDescription); run `sextant index`, or rebuild whatever wrote it)")
+                print("⚠ index store: \(shorten(store))  (\(why) — \(report.basisDescription); \(StoreSelection.refreshAdvice(forStores: [store])))")
             case .unknown:
                 print("⚠ index store: \(shorten(store))  (empty or unreadable — freshness unknown)")
                 ok = false
@@ -279,7 +284,7 @@ func runDoctor(arguments: [String]) -> Int32 {
     // not told about a layer it does not use.
     let clangSources = CompilationDatabase.compilableSources(projectRoot: root, includeTests: false)
     if !clangSources.isEmpty {
-        let commands = CompilationDatabase.load(forRoot: root)
+        let commands = CompilationDatabase.commands(forFilesUnder: root)
         let missing = CompilationDatabase.missingSources(commands, among: clangSources)
         if commands.isEmpty {
             print("⚠ compile database: none — Objective-C, C and C++ stay outside the structural layer. Build one: `sextant index`")
@@ -363,9 +368,17 @@ func runXcodeIndex(root: URL, arguments: [String]) -> Int32 {
         }
         return 1
     }
-    if let store = DerivedDataLocator.dataStore(forProjectRoot: root.path,
-                                                derivedData: derivedDataRoot(in: arguments)) {
+    // The store this build wrote is the one whose workspace is the container just built. Which
+    // store answers later is still `StoreSelection.resolve`'s decision, and where that decision
+    // needs a policy it is said here, as the SwiftPM path says it.
+    let candidates = DerivedDataLocator.candidates(forProjectRoot: root.path, derivedData: derivedDataRoot(in: arguments))
+    let container = CanonicalPath.of(containerFlag[1])
+    if let store = candidates.first(where: { $0.isUsable && $0.origin.map(CanonicalPath.of) == container })?.path {
         print("\nindex ready (app, DerivedData): \(store)")
+        if StoreSelection.resolve(candidates, policy: storePolicy(in: arguments)?.policy).needsPolicy {
+            reportError("⚠ this is one of \(candidates.filter(\.isUsable).count) usable index stores for this project, and no store policy is set —")
+            reportError("   semantic commands will refuse rather than guess between them. `sextant store` compares them.")
+        }
         reportTestCoverage(ofStore: store, root: root.path, arguments: arguments, isXcode: true)
         // Xcode writes no build graph with arguments in it, so the flags are read from the log
         // the build just produced — the one place they are stated in full.

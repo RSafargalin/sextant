@@ -29,7 +29,7 @@ public enum CFamilyDiff {
         guard !files.isEmpty else { return Outcome(files: [], notDiffed: [], partiallyDiffed: []) }
 
         var commandByFile: [String: CompileCommand] = [:]
-        for command in commands ?? CompilationDatabase.load(forRoot: projectRoot) {
+        for command in commands ?? CompilationDatabase.commands(forFilesUnder: projectRoot) {
             commandByFile[URL(fileURLWithPath: command.file).resolvingSymlinksInPath().path] = command
         }
         guard !commandByFile.isEmpty else {

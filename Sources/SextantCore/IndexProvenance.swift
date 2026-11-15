@@ -8,6 +8,14 @@ public struct IndexProvenance: Sendable {
         case umbrella       // the umbrella cache (~/Library/Caches/sextant)
         case spm            // .build of the project's SPM packages
         case derivedData    // Xcode DerivedData
+
+        /// Where a store found by the locators comes from, read from its path. A store named with
+        /// `--index-store` is `explicit` whatever its path, and only the caller knows that.
+        public static func of(storePath: String) -> Source {
+            if IndexBuild.isUmbrellaStore(storePath) { return .umbrella }
+            if storePath.contains("/Index.noindex/DataStore") { return .derivedData }
+            return .spm
+        }
     }
 
     public let source: Source
@@ -22,25 +30,35 @@ public struct IndexProvenance: Sendable {
     /// project — a release build, for one, compiles no test target, so every reference from a test
     /// is missing from a store nothing else marks as partial.
     public let coverage: StoreCoverage.Result?
+    /// The stores read, so that the advice on a stale index names what refreshes them.
+    public let storePaths: [String]
 
     public init(source: Source, storeCount: Int, freshness: IndexFreshness.State,
-                coverage: StoreCoverage.Result? = nil) {
+                coverage: StoreCoverage.Result? = nil, storePaths: [String] = []) {
         self.source = source
         self.storeCount = storeCount
         self.freshness = freshness
         self.report = nil
         self.selection = nil
         self.coverage = coverage
+        self.storePaths = storePaths
     }
 
     public init(source: Source, storeCount: Int, report: IndexFreshness.Report,
-                selection: String? = nil, coverage: StoreCoverage.Result? = nil) {
+                selection: String? = nil, coverage: StoreCoverage.Result? = nil, storePaths: [String] = []) {
         self.source = source
         self.storeCount = storeCount
         self.freshness = report.state
         self.report = report
         self.selection = selection
         self.coverage = coverage
+        self.storePaths = storePaths
+    }
+
+    /// What refreshes the stores this answer was read from.
+    public var refreshAdvice: String {
+        guard storePaths.isEmpty else { return StoreSelection.refreshAdvice(forStores: storePaths) }
+        return source == .derivedData ? StoreSelection.xcodeRefreshAdvice : StoreSelection.refreshAdvice(forStores: [])
     }
 
     /// Compact label for stderr: `[index: spm · 1 store · fresh (compared by build time)]`.
@@ -63,9 +81,7 @@ public struct IndexProvenance: Sendable {
             }
             // An Xcode build refreshes the store it reads from; the store `sextant index` builds in a
             // tree of its own is refreshed only by running it again.
-            return source == .derivedData
-                ? "⚠ STALE — sources are newer: rebuild the project (an ordinary build updates the index) or run `sextant index`\(basis)"
-                : "⚠ STALE — sources are newer: run `sextant index`, or rebuild whatever wrote this store\(basis)"
+            return "⚠ STALE — sources are newer: \(refreshAdvice)\(basis)"
         case .unknown:
             // Absence of data is not passed off as freshness: a trust label must not lie.
             return "⚠ freshness unknown (the store is empty or unreadable)"

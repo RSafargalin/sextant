@@ -16,7 +16,7 @@ public enum DaemonSocket {
     /// standardized, with symlinks resolved. Two spellings of one directory give the same root,
     /// so they reach the same daemon and the daemon recognises the request as its own.
     public static func canonicalProjectRoot(_ root: String) -> String {
-        URL(fileURLWithPath: root, isDirectory: true).resolvingSymlinksInPath().standardizedFileURL.path
+        CanonicalPath.of(root)
     }
 
     /// Socket path for a project. The name is a hash of the canonical root: `sun_path` is limited

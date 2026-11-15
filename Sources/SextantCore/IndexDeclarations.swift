@@ -188,7 +188,7 @@ extension IndexDeclarations {
             headers.map { UnscannedFile(file: SwiftSources.relativePath(of: $0, root: root), reason: reason) }
         }
 
-        let commands = CompilationDatabase.load(forRoot: compileDatabaseRoot)
+        let commands = CompilationDatabase.commands(forFilesUnder: compileDatabaseRoot)
         guard !commands.isEmpty else {
             return ([], unanswered("no compile flags — build the index: `sextant index`"))
         }

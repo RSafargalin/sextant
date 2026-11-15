@@ -66,7 +66,7 @@ public enum CFamilyLint {
         }
 
         var commandByFile: [String: CompileCommand] = [:]
-        for command in CompilationDatabase.load(forRoot: projectRoot) {
+        for command in CompilationDatabase.commands(forFilesUnder: projectRoot) {
             commandByFile[URL(fileURLWithPath: command.file).resolvingSymlinksInPath().path] = command
         }
 
@@ -132,8 +132,11 @@ public enum CFamilyLint {
                     }
                 }
             } catch {
-                // Not one rule could be compiled here, so nothing was checked in this file.
-                unscanned.append(UnscannedFile(file: relative(source, root), reason: reason(of: error)))
+                // Not one rule could be compiled here, so nothing was checked in this file. What
+                // failed is the patterns, so the reason names the first of them rather than reading
+                // as a fault of the file.
+                let first = failedHere.min().map { patternText(of: compiled[$0].key) }
+                unscanned.append(UnscannedFile(file: relative(source, root), reason: reason(of: error, firstPattern: first)))
             }
         }
 
@@ -150,9 +153,17 @@ public enum CFamilyLint {
         SwiftSources.relativePath(of: URL(fileURLWithPath: path), root: root)
     }
 
-    private static func reason(of error: Error) -> String {
+    /// Why a file was not checked at all. When no pattern compiled in it, the diagnostic belongs
+    /// to a pattern — a rule written for another language — so it is stated as that pattern's.
+    private static func reason(of error: Error, firstPattern: String?) -> String {
         guard case ClangPatternSearch.Failure.patternNotCompiled(_, let diagnostics) = error else { return "\(error)" }
         let first = diagnostics.first?.trimmingCharacters(in: .whitespacesAndNewlines)
-        return "no rule could be checked here" + (first.map { ": \($0)" } ?? "")
+        guard let firstPattern else { return "no rule could be checked here" + (first.map { ": \($0)" } ?? "") }
+        return "no rule could be checked here: no rule pattern compiles as Objective-C, C or C++ in this file "
+            + "(the first, `\(firstPattern)`" + (first.map { ", fails with \"\($0)\"" } ?? "") + ")"
+    }
+
+    private static func patternText(of key: String) -> String {
+        key.split(separator: "\u{1}", maxSplits: 1).dropFirst().first.map(String.init) ?? key
     }
 }

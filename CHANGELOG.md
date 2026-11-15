@@ -112,6 +112,87 @@ Human-readable text output is not covered — parse `--json`, not prose.
 
 ### Fixed
 
+- **Which stores and files an index answer is drawn from.**
+  - **A project under a directory named `checkouts`, or one that itself lives under a `.build`
+    directory, keeps its own sources.** Every occurrence whose path contained `/checkouts/` or
+    `/.build/` anywhere was dropped, so such a project answered every symbol question with
+    nothing. A build tree is now recognised in the part of the path below the project root (any
+    `.build` directory there), and Xcode's dependency checkouts by `SourcePackages/checkouts`; a
+    source directory that happens to be named `checkouts` is a source directory. **Answers change**
+    for such projects: they now find the project's own symbols.
+  - **A store whose `units` directory is empty is not a candidate.** It used to count as usable
+    in the locators, the selection, `doctor` and `sextant store` — and a store named with
+    `--index-store` was labelled `fresh` — because the directory's own time was read as the time
+    the store was built. It is now set aside as "no units — nothing to read", and its freshness is
+    `unknown`. **A project whose only other store was such an empty one** now answers from the
+    remaining store instead of refusing for want of a policy.
+  - **An explicit store policy sees every candidate.** The "configuration built last" filter ran
+    before the policy and could remove the store the policy would have chosen (a debug store that
+    covers more, under `coverage`; both configurations under `union`). It now runs only when no
+    policy is set. **Answers change** under `coverage` and `union` where a package has both debug
+    and release stores.
+  - **The umbrella store takes part in the decision instead of hiding every other store.** For a
+    project of several packages, the store `sextant index` builds in the cache used to be the only
+    candidate whenever it existed — fresher stores and stores covering files it does not were never
+    listed. It is now a candidate beside the project's own stores and counts as a store `sextant
+    index` built: with no policy set it answers by the same rule as a package's own index tree, and
+    the others are listed as set aside by that rule; with an explicit policy it is weighed against
+    them. `sextant store` lists all of them (`found by:` names every source) and says which
+    answers; the provenance label names the source of the store that answered. **Answers change**
+    for multi-package projects with an explicit store policy, which may now choose another store.
+  - **`sextant index --app` reports the store its build wrote**, found among the candidates by the
+    container it built, and warns when several usable stores now need a policy — through the same
+    selection every command uses, instead of a second routine that took the freshest DataStore.
+  - **Coverage is no longer served from another project's measurement.** The coverage cache was
+    keyed by the store and the file count only, so one store measured against two projects with as
+    many files (or with and without tests) gave the first number for both. The key now includes the
+    canonical project root and whether tests count (cache namespace `store-coverage-v3`).
+  - **One project spelled two ways has one umbrella.** The umbrella directory and its build log
+    were keyed by the raw `--project` string, so `--project .` wrote `umbrella/./swift-build.log`
+    and a relative and an absolute spelling built two umbrellas. They are keyed by the canonical
+    root now; an umbrella built under a non-canonical spelling is not found again — run
+    `sextant index` once.
+  - **Compile flags are found from any root that contains the file.** Flags are stored under the
+    root `sextant index` was run for and were looked up only under exactly that root, so the
+    C-family files of a nested package indexed on its own (this repository's fixture, in its own
+    self-lint) showed "no compile flags" from the root around it. Lookups now read the database of
+    the root, of every root containing it and of every root inside it, keeping the entries for
+    files under the root asked about. **`lint`, `search`, `api`, `map` and `doctor` change** where
+    such databases exist: those files are now checked. Both spellings of a `/tmp` path already
+    shared one key — that half of the report was not reproducible.
+  - **`lint` names the pattern when no rule could run in a C-family file.** A file in which every
+    rule pattern failed to compile was reported as "no rule could be checked here: error: use of
+    undeclared identifier 'Calendar'" — the first pattern's diagnostic, read as a fault of the
+    file. It now says that no rule pattern compiles as Objective-C, C or C++ there and names the
+    first pattern with its diagnostic.
+- **What an answer leaves out.**
+  - **A symbol of the name with no definition in the index is answered beside the defined ones.**
+    `refs`, `defs`, `callers` and every command built on them dropped a symbol whose recorded
+    occurrence is a declaration (a C function a header declares, an Objective-C protocol) or a use
+    of an external symbol whenever another symbol of the same name had a definition; only when none
+    had one were they all answered. They are now added beside the defined ones, and where defined
+    and undefined symbols share an answer the undefined one says `def: not in the index (an external
+    symbol, or one only declared here)`. **Answers change**: more hits for such names.
+  - **No more silent cap of 1000.** CLI `impls` and `callees` counted and listed at most 1000
+    related symbols, `construct` counted construction sites among the first 1000 references,
+    `blast` listed at most 1000 implementations, and `--verify` compared the textual count against
+    the capped list. They now count from the real totals; the text list still stops at `--limit`
+    and says how many more there are, and `impls`/`callees --json` keeps its array shape with a
+    "first N of M shown" note on stderr when `--limit` cut it. **Answers change** above 1000.
+  - **MCP `resources/read` carries the trust label** a tool answer carries (`sextant://symbol/{name}`,
+    and `sextant://repo_map` when an index is open): which store, how fresh, on what basis.
+  - **Advice on refreshing a stale index names what refreshes it.** "Rebuild the project or run
+    `sextant index`" was printed whatever wrote the store, and an ordinary build does not refresh a
+    store `sextant index` built in a tree of its own. The advice in the provenance label, `doctor`,
+    the withheld-snippet and vanished-file notes, `body`'s "could not extract" and the textual
+    fallback now comes from one place that knows the writer: `run sextant index` for a store it
+    built (its own tree or the umbrella), rebuilding the project for Xcode's index, and both for a
+    store whose writer cannot be told.
+- **Not changed, on purpose: a changed file `.sextant.json` excludes still makes the index stale.**
+  Index answers are not narrowed by `exclude` — an excluded file's positions are in them — so
+  leaving it out of the changed files would leave those positions unmapped and unmarked over a
+  stale index.
+
 - **`search` and `lint` name what they could not really check instead of passing it off as "checked,
   no matches".**
   - **A pattern the matcher could not bind is refused.** **Behaviour change** — each of these used

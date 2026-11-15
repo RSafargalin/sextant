@@ -15,6 +15,7 @@ struct IndexFreshnessTests {
             .appendingPathComponent("sextant-store-\(UUID().uuidString.prefix(8))")
         let units = store.appendingPathComponent("v5/units")
         try FileManager.default.createDirectory(at: units, withIntermediateDirectories: true)
+        try "unit".write(to: units.appendingPathComponent("Main.o-HASH"), atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.modificationDate: unitsModified], ofItemAtPath: units.path)
         if let storeModified {
             try FileManager.default.setAttributes([.modificationDate: storeModified], ofItemAtPath: store.path)
@@ -72,6 +73,7 @@ struct IndexFreshnessTests {
         let recent = Date().addingTimeInterval(-60)
         let v13 = store.appendingPathComponent("v13/units")
         try FileManager.default.createDirectory(at: v13, withIntermediateDirectories: true)
+        try "unit".write(to: v13.appendingPathComponent("Main.o-HASH"), atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.modificationDate: recent], ofItemAtPath: v13.path)
 
         let timestamp = try #require(IndexFreshness.timestamp(ofStore: store.path))

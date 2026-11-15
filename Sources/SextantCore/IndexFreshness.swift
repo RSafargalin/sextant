@@ -108,6 +108,10 @@ public enum IndexFreshness {
     /// verified both when adding a symbol and when editing an existing file. The signal is O(1):
     /// walking tens of thousands of units would cost hundreds of milliseconds on EVERY query, and
     /// truncating the walk gives a non-deterministically wrong answer (entries are not in time order).
+    ///
+    /// A `units` directory with nothing in it gives no timestamp: a store with no units has nothing
+    /// to read, and dating it would make every caller treat it as a built store — usable, and
+    /// judged fresh or stale against a time nothing was written at.
     public static func timestamp(ofStore storePath: String) -> Date? {
         let store = URL(fileURLWithPath: storePath, isDirectory: true)
         guard let versions = try? FileManager.default.contentsOfDirectory(atPath: store.path) else { return nil }
@@ -115,11 +119,25 @@ public enum IndexFreshness {
         var newest: Date?
         for version in versions where version.hasPrefix("v") {
             let units = store.appendingPathComponent("\(version)/units")
-            guard let modified = (try? units.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+            guard let modified = (try? units.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate,
+                  holdsAnyEntry(units.path)
             else { continue }
             if modified > (newest ?? .distantPast) { newest = modified }
         }
         return newest
+    }
+
+    /// Whether a directory holds at least one entry, read up to the first one rather than listed.
+    static func holdsAnyEntry(_ directory: String) -> Bool {
+        guard let handle = opendir(directory) else { return false }
+        defer { closedir(handle) }
+        while let entry = readdir(handle) {
+            let name = withUnsafeBytes(of: entry.pointee.d_name) { raw in
+                String(decoding: raw.prefix(Int(entry.pointee.d_namlen)), as: UTF8.self)
+            }
+            if name != "." && name != ".." { return true }
+        }
+        return false
     }
 
     /// When the freshest of the stores was last updated.

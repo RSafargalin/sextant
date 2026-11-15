@@ -25,6 +25,7 @@ struct StoreSelectionTests {
             try manager.createDirectory(
                 at: store.appendingPathComponent("v5/units"), withIntermediateDirectories: true
             )
+            try Data("unit".utf8).write(to: store.appendingPathComponent("v5/units/Main.o-HASH"))
             paths[configuration] = store.path
         }
 

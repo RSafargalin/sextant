@@ -22,6 +22,7 @@ struct CompileFlagsFreshnessTests {
             .appendingPathComponent("sextant-flagstore-\(UUID().uuidString)")
         let units = store.appendingPathComponent("v5/units")
         try FileManager.default.createDirectory(at: units, withIntermediateDirectories: true)
+        try Data("unit".utf8).write(to: units.appendingPathComponent("Main.o-HASH"))
         try FileManager.default.setAttributes([.modificationDate: captured.addingTimeInterval(600)],
                                               ofItemAtPath: units.path)
         return store.path
@@ -58,6 +59,7 @@ struct CompileFlagsFreshnessTests {
             .appendingPathComponent("sextant-flagstore-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: store.appendingPathComponent("v5/units"),
                                                 withIntermediateDirectories: true)
+        try Data("unit".utf8).write(to: store.appendingPathComponent("v5/units/Main.o-HASH"))
         defer { try? FileManager.default.removeItem(at: store) }
         Thread.sleep(forTimeInterval: 1.1)   // the capture lands after the build, as it does in practice
         try CompilationDatabase.save([CompileCommand(directory: root, file: source, arguments: ["clang", source])],

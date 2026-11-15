@@ -87,9 +87,10 @@ public final class IndexStore {
         var count = 0
         var roots: Set<String> = []
         for occurrence in resolveOccurrences(forName: name) where !isInScope(occurrence.location) {
-            guard Self.isProjectSource(occurrence.location) else { continue }
-            count += 1
+            guard !occurrence.location.isSystem else { continue }
             let path = URL(fileURLWithPath: occurrence.location.path).resolvingSymlinksInPath().path
+            guard !Self.isBuildProduct(path: path, root: projectScope) else { continue }
+            count += 1
             if let worktree = Self.worktreePrefix(of: path) { roots.insert(worktree) }
         }
         return (count, roots)
@@ -109,10 +110,12 @@ public final class IndexStore {
         for occurrence in definitions where occurrence.roles.contains(.definition) && isInScope(occurrence.location) {
             definitionByUSR[occurrence.symbol.usr] = occurrence
         }
-        if definitionByUSR.isEmpty {
-            for occurrence in definitions where isInScope(occurrence.location) {
-                definitionByUSR[occurrence.symbol.usr] = occurrence
-            }
+        // A symbol of the name whose recorded occurrence here is not a definition — declared in a
+        // header, or an external symbol known only by its uses — is answered beside the defined
+        // ones, not only when none of them is defined: one defined symbol must not hide the rest.
+        // Its hit carries no definition unless the database has one by USR, and says so.
+        for occurrence in definitions where definitionByUSR[occurrence.symbol.usr] == nil && isInScope(occurrence.location) {
+            definitionByUSR[occurrence.symbol.usr] = occurrence
         }
 
         return definitionByUSR.map { usr, definitionOccurrence in
@@ -298,21 +301,31 @@ public final class IndexStore {
             .filter { seen.insert($0.usr).inserted }
     }
 
-    /// A project source within the current project's scope: not SDK or vendored code, and (when a
-    /// root is given) under that root but not inside a foreign nested worktree.
+    /// A project source within the current project's scope: not SDK code, not inside a build tree
+    /// or a dependency checkout, and (when a root is given) not inside a foreign nested worktree.
     private func isInScope(_ location: SymbolLocation) -> Bool {
-        guard Self.isProjectSource(location) else { return false }
-        guard let root = projectScope else { return true }
+        guard !location.isSystem else { return false }
         // Resolve the path the same way as the root: the index records paths as the compiler saw
-        let path = URL(fileURLWithPath: location.path).resolvingSymlinksInPath().path
+        // them, which need not be spelled the way the root is.
+        let path = projectScope == nil ? location.path : URL(fileURLWithPath: location.path).resolvingSymlinksInPath().path
+        guard !Self.isBuildProduct(path: path, root: projectScope) else { return false }
+        guard let root = projectScope else { return true }
         return Self.inScope(path: path, root: root)
     }
 
-    /// A project source: not SDK code and not a vendored dependency under .build/checkouts.
-    private static func isProjectSource(_ location: SymbolLocation) -> Bool {
-        !location.isSystem
-            && !location.path.contains("/.build/")
-            && !location.path.contains("/checkouts/")
+    /// Whether a path lies in a build tree — a SwiftPM `.build` directory, where dependency
+    /// checkouts and generated sources live — or in Xcode's dependency checkouts
+    /// (`SourcePackages/checkouts`). Judged on the part of the path below the project root when
+    /// the path is under it: a project that itself lives under such a directory keeps its own
+    /// sources, and a source directory that happens to be named `checkouts` is not a dependency.
+    static func isBuildProduct(path: String, root: String?) -> Bool {
+        var relevant = Substring(path)
+        if let root, path.hasPrefix(root.hasSuffix("/") ? root : root + "/") {
+            relevant = path.dropFirst(root.hasSuffix("/") ? root.count : root.count + 1)
+        }
+        let components = relevant.split(separator: "/")
+        if components.contains(".build") { return true }
+        return zip(components, components.dropFirst()).contains { $0 == "SourcePackages" && $1 == "checkouts" }
     }
 
     /// Path within the project scope. Non-worktree paths are ALWAYS allowed, to avoid

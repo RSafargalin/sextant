@@ -103,7 +103,8 @@ public enum SymbolReport {
         query: SymbolQuery,
         style: Style,
         path: (String) -> String,
-        snippet: (SourceLocation) -> String?
+        snippet: (SourceLocation) -> String?,
+        refresh: String = StoreSelection.refreshAdvice(forStores: [])
     ) -> Rendering {
         // A location whose file is gone is not a fact about the code — it is the index describing
         // a state that no longer exists. Deleting a file makes nothing "newer", so the freshness
@@ -151,6 +152,7 @@ public enum SymbolReport {
         // symbols and says nothing is a wrong answer, not a short one.
         let hits = orderedByUsage(hits)
         let shown = style.symbolLimit >= hits.count ? hits : Array(hits.prefix(max(1, style.symbolLimit)))
+        let someDefined = hits.contains { $0.definition != nil }
         for hit in shown {
             lines.append("\(style.headerPrefix)\(hit.name)  [\(hit.kind)]")
             if query == .definitions {
@@ -160,7 +162,13 @@ public enum SymbolReport {
                 }
                 locations.forEach { lines.append("\(style.level1)• \(located($0, symbolName: hit.name))") }
             } else {
-                if let definition = hit.definition { lines.append("\(style.level1)def: \(located(definition, symbolName: hit.name))") }
+                if let definition = hit.definition {
+                    lines.append("\(style.level1)def: \(located(definition, symbolName: hit.name))")
+                } else if someDefined {
+                    // Beside symbols of the same name that do have one, a missing definition line
+                    // would read as an oversight; it is a fact about the index, and said as one.
+                    lines.append("\(style.level1)def: not in the index (an external symbol, or one only declared here)")
+                }
                 let label = query == .callers ? "calls" : "usages"
                 if style.compact {
                     // A histogram by file without snippets — exact, every occurrence is grouped.
@@ -216,13 +224,12 @@ public enum SymbolReport {
             advisories.append("""
                 ⚠ the index is out of date despite the marker above — \(vanished.count) file(s) in \
                 this answer no longer exist: \(vanished.sorted().joined(separator: ", ")). \
-                Deleting a file cannot make an index look stale by time; rebuild the project or \
-                run `sextant index`.
+                Deleting a file cannot make an index look stale by time. To refresh it: \(refresh).
                 """)
         }
         if shifted > 0 {
             advisories.append("⚠ \(shifted) snippet(s) withheld: the recorded line no longer contains the symbol — "
-                              + "the file has changed since it was indexed. Rebuild the project or run `sextant index`.")
+                              + "the file has changed since it was indexed. To refresh the index: \(refresh).")
         }
         if query == .callers && typesOnly {
             advisories.append("ℹ '\(symbol)' is a type: types have no call sites. Use `\(style.referencesCommand) \(symbol)` or `\(style.contextCommand) \(symbol)`.")

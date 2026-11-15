@@ -225,10 +225,42 @@ public enum CompilationDatabase {
     /// later query with an absolute path are the same project, and keying on the raw string made
     /// the second one report every file as having no flags.
     public static func path(forRoot root: String) -> URL {
-        let canonical = URL(fileURLWithPath: root).resolvingSymlinksInPath().standardizedFileURL.path
-        let sanitized = canonical.replacingOccurrences(of: "/", with: "_")
-        return FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Caches/sextant/compile-db/\(sanitized).json")
+        directory.appendingPathComponent("\(CanonicalPath.fileName(of: root)).json")
+    }
+
+    private static var directory: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Caches/sextant/compile-db")
+    }
+
+    /// The flags of the files under `root`, wherever they were stored.
+    ///
+    /// Flags are stored under the root `sextant index` was run for, and a file's flags are the same
+    /// whichever root a later command is asked about — so they are read from the database of
+    /// `root` itself, of every root that contains it, and of every root inside it (a nested
+    /// package indexed on its own), and only the entries for files under `root` are kept. Where
+    /// two databases describe one file, the one stored for `root` itself wins, then the one of the
+    /// nearest root.
+    public static func commands(forFilesUnder root: String) -> [CompileCommand] {
+        let own = CanonicalPath.fileName(of: root)
+        let names = ((try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? [])
+            .filter { $0.hasSuffix(".json") }
+            .map { String($0.dropLast(".json".count)) }
+            .filter { $0 == own || $0.hasPrefix(own + "_") || own.hasPrefix($0 + "_") }
+            // The root itself first, then nearer roots before farther ones.
+            .sorted { ($0 == own ? 0 : 1, abs($0.count - own.count), $0) < ($1 == own ? 0 : 1, abs($1.count - own.count), $1) }
+        let prefix = CanonicalPath.of(root) + "/"
+        var seen: Set<String> = []
+        var result: [CompileCommand] = []
+        for name in names {
+            guard let data = try? Data(contentsOf: directory.appendingPathComponent("\(name).json")),
+                  let commands = try? JSONDecoder().decode([CompileCommand].self, from: data) else { continue }
+            for command in commands where FileManager.default.fileExists(atPath: command.file) {
+                let file = URL(fileURLWithPath: command.file).resolvingSymlinksInPath().path
+                guard file.hasPrefix(prefix), seen.insert(file).inserted else { continue }
+                result.append(command)
+            }
+        }
+        return result
     }
 
     public static func save(_ commands: [CompileCommand], forRoot root: String) throws {

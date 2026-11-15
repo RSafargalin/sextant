@@ -8,7 +8,7 @@ breaking something invisible.
 ## Build and verify
 
 ```bash
-swift build && swift test          # 536 tests
+swift build && swift test          # 552 tests
 make ci                            # build + test + self-lint — run this before committing
 swift test --filter "<suite name>" # one suite
 ```
@@ -99,9 +99,13 @@ wrong answer rather than a crash.
   before the mapping, against the indexed text. On a fresh index, or on the build-time basis, it is
   a pass-through, and the output must stay byte-for-byte what it was — `StaleAnswerTests` and the
   JSON-key test in `IndexDriftTests` guard that.
-- **`StoreSelection.resolve`** is the only place that decides which stores answer: the rule that a
-  store `sextant index` built goes first when no policy is set, then the configuration filter,
-  then the policy. Callers print `explanation(of:)`; they do not re-derive the decision.
+- **`StoreSelection.resolve`** is the only place that decides which stores answer: with no policy
+  set, the rule that a store `sextant index` built goes first (a package's own index tree, or the
+  umbrella in the cache — a candidate beside the others, never in place of them), then the
+  configuration filter; with a policy, the policy over every usable candidate. Callers print
+  `explanation(of:)`; they do not re-derive the decision, and no locator picks a store on its own.
+  What refreshes a store is `StoreSelection.refreshAdvice` — advice to rebuild is never written
+  without it.
 
 ## Code conventions
 

@@ -54,7 +54,7 @@ public extension SemanticIndex {
             referenceCount: referenceHits.reduce(0) { $0 + $1.totalReferences },
             callerCount: callerHits.reduce(0) { $0 + $1.totalReferences },
             affectedFiles: files.sorted(),
-            implementations: related(toName: name, query: .implementations, limit: 1000).map { $0.name }
+            implementations: related(toName: name, query: .implementations, limit: .max).map { $0.name }
         )
         radius.symbolCount = Set(referenceHits.map(\.usr) + callerHits.map(\.usr)).count
         return radius

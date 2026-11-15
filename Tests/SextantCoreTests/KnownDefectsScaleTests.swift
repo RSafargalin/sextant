@@ -177,6 +177,7 @@ struct KnownDefectsScaleTests {
             let entry = derived.appendingPathComponent(name)
             let units = entry.appendingPathComponent("Index.noindex/DataStore/v5/units")
             try manager.createDirectory(at: units, withIntermediateDirectories: true)
+            try Data().write(to: units.appendingPathComponent("unit-\(name)"))
             try (["WorkspacePath": workspace] as NSDictionary)
                 .write(to: entry.appendingPathComponent("info.plist"))
             try manager.setAttributes([.modificationDate: Date().addingTimeInterval(age)],
@@ -190,14 +191,14 @@ struct KnownDefectsScaleTests {
             workspace: root.appendingPathComponent(".claude/worktrees/agent/App.xcodeproj").path,
             age: 0)
 
-        let chosen = DerivedDataLocator.dataStore(forProjectRoot: root.path, derivedData: derived.path)
-        #expect(chosen == mine)
-        #expect(chosen != worktree)
+        func chosen(forProjectRoot projectRoot: URL) -> [String] {
+            StoreSelection.resolve(DerivedDataLocator.candidates(forProjectRoot: projectRoot.path, derivedData: derived.path),
+                                   policy: nil).chosen.map(\.path)
+        }
+        #expect(chosen(forProjectRoot: root) == [mine])
 
         // From inside the worktree the same store is the right one: it holds that worktree's paths.
-        let fromWorktree = DerivedDataLocator.dataStore(
-            forProjectRoot: root.appendingPathComponent(".claude/worktrees/agent").path, derivedData: derived.path)
-        #expect(fromWorktree == worktree)
+        #expect(chosen(forProjectRoot: root.appendingPathComponent(".claude/worktrees/agent")) == [worktree])
     }
 
     /// The other half: when a foreign store is used anyway — `--index-store` names one, or another

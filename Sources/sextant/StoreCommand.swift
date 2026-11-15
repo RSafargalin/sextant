@@ -42,7 +42,9 @@ private func showStores(arguments: [String]) -> Int32 {
         print("   none found. Build one with `sextant index`, or name one with --index-store.")
         return 0
     }
-    print("   found by: \(source.rawValue)")
+    let sources = source == .explicit ? [source]
+        : Array(Set(candidates.map { IndexProvenance.Source.of(storePath: $0.path) })).sorted { $0.rawValue < $1.rawValue }
+    print("   found by: \(sources.map(\.rawValue).joined(separator: ", "))")
     for candidate in candidates.sorted(by: { ($0.modified ?? .distantPast) > ($1.modified ?? .distantPast) }) {
         let stamp = candidate.modified.map { StoreSelection.stamp($0) } ?? "no units"
         print("\n   \(shorten(candidate.path))")

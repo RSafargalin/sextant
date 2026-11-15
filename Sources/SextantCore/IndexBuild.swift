@@ -110,10 +110,18 @@ public enum IndexBuild {
     }
 
     /// Umbrella cache directory for a project, kept outside the project so as not to litter it.
+    /// Keyed by the canonical root: `--project .` and the absolute path of the same directory are
+    /// one project with one umbrella, one store and one build log.
     public static func umbrellaDirectory(forRoot root: String) -> URL {
-        let sanitized = root.replacingOccurrences(of: "/", with: "_")
-        return FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Caches/sextant/umbrella/\(sanitized)")
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Caches/sextant/umbrella/\(CanonicalPath.fileName(of: root))")
+    }
+
+    /// Whether a store lies in an umbrella build tree in the cache.
+    public static func isUmbrellaStore(_ storePath: String) -> Bool {
+        let root = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Caches/sextant/umbrella").path + "/"
+        return storePath.hasPrefix(root) || CanonicalPath.of(storePath).hasPrefix(CanonicalPath.of(root) + "/")
     }
 
     /// Path to the umbrella's index store, if built (the freshest across triple × configuration).

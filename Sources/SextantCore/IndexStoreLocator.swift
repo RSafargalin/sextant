@@ -83,10 +83,11 @@ public enum IndexStoreLocator {
         return found
     }
 
-    /// Whether a store lies in the build tree `sextant index` keeps for itself — a store nothing
+    /// Whether a store lies in a build tree `sextant index` keeps for itself — a package's own, or
+    /// the umbrella it builds in the cache for a project of several packages — a store nothing
     /// else writes.
     public static func isBuiltBySextant(storePath: String) -> Bool {
-        storePath.contains("/.build/\(indexBuildDirectoryName)/")
+        storePath.contains("/.build/\(indexBuildDirectoryName)/") || IndexBuild.isUmbrellaStore(storePath)
     }
 
     private static func hasManifest(_ directory: URL) -> Bool {

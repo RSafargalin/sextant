@@ -55,7 +55,7 @@ func degradeToTextual(symbol: String, arguments: [String], index: IndexStoreSet?
         reason = "the index store has units but no records (\(shorten(brokenStores[0]))) — it cannot resolve "
                + "anything, so this says nothing about the symbol; rebuild it with `sextant index`"
     } else if stale {
-        reason = "the index is stale — run `sextant index`"
+        reason = "the index is stale — \(StoreSelection.refreshAdvice(forStores: storePaths))"
     } else if allConditional {
         reason = "every occurrence is inside a #if branch this build does not contain — the index only covers the configuration that was built"
     } else if someConditional {
@@ -97,7 +97,7 @@ func crossCheck(symbol: String, query: SymbolQuery, hits: [SymbolHit], arguments
     guard arguments.contains("--verify") else { return }
     let semanticCount = query == .definitions
         ? hits.filter { $0.definition != nil }.count
-        : hits.reduce(0) { $0 + $1.references.count }
+        : hits.reduce(0) { $0 + $1.totalReferences }
     let root = URL(fileURLWithPath: projectRoot(in: arguments), isDirectory: true)
     let scan = IdentifierScan.occurrences(of: symbol, underRoot: root, includeTests: true,
                                           fileLimit: scaleLimit(in: arguments))
@@ -159,7 +159,8 @@ func runSemantic(_ query: SymbolQuery, arguments: [String]) -> Int32 {
         query: query,
         style: .cli(compact: isCompact(arguments), referenceLimit: limit, symbolLimit: symbolLimit),
         path: format,
-        snippet: { reader.line($0.line, inFile: $0.path) }
+        snippet: { reader.line($0.line, inFile: $0.path) },
+        refresh: StoreSelection.refreshAdvice(forStores: index.base.storePaths)
     )
     rendering.lines.forEach { print($0) }
     // The advisory goes to stderr: it is about choosing a command, not part of the answer.
@@ -259,7 +260,7 @@ func runBody(arguments: [String]) -> Int32 {
     guard !definitions.isEmpty else { print("Definition of '\(symbol)' not found (symbol outside the index? try `refs \(symbol)`)."); return 0 }
     guard !bodies.isEmpty else {
         if staleness.isEmpty {
-            print("Could not extract the body of '\(symbol)': \(SourceBody.unextractableReason)")
+            print("Could not extract the body of '\(symbol)': \(SourceBody.unextractableReason(refresh: StoreSelection.refreshAdvice(forStores: index.base.storePaths)))")
         } else {
             print("Could not extract the body of '\(symbol)' from the current text.")
             staleness.forEach { print($0) }
@@ -303,7 +304,9 @@ func runConstruct(arguments: [String]) -> Int32 {
     }
     guard let index = openTranslatedIndex(arguments, label: "construct") else { return 1 }
     let limit = max(1, optionValue("--limit", in: arguments).flatMap(Int.init) ?? 40)
-    let hits = index.lookup(name: symbol, query: .references)
+    // Every reference, not the capped list: the count in the header answers "in how many places",
+    // and a site past the cap is as much a construction site as one before it.
+    let hits = index.lookup(name: symbol, query: .references, limit: .max)
     let references = hits.flatMap { $0.references }
     let reader = SourceLineReader()
 
@@ -548,12 +551,16 @@ func runRelated(_ query: RelationQuery, label: String, arguments: [String]) -> I
     }
     guard let set = openTranslatedIndex(arguments, label: label) else { return 1 }
     let limit = max(1, optionValue("--limit", in: arguments).flatMap(Int.init) ?? 1000)
-    let related = set.related(toName: symbol, query: query)
+    // Everything the index relates, uncapped: the header counts it, and what `--limit` leaves out
+    // of the list is stated with that count.
+    let related = set.related(toName: symbol, query: query, limit: .max)
     let staleness = SymbolReport.staleness(set.staleness(forName: symbol, query: .references),
                                            locations: related.map(\.location), symbol: symbol,
                                            style: .cli(compact: true, referenceLimit: 40), path: shorten)
     if arguments.contains("--json") {
         printJSON(Array(related.prefix(limit)))
+        // The JSON shape is a list and stays one; what the limit left out is said beside it.
+        if related.count > limit { reportError("… (first \(limit) of \(related.count) shown — --limit)") }
         staleness.forEach(reportError)
         return 0
     }

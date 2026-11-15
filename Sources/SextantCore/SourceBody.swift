@@ -45,10 +45,12 @@ public enum SourceBody {
         }
     }
 
-    /// Why `bodies(of:at:)` is empty although the index has definitions for the symbol.
-    public static let unextractableReason =
+    /// Why `bodies(of:at:)` is empty although the index has definitions for the symbol, with what
+    /// refreshes the stores it was read from.
+    public static func unextractableReason(refresh: String) -> String {
         "no declaration of that name on the recorded line — the file has changed since it was indexed. "
-        + "Rebuild the project or run `sextant index`."
+            + "To refresh the index: \(refresh)."
+    }
 
     /// Whether the extracted text declares that name — a word match on the line that states what
     /// the declaration is called. Attributes on lines of their own (`@MainActor`, `@objc`) come

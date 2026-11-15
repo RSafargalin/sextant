@@ -50,7 +50,8 @@ public enum StoreCoverage {
                                        extensions: ["swift"] + IndexDeclarations.clangExtensions)
         guard !files.isEmpty else { return nil }
 
-        let key = cacheKey(store: store, fileCount: files.count)
+        let key = cacheKey(store: store, projectRoot: projectRoot, includeTests: includeTests,
+                           fileCount: files.count)
         if let cached = cache.value(forKey: key) { return cached }
         let onDisk = Set(files.map { $0.resolvingSymlinksInPath().path })
 
@@ -67,15 +68,19 @@ public enum StoreCoverage {
         return result
     }
 
-    /// The store's identity for caching: its path, when its units were last written, and how many
-    /// files the project has. A build writes units under new names, which moves the directory's
-    /// timestamp; adding or deleting sources moves the count. Listing the units themselves would
-    /// be a third signal and costs 0.3s on a large store — the two cheap ones move together with it.
-    private static func cacheKey(store: String, fileCount: Int) -> String {
+    /// The measurement's identity for caching: the store's path and when its units were last
+    /// written, the project it is measured against (canonical, so two spellings share an entry),
+    /// whether tests count, and how many files the project has. A build writes units under new
+    /// names, which moves the directory's timestamp; adding or deleting sources moves the count.
+    /// Listing the units themselves would be a further signal and costs 0.3s on a large store —
+    /// the cheap ones move together with it. One store measured against two projects, or with and
+    /// without tests, is two different numbers.
+    static func cacheKey(store: String, projectRoot: URL, includeTests: Bool, fileCount: Int) -> String {
         let stamp = IndexFreshness.timestamp(ofStore: store)?.timeIntervalSince1970 ?? 0
-        return ContentHash.of("\(store)|\(stamp)|\(fileCount)")
+        let root = CanonicalPath.of(projectRoot.path)
+        return ContentHash.of("\(store)|\(stamp)|\(root)|\(includeTests)|\(fileCount)")
     }
 
-    // v2: the result gained a field, and an entry written by v1 cannot supply it.
-    private static let cache = PersistentCache<Result>(namespace: "store-coverage-v2")
+    // v3: the key gained the project root and whether tests count.
+    private static let cache = PersistentCache<Result>(namespace: "store-coverage-v3")
 }

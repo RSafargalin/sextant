@@ -5,6 +5,8 @@ import Foundation
 public final class IndexStoreSet {
     let stores: [IndexStore]
     public let storeCount: Int
+    /// The stores this set reads, in the order they were opened.
+    public let storePaths: [String]
 
     /// `databaseRoot` is a stable directory for the IndexStoreDB database, reused between runs:
     /// warm queries are faster because only changed units are imported.
@@ -15,6 +17,7 @@ public final class IndexStoreSet {
             return try IndexStore(storePath: path, libraryPath: libraryPath, databasePath: "\(databaseRoot)/\(sanitized)", listenToUnitEvents: listenToUnitEvents, projectRoot: projectRoot)
         }
         self.storeCount = stores.count
+        self.storePaths = storePaths
     }
 
     /// Reads newly written units across all stores (freshness for a long-lived server).

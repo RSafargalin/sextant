@@ -1,9 +1,10 @@
 import Foundation
 
-/// Finds the current index store in Xcode's DerivedData.
+/// Finds a project's index stores in Xcode's DerivedData.
 ///
 /// The DerivedData path is non-deterministic (a hash of the project path), and one project may
-/// have several directories. The freshest by modification time is chosen.
+/// have several directories. Every one of them comes back as a candidate; which answers is
+/// `StoreSelection.resolve`'s decision.
 public enum DerivedDataLocator {
     /// Glob pattern for a project's DataStore directories, by name.
     public static func dataStoreGlob(projectName: String, home: String) -> String {
@@ -62,36 +63,6 @@ public enum DerivedDataLocator {
             }
         }
         return apps + packages
-    }
-
-    /// The project's freshest DataStore, located through `info.plist` → WorkspacePath. Matching by
-    /// project path rather than scheme name is reliable and excludes other worktrees.
-    public static func dataStore(forProjectRoot projectRoot: String, derivedData: String) -> String? {
-        let manager = FileManager.default
-        guard let entries = try? manager.contentsOfDirectory(atPath: derivedData) else { return nil }
-
-        var appWorkspaces: [(path: String, modified: Date)] = []
-        var packageWorkspaces: [(path: String, modified: Date)] = []
-        for entry in entries {
-            let infoPlist = "\(derivedData)/\(entry)/info.plist"
-            guard let info = NSDictionary(contentsOfFile: infoPlist),
-                  let workspacePath = info["WorkspacePath"] as? String,
-                  workspace(workspacePath, isInProjectRoot: projectRoot) else { continue }
-
-            let store = "\(derivedData)/\(entry)/Index.noindex/DataStore"
-            guard manager.fileExists(atPath: store),
-                  let modified = IndexFreshness.timestamp(ofStore: store)
-            else { continue }
-
-            if isAppWorkspace(workspacePath) {
-                appWorkspaces.append((store, modified))
-            } else {
-                packageWorkspaces.append((store, modified))
-            }
-        }
-        // An app workspace (.xcodeproj/.xcworkspace) covers the whole project; the index of an
-        // opened nested package (Package.swift) is partial, so it is used only when no app exists.
-        return freshest(from: appWorkspaces.isEmpty ? packageWorkspaces : appWorkspaces)
     }
 
     /// Whether a workspace is part of the same project as the root, rather than merely somewhere
