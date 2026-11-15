@@ -227,6 +227,35 @@ struct PageRankTests {
     func emptyGraph() {
         #expect(PageRank.scores(nodes: [], edges: []).isEmpty)
     }
+
+    /// The map is cached by clients and diffed by users, so the same tree must give the same bytes.
+    /// Hash-table iteration order differs between runs; the order nodes and edges arrive in stands
+    /// for it here, where one process has one order.
+    @Test("The same graph gives the same scores to the last bit, whatever order it arrives in")
+    func scoresDoNotDependOnOrder() {
+        let nodes = (0..<60).map { "Sources/File\($0).swift" }
+        var edges: [(from: String, to: String)] = []
+        for index in 0..<60 where index % 7 != 0 {
+            edges.append((nodes[index], nodes[(index * 13 + 5) % 60]))
+            edges.append((nodes[index], nodes[(index * 31 + 2) % 60]))
+            if index % 3 == 0 { edges.append((nodes[index], nodes[(index + 1) % 60])) }
+        }
+        let forward = PageRank.scores(nodes: nodes, edges: edges)
+        let backward = PageRank.scores(nodes: nodes.reversed(), edges: edges.reversed())
+        let shuffled = PageRank.scores(nodes: nodes.enumerated().sorted { ($0.offset * 17) % 60 < ($1.offset * 17) % 60 }.map(\.element),
+                                       edges: edges.enumerated().sorted { ($0.offset * 11) % edges.count < ($1.offset * 11) % edges.count }.map(\.element))
+        for node in nodes {
+            #expect(forward[node]!.bitPattern == backward[node]!.bitPattern, "\(node)")
+            #expect(forward[node]!.bitPattern == shuffled[node]!.bitPattern, "\(node)")
+        }
+    }
+
+    @Test("Files with equal scores are ranked by path")
+    func tiesAreBrokenByName() {
+        let scores = ["b.swift": 0.25, "a.swift": 0.25, "c.swift": 0.5]
+        #expect(PageRank.ranked(["b.swift", "a.swift", "c.swift"], scores: scores) { $0 } == ["c.swift", "a.swift", "b.swift"])
+        #expect(PageRank.ranked(["a.swift", "b.swift", "c.swift"], scores: scores) { $0 } == ["c.swift", "a.swift", "b.swift"])
+    }
 }
 
 @Suite("Umbrella manifest")

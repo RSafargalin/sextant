@@ -207,6 +207,8 @@ public enum StoreSelection {
         + "first (an explicit store policy overrides)"
 
     /// The whole decision, in order:
+    /// 0. Of each build tree only `sextant index` writes, only the store it wrote last takes part —
+    ///    with or without a policy: the others are what earlier runs left in the same tree.
     /// 1. With no explicit policy, a usable store `sextant index` built answers — in a package's own
     ///    build tree, or the umbrella it builds in the cache for a project of several packages —
     ///    and the stores an ordinary build or an editor left are set aside. Only that tool writes
@@ -217,11 +219,11 @@ public enum StoreSelection {
     /// 3. One store left needs no policy. Several are measured with `measure` (coverage, where a
     ///    reader needs it to decide), then the policy picks; without one, nothing is picked.
     ///
-    /// An explicit policy is applied to every usable candidate: neither rule runs before it, so
-    /// neither can remove the store the policy would have chosen.
+    /// An explicit policy is applied to every usable candidate that step 0 leaves: neither rule 1
+    /// nor rule 2 runs before it, so neither can remove the store the policy would have chosen.
     public static func resolve(_ candidates: [StoreCandidate], policy: StorePolicy?,
                                measure: (StoreCandidate) -> StoreCandidate = { $0 }) -> StoreResolution {
-        var all = candidates
+        var all = restrictingToLastWrittenInOwnTree(candidates)
         var decidedByRule = false
         if policy == nil {
             let usable = all.filter(\.isUsable)
@@ -247,6 +249,44 @@ public enum StoreSelection {
         }
         return StoreResolution(candidates: all, chosen: chosen, policy: policy,
                                decidedByOwnStoreRule: decidedByRule && !chosen.isEmpty)
+    }
+
+    /// Why a store in a tree `sextant index` builds was set aside for another one in the same tree.
+    public static let earlierOwnBuildReason = "an earlier build in the same `sextant index` build tree "
+        + "(another layout or configuration) — each run rebuilds that tree, and the store it wrote last is its current one"
+
+    /// A build tree only `sextant index` writes — a package's own, or the umbrella in the cache —
+    /// holds one current store: every run rebuilds it, so a second store there, in the other build
+    /// system's layout or another configuration, is what an earlier run left. Of each such tree only
+    /// the store whose units were written last takes part, whatever the policy, and the others
+    /// are named as left out. Ties go to the path that sorts first.
+    static func restrictingToLastWrittenInOwnTree(_ candidates: [StoreCandidate]) -> [StoreCandidate] {
+        let byTree = Dictionary(grouping: candidates.filter { $0.isUsable && ownBuildTree(ofStorePath: $0.path) != nil },
+                                by: { ownBuildTree(ofStorePath: $0.path) ?? "" })
+        var current: Set<String> = []
+        for stores in byTree.values {
+            let newest = stores.max {
+                ($0.modified ?? .distantPast) != ($1.modified ?? .distantPast)
+                    ? ($0.modified ?? .distantPast) < ($1.modified ?? .distantPast)
+                    : $0.path > $1.path
+            }
+            if let newest { current.insert(newest.path) }
+        }
+        return candidates.map { candidate in
+            guard candidate.isUsable, ownBuildTree(ofStorePath: candidate.path) != nil,
+                  !current.contains(candidate.path) else { return candidate }
+            return candidate.settingAside(earlierOwnBuildReason)
+        }
+    }
+
+    /// The build tree a store `sextant index` built lies in: `<package>/.build/sextant-index/`, or
+    /// the umbrella's `.build/`. nil for a store anything else writes.
+    static func ownBuildTree(ofStorePath path: String) -> String? {
+        guard IndexStoreLocator.isBuiltBySextant(storePath: path) else { return nil }
+        if let range = path.range(of: "/.build/\(IndexStoreLocator.indexBuildDirectoryName)/") {
+            return String(path[..<range.upperBound])
+        }
+        return path.range(of: "/.build/").map { String(path[..<$0.upperBound]) }
     }
 
     /// Debug and release of one package are different builds of different code; mixing them

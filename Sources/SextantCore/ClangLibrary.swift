@@ -138,10 +138,8 @@ public final class ClangLibrary: @unchecked Sendable {
 
     /// libclang beside the active clang, the same route `libIndexStore` is found by.
     public static func discoverPath() -> String? {
-        guard let clang = Command.output("/usr/bin/xcrun", ["--find", "clang"]) else { return nil }
-        let path = (clang.trimmingCharacters(in: .whitespacesAndNewlines) as NSString)
-            .deletingLastPathComponent
-            .replacingOccurrences(of: "/bin", with: "/lib") + "/libclang.dylib"
+        guard let clang = Command.output("/usr/bin/xcrun", ["--find", "clang"], timeout: Command.toolchainTimeout),
+              let path = IndexStoreUnits.toolchainLibrary(named: "libclang.dylib", besideTool: clang) else { return nil }
         return FileManager.default.fileExists(atPath: path) ? path : nil
     }
 }

@@ -20,6 +20,9 @@ enum BuildProducts {
         return usable.first { $0.hasPrefix(own) } ?? usable.first
     }
 
+    /// libIndexStore of the active toolchain, found the way the tool finds it.
+    static var indexStoreLibrary: String? { IndexStoreUnits.discoverLibrary() }
+
     /// The compile flags of a built and indexed package. The native build system leaves a graph
     /// beside the store; the Swift Build system leaves none, and there the flags are the ones
     /// `sextant index` read from the build's own output and stored.

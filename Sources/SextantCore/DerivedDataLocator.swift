@@ -11,13 +11,6 @@ public enum DerivedDataLocator {
         "\(home)/Library/Developer/Xcode/DerivedData/\(projectName)-*/Index.noindex/DataStore"
     }
 
-    /// The freshest DataStore among the candidates; ties broken by path for determinism.
-    public static func freshest(from candidates: [(path: String, modified: Date)]) -> String? {
-        candidates.max { lhs, rhs in
-            lhs.modified != rhs.modified ? lhs.modified < rhs.modified : lhs.path < rhs.path
-        }?.path
-    }
-
     /// Every DataStore Xcode holds for this project, with the facts needed to choose between them.
     /// A project routinely has several: a second checkout, an opened nested package, a stale
     /// directory from a renamed scheme. Which one answers is a decision, so they all come back.
@@ -88,7 +81,8 @@ public enum DerivedDataLocator {
     }
 
     private static func repositoryRoot(of directory: String) -> String? {
-        guard let output = Command.output("/usr/bin/env", ["git", "-C", directory, "rev-parse", "--show-toplevel"]),
+        guard let output = Command.output("/usr/bin/env", ["git", "-C", directory, "rev-parse", "--show-toplevel"],
+                                          timeout: Command.queryTimeout),
               case let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty
         else { return nil }
         return URL(fileURLWithPath: trimmed).resolvingSymlinksInPath().standardizedFileURL.path

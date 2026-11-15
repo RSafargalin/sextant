@@ -37,10 +37,7 @@ func indexCandidates(in arguments: [String]) -> (candidates: [StoreCandidate], s
                                 modified: IndexFreshness.timestamp(ofStore: explicit))], .explicit)
     }
     let rootPath = projectRoot(in: arguments)
-    let umbrella = IndexBuild.umbrellaStorePath(forRoot: rootPath).map {
-        [StoreCandidate(path: $0, origin: IndexBuild.umbrellaDirectory(forRoot: rootPath).path,
-                        unitCount: StoreCandidate.unitCount(ofStore: $0), modified: IndexFreshness.timestamp(ofStore: $0))]
-    } ?? []
+    let umbrella = IndexBuild.umbrellaCandidates(forRoot: rootPath)
     let spm = IndexStoreLocator.candidates(under: URL(fileURLWithPath: rootPath, isDirectory: true))
     if spm.contains(where: \.isUsable) { return (umbrella + spm, umbrella.isEmpty ? .spm : .umbrella) }
     let xcode = DerivedDataLocator.candidates(forProjectRoot: rootPath, derivedData: derivedDataRoot(in: arguments))
@@ -332,7 +329,14 @@ func runDoctor(arguments: [String]) -> Int32 {
     }
 
     print(ok ? "\n✅ ready — `sextant mcp` will work (semantics and structure)" : "\n❌ there are problems — see above")
+    evictObsoleteCaches()
     return ok ? 0 : 1
+}
+
+/// Removes what the cache directory holds for nothing, and says so when there was anything. Run by
+/// the commands that are not queries — `index` and `doctor` — so no answer waits on it.
+func evictObsoleteCaches() {
+    if let summary = CacheEviction.run().summary { reportError(summary) }
 }
 
 // MARK: - index
@@ -433,9 +437,9 @@ func runIndex(arguments: [String]) -> Int32 {
         // Recorded before the build reads them: a file edited while it runs then reads as changed.
         let sources = captureSources(ofProject: rootPath)
         let status = runSwiftBuild(build, in: package, log: log)
-        let built = IndexStoreLocator.storePaths(inBuildDirectory: scratch)
+        let built = Set(IndexStoreLocator.storePaths(inBuildDirectory: scratch))
         let candidates = IndexStoreLocator.candidates(under: root)
-        let store = candidates.first(where: { $0.isUsable && built.contains($0.path) })?.path
+        let store = StoreSelection.resolve(candidates.filter { built.contains($0.path) }, policy: nil).chosen.first?.path
         if let store {
             recordSnapshot(store: store, root: rootPath, sources: sources, status: status,
                            testsBuilt: testsBuilt, log: log)
@@ -498,7 +502,7 @@ func runIndex(arguments: [String]) -> Int32 {
     let log = IndexBuild.buildLog(forRoot: rootPath)
     let sources = captureSources(ofProject: rootPath)
     let status = runSwiftBuild(build, in: umbrella, log: log)
-    let umbrellaStore = IndexBuild.umbrellaStorePath(forRoot: rootPath)
+    let umbrellaStore = StoreSelection.resolve(IndexBuild.umbrellaCandidates(forRoot: rootPath), policy: nil).chosen.first?.path
     if let umbrellaStore {
         recordSnapshot(store: umbrellaStore, root: rootPath, sources: sources, status: status,
                        testsBuilt: testsBuilt, log: log)
@@ -590,9 +594,16 @@ private final class IndexMemo: @unchecked Sendable {
         lock.withLock { sets[key] = created }
         return created
     }
+
+    func removeAll() { lock.withLock { sets.removeAll() } }
 }
 
 private let indexMemo = IndexMemo()
+
+/// Closes every index this process opened. IndexStoreDB keeps its database for the next run only
+/// when the database is closed: one still open when the process exits stays under a per-process
+/// name that the next open discards, and that open then imports every unit of the store again.
+func closeOpenIndexes() { indexMemo.removeAll() }
 
 /// `quiet` подавляет сообщение об отсутствии стора: вызывающий сам объяснит, что именно
 /// потеряно. Две строки об одном и том же читаются как две разные проблемы.

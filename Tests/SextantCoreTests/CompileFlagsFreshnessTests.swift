@@ -47,6 +47,30 @@ struct CompileFlagsFreshnessTests {
         #expect(note.contains("sextant index"))
     }
 
+    /// A query reads the flags of the roots around the one asked about and inside it, so the note
+    /// has to judge those: judging only the root's own database said nothing about flags read
+    /// from a containing root's.
+    @Test("the flags read from a containing root's database are the ones judged")
+    func containingDatabaseIsJudged() throws {
+        let outer = try makeRoot()
+        let inner = "\(outer)/Nested"
+        try FileManager.default.createDirectory(atPath: inner, withIntermediateDirectories: true)
+        let source = "\(inner)/legacy.c"
+        try "int legacy(void) { return 1; }\n".write(toFile: source, atomically: true, encoding: .utf8)
+        try CompilationDatabase.save([CompileCommand(directory: outer, file: source, arguments: ["clang", source])],
+                                     forRoot: outer)
+        defer { try? FileManager.default.removeItem(at: CompilationDatabase.path(forRoot: outer)) }
+        try #require(!CompilationDatabase.commands(forFilesUnder: inner).isEmpty)
+
+        let captured = try #require(CompilationDatabase.capturedAt(forRoot: outer))
+        let store = try makeStore(newerThan: captured)
+        defer { try? FileManager.default.removeItem(atPath: store) }
+
+        let note = CompilationDatabase.stalenessNote(forRoot: inner, storePaths: [store]).joined()
+        #expect(note.contains("compile flags captured"), "\(note)")
+        #expect(note.contains("10 minutes later"), "\(note)")
+    }
+
     /// The ordinary case — `sextant index` captures after building — must stay silent, or the
     /// warning becomes noise and stops being read.
     @Test("flags captured after the build say nothing")

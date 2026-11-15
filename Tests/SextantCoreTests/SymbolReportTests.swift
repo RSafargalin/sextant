@@ -167,4 +167,46 @@ struct SymbolReportTests {
         #expect(lines[0].contains("1+"))          // truncation is marked, not passed off as complete
         #expect(lines[1].contains("A.swift:4"))
     }
+
+    /// An index that relates a symbol to many callees, for the count `context` states.
+    private struct ManyCallees: SemanticIndex {
+        let callees: Int
+        func lookup(name: String, query: SymbolQuery, limit: Int) -> [SymbolHit] {
+            [SymbolHit(name: name, usr: "s:\(name)", kind: "function",
+                       definition: SextantCore.SourceLocation(path: "/repo/A.swift", line: 1, column: 6, isDefinition: true),
+                       references: [])]
+        }
+        func related(toName name: String, query: RelationQuery, limit: Int) -> [RelatedSymbol] {
+            guard query == .callees else { return [] }
+            return Array((0..<callees).map { index in
+                RelatedSymbol(name: "f\(index)()", usr: "s:f\(index)", kind: "function",
+                              location: SextantCore.SourceLocation(path: "/repo/B.swift", line: index + 1, column: 5, isDefinition: false))
+            }.prefix(limit))
+        }
+    }
+
+    @Test("context counts every callee, and says how many of them it shows")
+    func contextCountsEveryCallee() throws {
+        let context = try #require(ManyCallees(callees: 30).context(forName: "run", sampleLimit: 10))
+        #expect(context.callees.count == 10)
+        #expect(context.calleeCount == 30)
+        let lines = SymbolReport.context(context, sampleLimit: 10, style: .cli(compact: true, referenceLimit: 10),
+                                         path: { $0 }, snippet: { _ in nil })
+        #expect(lines.contains { $0.hasSuffix("calls: 30") }, "\(lines)")
+        #expect(lines.contains { $0.contains("first 10 of 30 callees shown") }, "\(lines)")
+        #expect(lines.filter { $0.contains("→ f") }.count == 10)
+
+        let few = try #require(ManyCallees(callees: 3).context(forName: "run", sampleLimit: 10))
+        let fewLines = SymbolReport.context(few, sampleLimit: 10, style: .mcp, path: { $0 }, snippet: { _ in nil })
+        #expect(fewLines.contains { $0.hasSuffix("calls: 3") })
+        #expect(!fewLines.contains { $0.contains("shown)") })
+    }
+
+    @Test("The total of callees is not part of context's JSON, whose shape is fixed")
+    func calleeTotalIsNotEncoded() throws {
+        let context = try #require(ManyCallees(callees: 30).context(forName: "run", sampleLimit: 10))
+        let object = try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(context)) as? [String: Any])
+        #expect(Set(object.keys) == ["name", "kinds", "definitions", "referenceCount", "references", "callerCount",
+                                     "callers", "callees", "implementations", "supertypes"])
+    }
 }

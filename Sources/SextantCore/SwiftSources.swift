@@ -208,17 +208,7 @@ public enum SwiftSources {
     }
 
     private static func runGit(_ arguments: [String]) -> String? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["git"] + arguments
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-        do { try process.run() } catch { return nil }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else { return nil }
-        return String(data: data, encoding: .utf8)
+        Command.successOutput("/usr/bin/env", ["git"] + arguments)
     }
 
     /// Per-process memo of the file list (root|includeTests → files), so the scale note and the
@@ -374,6 +364,9 @@ public enum SwiftSources {
             try? FileManager.default.createDirectory(at: gitDirectory.deletingLastPathComponent(),
                                                      withIntermediateDirectories: true)
             guard runGit(["init", "-q", "--bare", gitDirectory.path]) != nil else { return nil }
+        }
+        if !FileManager.default.fileExists(atPath: gitDirectory.appendingPathComponent(CacheEviction.ownerFileName).path) {
+            CacheEviction.recordOwner(root.resolvingSymlinksInPath().standardizedFileURL.path, in: gitDirectory)
         }
         let pathspecs = extensions.map { "*.\($0)" }
         // `--others --exclude-standard`: everything untracked that gitignore does not exclude —

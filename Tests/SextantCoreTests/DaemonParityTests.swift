@@ -286,4 +286,32 @@ struct DaemonParityTests {
         #expect(direct.output.contains("Sources/parity/use.swift:2:12  [unconfirmed"), "\(direct)")
         #expect(viaDaemon == direct)
     }
+
+    /// Regression: freshness compared the store against the toolchain the daemon's `PATH` named,
+    /// so a query was `fresh` on its own and "built with one compiler, now another" through a
+    /// daemon started in another environment.
+    @Test("The caller's toolchain is the one freshness compares against", .timeLimit(.minutes(5)))
+    func callerToolchainIsInForce() throws {
+        let binary = try #require(BuildProducts.sextantBinary(under: Self.packageRoot), "sextant is not built")
+        let sandbox = try Sandbox()
+        let project = try sandbox.package(named: "toolchain")
+        let index = try sextant(["index", "--project", project.path], in: project, sandbox: sandbox, daemon: false)
+        try #require(index.exitCode == 0, "\(index)")
+
+        // Another `swift` first on the daemon's PATH, as a daemon started from another shell has.
+        let fake = sandbox.work.appendingPathComponent("fakebin")
+        try FileManager.default.createDirectory(at: fake, withIntermediateDirectories: true)
+        let swift = fake.appendingPathComponent("swift")
+        try "#!/bin/sh\necho 'Fake Swift version 0.0 (daemon)'\n".write(to: swift, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: swift.path)
+        let daemonPath = fake.path + ":" + (ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin")
+        let daemon = try Daemon(binary: binary, project: project, sandbox: sandbox, environment: ["PATH": daemonPath])
+        defer { daemon.stop() }
+
+        let (viaDaemon, direct) = try bothWays(["defs", "Kept"], in: project, sandbox: sandbox)
+        #expect(daemon.answered("defs"), "the daemon never answered:\n\(daemon.text)")
+        #expect(direct.errorOutput.contains("fresh"), "\(direct)")
+        #expect(!viaDaemon.errorOutput.contains("Fake Swift"), "\(viaDaemon)")
+        #expect(viaDaemon == direct)
+    }
 }

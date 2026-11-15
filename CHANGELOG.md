@@ -55,6 +55,38 @@ Human-readable text output is not covered — parse `--json`, not prose.
 
 ### Changed
 
+- **An index-backed query costs about 0.06 s instead of about 1.15 s.** Measured on this
+  repository on the maintainer's machine (Apple silicon, release build, `refs SwiftSources
+  --project .`, index fresh against its snapshot), by timestamps around each phase of one query:
+
+  | phase | before, warm | after, warm |
+  |---|---|---|
+  | process start to `main` | 5 ms | 5 ms |
+  | store location and selection, coverage (cached) | 85 ms | 11 ms |
+  | finding libIndexStore (`xcrun --find swiftc`) | 77 ms | 3 ms |
+  | freshness: git comparison with the snapshot | 178 ms | 16 ms |
+  | freshness: toolchain (`xcrun --find swift`) | 82 ms | 3 ms |
+  | opening IndexStoreDB | 728 ms | 8 ms |
+  | query and rendering | 10 ms | 10 ms |
+  | **wall time** (`/usr/bin/time`, 5 runs) | **1.14–1.16 s** | **0.05–0.06 s** |
+
+  Through `sextant serve` the client waited 0.44–0.45 s and now waits 0.05–0.06 s; a second
+  `find_references` call to `sextant mcp` took 365 ms and now takes 46 ms. A first query with
+  nothing cached went from 1.36 s to 0.80 s — the one full import of the store (≈0.7 s) remains.
+  Answers are byte-for-byte what they were (compared on this repository and the test fixture,
+  text and `--json`, over a fresh and a stale index). Three things made the difference:
+  - **Every helper process cost 65–70 ms more than it ran.** Waiting for a child with
+    `Process.waitUntilExit` spins the run loop and returns tens of milliseconds after the child
+    has exited; a query starts five or six helpers (`git`, `xcrun`). Helpers are now awaited on
+    their termination.
+  - **The IndexStoreDB database was imported from scratch on every command.** The database is
+    kept between runs only when it is closed, and a command exited with it open, so the next one
+    found no saved database and imported every unit again (≈0.7 s here). Commands now close their
+    index before exiting. A kept database is used only while every unit it knew is still in the
+    store: IndexStoreDB's import on open adds and re-reads units but never drops one that is
+    gone, so a database that knew a vanished unit is removed and built anew.
+  - **`sextant mcp` decided the stores twice per call** — once for the "has the index changed"
+    signature and once for the trust label. It decides once, and both read that decision.
 - **Input the tool does not understand is refused with a message naming it, never replaced by a
   default.** Each value-taking flag now declares in `CommandCatalog` what it takes — an integer
   with a minimum, one of a set, a path, or text — and every invocation is checked against that
@@ -112,6 +144,59 @@ Human-readable text output is not covered — parse `--json`, not prose.
 
 ### Fixed
 
+- **Robustness of the index layer.**
+  - **A helper that hangs no longer hangs the query, and no helper reads the caller's input.**
+    `git`, `xcrun` and `swift --version` are run with the null device as stdin (a helper reading
+    stdin could swallow the MCP client's requests or a hook's payload, or wait on a terminal) and
+    with a timeout of seconds (30 s for `git`, 15 s for asking the toolchain); the build `sextant
+    index` runs keeps no timeout. A helper that runs out of time is killed and is a named failure
+    the caller handles as it handles a failed one — freshness then says the comparison could not
+    be made — instead of an empty success, which is what a timed-out helper returned before.
+  - **The IndexStoreDB database of a deep or oddly named store opens.** Its directory was the
+    store path with `/` replaced by `_`: a store deeper than about 250 characters failed with
+    "File name too long", and two stores such as `…/a_b/store` and `…/a/b_store` shared one
+    database. It is now named by a hash of the canonical store path. Databases under the old names
+    are never read again and are removed by the cache eviction below.
+  - **The cache directory no longer grows without bound.** `sextant index` and `sextant doctor`
+    now remove from `~/Library/Caches/sextant` the versions of a cache a newer format replaced
+    (`declarations-v3`/`v4` beside `v5`, `lint-v1`/`v2`, `search-v1`/`v2`, `store-coverage-v2`,
+    …), the IndexStoreDB databases, index snapshots, borrowed git directories, umbrella packages
+    and compile databases of stores and projects that no longer exist, the copies of indexed text
+    no snapshot refers to, and sockets no daemon holds, and say how much they removed. On the
+    machine this was written on, the first run removed 2 985 entries, 3.96 GB, of which the
+    IndexStoreDB databases alone had taken 3.7 GB. Nothing outside the cache directory is removed,
+    and a symbolic link in it is removed as a link.
+    `SEXTANT_CACHE_MAX` (default 10 000 files) bounds each cache namespace in use, as before; the
+    other directories are pruned by whether what they belong to still exists.
+  - **`map --pagerank` gives the same bytes on every run.** The scores were summed in hash-table
+    order, which differs between runs: measured, the `--json` scores differed in their last digits
+    on every run and the text order changed in one run of six. The sums now run in sorted order
+    and equal scores rank by path; `map --semantic` breaks a tie of name by file. **Output changes
+    once**: scores may differ in their last digits from what an earlier version printed.
+  - **libIndexStore and libclang are found under a toolchain whose path contains `/bin`
+    elsewhere.** The library directory was made by replacing every `/bin` in the tool's path with
+    `/lib`, which turned `/Users/bin-tools/…/usr/bin/swiftc` into `/Users/lib-tools/…`. It is now
+    the `lib` beside the tool's own `bin` directory.
+  - **Through `sextant serve`, freshness compares against the caller's toolchain.** The toolchain
+    an index is checked against came from the daemon's `PATH` and `DEVELOPER_DIR`, so the same
+    query was `fresh` on its own and "built with one compiler, now another" through a daemon
+    started from another shell. `PATH`, `DEVELOPER_DIR` and `TOOLCHAINS` now travel with the
+    request like `SEXTANT_STORE_POLICY` does.
+  - **`context` counts every callee.** It printed `calls: 10` for a symbol that calls thirty
+    functions — the count of the sample it showed. It now counts all of them and says
+    `… (first 10 of 30 callees shown)`. The `--json` shape is unchanged; its `callees` list is the
+    sample, as before.
+  - **The compile-flags warning judges the flags the answer reads.** It looked only at the
+    database stored for the exact root, while lookups also read the databases of the roots around
+    it and inside it, so it stayed silent about stale flags read from a containing root. It now
+    judges every database the answer reads, by the oldest of them.
+  - **The umbrella store is chosen by the selection, not before it.** The freshest store across
+    the umbrella's layouts and configurations was picked outside `StoreSelection.resolve`. Every
+    store in the tree is now a candidate, and the selection keeps, of each build tree only
+    `sextant index` writes — the umbrella, or a package's own index tree — the store it wrote
+    last, naming the others as left over from earlier runs. **Behaviour change** for a package
+    whose own index tree holds stores of both build systems' layouts: the one written last
+    answers, where a policy was asked for before.
 - **Which stores and files an index answer is drawn from.**
   - **A project under a directory named `checkouts`, or one that itself lives under a `.build`
     directory, keeps its own sources.** Every occurrence whose path contained `/checkouts/` or

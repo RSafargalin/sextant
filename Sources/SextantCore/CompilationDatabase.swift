@@ -241,6 +241,12 @@ public enum CompilationDatabase {
     /// two databases describe one file, the one stored for `root` itself wins, then the one of the
     /// nearest root.
     public static func commands(forFilesUnder root: String) -> [CompileCommand] {
+        databases(forFilesUnder: root).flatMap(\.commands)
+    }
+
+    /// The databases `commands(forFilesUnder:)` reads its answer from, each with the entries it
+    /// contributes; a database that contributes nothing is absent.
+    static func databases(forFilesUnder root: String) -> [(url: URL, commands: [CompileCommand])] {
         let own = CanonicalPath.fileName(of: root)
         let names = ((try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? [])
             .filter { $0.hasSuffix(".json") }
@@ -250,15 +256,18 @@ public enum CompilationDatabase {
             .sorted { ($0 == own ? 0 : 1, abs($0.count - own.count), $0) < ($1 == own ? 0 : 1, abs($1.count - own.count), $1) }
         let prefix = CanonicalPath.of(root) + "/"
         var seen: Set<String> = []
-        var result: [CompileCommand] = []
+        var result: [(url: URL, commands: [CompileCommand])] = []
         for name in names {
-            guard let data = try? Data(contentsOf: directory.appendingPathComponent("\(name).json")),
+            let url = directory.appendingPathComponent("\(name).json")
+            guard let data = try? Data(contentsOf: url),
                   let commands = try? JSONDecoder().decode([CompileCommand].self, from: data) else { continue }
+            var contributed: [CompileCommand] = []
             for command in commands where FileManager.default.fileExists(atPath: command.file) {
                 let file = URL(fileURLWithPath: command.file).resolvingSymlinksInPath().path
                 guard file.hasPrefix(prefix), seen.insert(file).inserted else { continue }
-                result.append(command)
+                contributed.append(command)
             }
+            if !contributed.isEmpty { result.append((url, contributed)) }
         }
         return result
     }
@@ -294,8 +303,14 @@ public enum CompilationDatabase {
     /// it, and the answer is not merely incomplete: a `-DFEATURE=1` that has since become `0`
     /// yields a structural match inside code the current build does not contain. That is the
     /// highest level of confidence this tool offers, standing on a stale fact.
+    ///
+    /// The flags judged are the ones the answer reads — from the root's own database, and from the
+    /// databases of the roots around it and inside it — and they are as old as the oldest of those.
     public static func stalenessNote(forRoot root: String, storePaths: [String]) -> [String] {
-        guard let captured = capturedAt(forRoot: root), !load(forRoot: root).isEmpty else { return [] }
+        let captures = databases(forFilesUnder: root).compactMap { database in
+            (try? database.url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+        }
+        guard let captured = captures.min() else { return [] }
         guard let built = IndexFreshness.timestamp(ofStores: storePaths), built > captured else { return [] }
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"

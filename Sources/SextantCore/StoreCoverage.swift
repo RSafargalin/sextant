@@ -81,6 +81,5 @@ public enum StoreCoverage {
         return ContentHash.of("\(store)|\(stamp)|\(root)|\(includeTests)|\(fileCount)")
     }
 
-    // v3: the key gained the project root and whether tests count.
-    private static let cache = PersistentCache<Result>(namespace: "store-coverage-v3")
+    private static let cache = PersistentCache<Result>(namespace: CacheNamespace.storeCoverage)
 }

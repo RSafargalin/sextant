@@ -8,11 +8,20 @@ public struct SymbolContext: Sendable, Codable {
     public let references: [SourceLocation]
     public let callerCount: Int
     public let callers: [SourceLocation]
+    /// The first callees, up to the sample limit; `calleeCount` is how many there are in all.
     public let callees: [RelatedSymbol]
+    /// Every callee the index records, of which `callees` is the sample. Not part of the encoded
+    /// form, whose shape is fixed.
+    public var calleeCount: Int = 0
     public let implementations: [RelatedSymbol]
     public let supertypes: [RelatedSymbol]
     /// Present only over an index that is stale against its snapshot.
     public var staleness: Staleness?
+
+    enum CodingKeys: String, CodingKey {
+        case name, kinds, definitions, referenceCount, references, callerCount, callers, callees,
+             implementations, supertypes, staleness
+    }
 }
 
 extension IndexStore: SemanticIndex {}
@@ -32,8 +41,9 @@ public extension SemanticIndex {
 
         let referenceHits = lookup(name: name, query: .references, limit: .max).flatMap { $0.references }
         let callerHits = lookup(name: name, query: .callers, limit: .max).flatMap { $0.references }
+        let callees = related(toName: name, query: .callees, limit: .max)
 
-        return SymbolContext(
+        var context = SymbolContext(
             name: name,
             kinds: Array(Set(definitions.map { $0.kind })).sorted(),
             definitions: definitions.compactMap { $0.definition },
@@ -41,9 +51,11 @@ public extension SemanticIndex {
             references: Array(referenceHits.prefix(sampleLimit)),
             callerCount: callerHits.count,
             callers: Array(callerHits.prefix(sampleLimit)),
-            callees: related(toName: name, query: .callees, limit: sampleLimit),
+            callees: Array(callees.prefix(sampleLimit)),
             implementations: related(toName: name, query: .implementations, limit: .max),
             supertypes: related(toName: name, query: .supertypes, limit: .max)
         )
+        context.calleeCount = callees.count
+        return context
     }
 }

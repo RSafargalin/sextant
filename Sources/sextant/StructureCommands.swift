@@ -77,7 +77,10 @@ func runSemanticMap(root: String, arguments: [String]) -> Int32 {
             ranked.append(RankedType(references: references, kind: declaration.kind.rawValue, name: name, file: file.relativePath))
         }
     }
-    ranked.sort { $0.references != $1.references ? $0.references > $1.references : $0.name < $1.name }
+    ranked.sort {
+        $0.references != $1.references ? $0.references > $1.references
+            : $0.name != $1.name ? $0.name < $1.name : $0.file < $1.file
+    }
 
     if arguments.contains("--json") { printJSON(ranked); return 0 }
     print("# Semantic map (public types by usage count)")
@@ -108,8 +111,8 @@ func runPageRankMap(root: String, arguments: [String]) -> Int32 {
             }
         }
     }
-    let scores = PageRank.scores(nodes: Array(nodes), edges: edges)
-    let ranked = summaries.sorted { (scores[$0.relativePath] ?? 0) > (scores[$1.relativePath] ?? 0) }
+    let scores = PageRank.scores(nodes: nodes.sorted(), edges: edges)
+    let ranked = PageRank.ranked(summaries, scores: scores, name: \.relativePath)
 
     func publicTypes(_ file: FileSummary) -> [String] {
         file.declarations.filter { $0.kind.isType && $0.access >= .internal }.map { $0.decoratedHeader }

@@ -10,7 +10,7 @@ import SwiftSyntax
 /// disagree about what was covered.
 public enum SwiftPatternScan {
     /// The persistent cache namespace for per-file results.
-    public static let cacheNamespace = "search-v3"
+    public static let cacheNamespace = CacheNamespace.search
 
     /// What one file gave: its matches, and whether its tree was a recovery from errors.
     public struct FileResult: Codable, Sendable {

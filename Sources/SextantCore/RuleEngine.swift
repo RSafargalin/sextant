@@ -156,7 +156,7 @@ public enum RuleEngine {
         let engines = compiled.map { $0.search }
 
         let rulesHash = rulesKey(rules)
-        let resultCache = PersistentCache<CachedFile>(namespace: "lint-v3")
+        let resultCache = PersistentCache<CachedFile>(namespace: CacheNamespace.lint)
 
         var violations: [RuleViolation] = []
         var unscanned: [UnscannedFile] = []

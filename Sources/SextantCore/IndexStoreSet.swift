@@ -7,17 +7,76 @@ public final class IndexStoreSet {
     public let storeCount: Int
     /// The stores this set reads, in the order they were opened.
     public let storePaths: [String]
+    /// For each store, whether the database kept from an earlier run was opened rather than a new
+    /// one built from every unit.
+    public let reusedDatabase: [Bool]
 
-    /// `databaseRoot` is a stable directory for the IndexStoreDB database, reused between runs:
-    /// warm queries are faster because only changed units are imported.
+    /// `databaseRoot` is a stable directory for the IndexStoreDB databases, reused between runs:
+    /// warm queries are faster because only changed units are imported. Each store has its own
+    /// database in it, named by `databaseDirectory(forStore:in:)`.
     public init(storePaths: [String], libraryPath: String, databaseRoot: String, listenToUnitEvents: Bool = false, projectRoot: String? = nil) throws {
         try? FileManager.default.createDirectory(atPath: databaseRoot, withIntermediateDirectories: true)
+        var reused: [Bool] = []
         self.stores = try storePaths.map { path in
-            let sanitized = path.replacingOccurrences(of: "/", with: "_")
-            return try IndexStore(storePath: path, libraryPath: libraryPath, databasePath: "\(databaseRoot)/\(sanitized)", listenToUnitEvents: listenToUnitEvents, projectRoot: projectRoot)
+            let database = Self.databaseDirectory(forStore: path, in: databaseRoot)
+            try? FileManager.default.createDirectory(at: database, withIntermediateDirectories: true)
+            CacheEviction.recordOwner(CanonicalPath.of(path), in: database)
+            let units = Self.unitNames(ofStore: path)
+            reused.append(Self.prepareDatabase(database, forUnits: units))
+            let store = try IndexStore(storePath: path, libraryPath: libraryPath, databasePath: database.path, listenToUnitEvents: listenToUnitEvents, projectRoot: projectRoot)
+            Self.recordUnits(units, in: database)
+            return store
         }
         self.storeCount = stores.count
         self.storePaths = storePaths
+        self.reusedDatabase = reused
+    }
+
+    /// The file in a database directory that lists the units the database was last opened over.
+    static let unitListFileName = "sextant-units"
+
+    /// Keeps the database from an earlier run only when it can be brought up to date by the
+    /// import IndexStoreDB runs on open, which adds new units and re-reads rewritten ones but never
+    /// drops a unit that has disappeared from the store: a database that knew a unit the store no
+    /// longer holds would keep answering from it. Such a database — or one with no record of its
+    /// units — is removed, and a new one is built from every unit. Returns whether it was kept.
+    static func prepareDatabase(_ database: URL, forUnits units: Set<String>) -> Bool {
+        let manager = FileManager.default
+        let entries = (try? manager.contentsOfDirectory(atPath: database.path)) ?? []
+        let data = entries.filter { $0 != unitListFileName && $0 != CacheEviction.ownerFileName }
+        guard !data.isEmpty else { return false }
+        if let recorded = try? String(contentsOf: database.appendingPathComponent(unitListFileName), encoding: .utf8),
+           Set(recorded.split(separator: "\n").map(String.init)).isSubset(of: units) {
+            // IndexStoreDB keeps a closed database under `<version>/saved`; without one it builds anew.
+            return data.contains { manager.fileExists(atPath: database.appendingPathComponent("\($0)/saved").path) }
+        }
+        for entry in data { try? manager.removeItem(at: database.appendingPathComponent(entry)) }
+        return false
+    }
+
+    static func recordUnits(_ units: Set<String>, in database: URL) {
+        try? Data(units.sorted().joined(separator: "\n").utf8)
+            .write(to: database.appendingPathComponent(unitListFileName), options: .atomic)
+    }
+
+    /// The unit files of a store, as `<version>/<name>` — a directory listing, not a read.
+    static func unitNames(ofStore storePath: String) -> Set<String> {
+        let store = URL(fileURLWithPath: storePath, isDirectory: true)
+        let versions = (try? FileManager.default.contentsOfDirectory(atPath: store.path)) ?? []
+        var names = Set<String>()
+        for version in versions where version.hasPrefix("v") {
+            let units = store.appendingPathComponent("\(version)/units").path
+            for name in (try? FileManager.default.contentsOfDirectory(atPath: units)) ?? [] { names.insert("\(version)/\(name)") }
+        }
+        return names
+    }
+
+    /// The database directory of one store: a hash of the store's canonical path, so the name has
+    /// a fixed length however deep the store lies, two stores never share one, and two spellings
+    /// of one store do. The directory records the store it belongs to, for the cache eviction.
+    public static func databaseDirectory(forStore storePath: String, in databaseRoot: String) -> URL {
+        URL(fileURLWithPath: databaseRoot, isDirectory: true)
+            .appendingPathComponent(String(ContentHash.of(CanonicalPath.of(storePath)).prefix(24)), isDirectory: true)
     }
 
     /// Reads newly written units across all stores (freshness for a long-lived server).

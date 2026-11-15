@@ -144,10 +144,19 @@ public final class IndexStoreUnits: @unchecked Sendable {
 
     /// libIndexStore from the active toolchain — the same copy IndexStoreDB is given.
     public static func discoverLibrary() -> String? {
-        guard let swiftc = Command.output("/usr/bin/xcrun", ["--find", "swiftc"]) else { return nil }
-        let path = (swiftc as NSString).deletingLastPathComponent
-            .replacingOccurrences(of: "/bin", with: "/lib") + "/libIndexStore.dylib"
+        guard let swiftc = Command.output("/usr/bin/xcrun", ["--find", "swiftc"], timeout: Command.toolchainTimeout),
+              let path = toolchainLibrary(named: "libIndexStore.dylib", besideTool: swiftc) else { return nil }
         return FileManager.default.fileExists(atPath: path) ? path : nil
+    }
+
+    /// Where a toolchain keeps a library beside one of its tools: the tool lives in `<prefix>/bin`,
+    /// the library in `<prefix>/lib`. Decided by the tool's directory itself, so a `bin` elsewhere
+    /// in the path (`/Users/bin-tools/…`, `/opt/bin/toolchain/usr/bin`) is left as it is. nil when
+    /// the tool is not in a `bin` directory.
+    public static func toolchainLibrary(named name: String, besideTool tool: String) -> String? {
+        let directory = URL(fileURLWithPath: tool.trimmingCharacters(in: .whitespacesAndNewlines)).deletingLastPathComponent()
+        guard directory.lastPathComponent == "bin" else { return nil }
+        return directory.deletingLastPathComponent().appendingPathComponent("lib").appendingPathComponent(name).path
     }
 
     public static func shared(libraryPath: String? = nil) throws -> IndexStoreUnits {

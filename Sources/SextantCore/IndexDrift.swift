@@ -127,7 +127,7 @@ public final class IndexDrift: @unchecked Sendable {
 
     /// Where classifications of a pair of texts are kept across requests.
     public static func makeClassificationCache() -> PersistentCache<Bool> {
-        PersistentCache<Bool>(namespace: "drift-declarations-v2")
+        PersistentCache<Bool>(namespace: CacheNamespace.driftDeclarations)
     }
 
     /// A changed file as it is now; nil text when it is gone.

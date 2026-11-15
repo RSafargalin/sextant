@@ -41,10 +41,12 @@ public enum IndexedText {
         return kept
     }
 
-    /// Removes every kept copy no snapshot in the cache refers to any more.
-    public static func prune(home: URL = FileManager.default.homeDirectoryForCurrentUser) {
+    /// Removes every kept copy no snapshot in the cache refers to any more, and returns the copies
+    /// removed with the bytes they held.
+    @discardableResult
+    public static func prune(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> (removed: [String], bytes: Int64) {
         let folder = directory(home: home)
-        guard let copies = try? FileManager.default.contentsOfDirectory(atPath: folder.path), !copies.isEmpty else { return }
+        guard let copies = try? FileManager.default.contentsOfDirectory(atPath: folder.path), !copies.isEmpty else { return ([], 0) }
         let snapshots = IndexSnapshot.location(forStore: "/", home: home).deletingLastPathComponent()
         var referenced = Set<String>()
         let decoder = JSONDecoder()
@@ -53,13 +55,20 @@ public enum IndexedText {
             guard let data = FileManager.default.contents(atPath: snapshots.appendingPathComponent(name).path) else { continue }
             guard let snapshot = try? decoder.decode(IndexSnapshot.self, from: data) else {
                 // A snapshot this version cannot read may still refer to copies: keep them all.
-                return
+                return ([], 0)
             }
             snapshot.sources.files.values.compactMap(\.hash).forEach { referenced.insert($0) }
         }
-        for copy in copies where !referenced.contains(copy) {
-            try? FileManager.default.removeItem(at: folder.appendingPathComponent(copy))
+        var removed: [String] = []
+        var bytes: Int64 = 0
+        for copy in copies.sorted() where !referenced.contains(copy) {
+            let url = folder.appendingPathComponent(copy)
+            let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.int64Value ?? 0
+            guard (try? FileManager.default.removeItem(at: url)) != nil else { continue }
+            removed.append(copy)
+            bytes += size
         }
+        return (removed, bytes)
     }
 
     /// The content with the given blob hash: the kept copy, else the repository's object, verified

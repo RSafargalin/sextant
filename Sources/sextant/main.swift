@@ -5,12 +5,7 @@ import Foundation
 // MARK: - Environment helpers
 
 func discoverIndexStoreLibrary() -> String? {
-    guard let swiftc = Command.output("/usr/bin/xcrun", ["--find", "swiftc"]) else { return nil }
-    let libraryPath = (swiftc as NSString)
-        .deletingLastPathComponent
-        .replacingOccurrences(of: "/bin", with: "/lib")
-        + "/libIndexStore.dylib"
-    return FileManager.default.fileExists(atPath: libraryPath) ? libraryPath : nil
+    IndexStoreUnits.discoverLibrary()
 }
 
 func optionValue(_ flag: String, in arguments: [String]) -> String? {
@@ -268,7 +263,10 @@ func dispatch(_ arguments: [String]) -> Int32 {
     case "adoption": return runAdoption(arguments: rest)
     case "hook": return runHook(arguments: rest)
     case "completion": return runCompletion(arguments: rest)
-    case "index": return runIndex(arguments: rest)
+    case "index":
+        let code = runIndex(arguments: rest)
+        evictObsoleteCaches()
+        return code
     case "--help", "-h", "help", nil: printUsage(); return 0
     case let command?:
         reportError("sextant: unknown command '\(command)'")
@@ -304,4 +302,5 @@ Telemetry.record(
     durationMs: Double(DispatchTime.now().uptimeNanoseconds - started.uptimeNanoseconds) / 1_000_000,
     timestamp: Date().timeIntervalSince1970
 )
+closeOpenIndexes()
 exit(code)

@@ -7,7 +7,10 @@ import Foundation
 public struct CallerContext: Codable, Sendable, Equatable {
     /// Environment variables whose value changes what a command answers. A variable read by a
     /// command that the daemon serves belongs here, or the daemon answers with its own value.
-    public static let environmentNames: Set<String> = ["SEXTANT_STORE_POLICY", "SEXTANT_DERIVED_DATA"]
+    /// `PATH`, `DEVELOPER_DIR` and `TOOLCHAINS` decide which `swift` builds the project, which
+    /// freshness compares against the toolchain the index was built with.
+    public static let environmentNames: Set<String> = ["SEXTANT_STORE_POLICY", "SEXTANT_DERIVED_DATA",
+                                                       "PATH", "DEVELOPER_DIR", "TOOLCHAINS"]
 
     /// The caller's values of `environmentNames`; a variable the caller did not set is absent.
     public let environment: [String: String]
@@ -34,6 +37,17 @@ public struct CallerContext: Codable, Sendable, Equatable {
                                         process: [String: String] = ProcessInfo.processInfo.environment) -> String? {
         if environmentNames.contains(name), let active = active.value { return active.environment[name] }
         return process[name]
+    }
+
+    /// The environment a command answers in: this process's own, with each of `environmentNames`
+    /// as the caller has it while a request is being answered (absent where the caller did not
+    /// set it). The environment a helper that asks the toolchain is started with.
+    public static func effectiveEnvironment(process: [String: String] = ProcessInfo.processInfo.environment)
+        -> [String: String] {
+        guard let active = active.value else { return process }
+        var environment = process.filter { !environmentNames.contains($0.key) }
+        environment.merge(active.environment) { _, caller in caller }
+        return environment
     }
 
     /// Whether standard output is a terminal: the caller's while a request is being answered,

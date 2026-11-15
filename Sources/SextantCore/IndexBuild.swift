@@ -124,13 +124,15 @@ public enum IndexBuild {
         return storePath.hasPrefix(root) || CanonicalPath.of(storePath).hasPrefix(CanonicalPath.of(root) + "/")
     }
 
-    /// Path to the umbrella's index store, if built (the freshest across triple × configuration).
-    /// Freshness is measured by unit update time, exactly as in `IndexStoreLocator`.
-    public static func umbrellaStorePath(forRoot root: String) -> String? {
-        let candidates = IndexStoreLocator.storePaths(inBuildDirectory: umbrellaBuildDirectory(forRoot: root)).compactMap { candidate in
-            IndexFreshness.timestamp(ofStore: candidate).map { (path: candidate, modified: $0) }
+    /// Every store with units in the umbrella's build tree, in either build system's layout and
+    /// any configuration. Which of them answers is `StoreSelection.resolve`'s decision.
+    public static func umbrellaCandidates(forRoot root: String) -> [StoreCandidate] {
+        let origin = umbrellaDirectory(forRoot: root).path
+        return IndexStoreLocator.storePaths(inBuildDirectory: umbrellaBuildDirectory(forRoot: root)).compactMap { path in
+            IndexFreshness.timestamp(ofStore: path).map {
+                StoreCandidate(path: path, origin: origin, unitCount: StoreCandidate.unitCount(ofStore: path), modified: $0)
+            }
         }
-        return DerivedDataLocator.freshest(from: candidates)
     }
 
     /// Writes the umbrella package to disk; throws a file-system error.
@@ -140,6 +142,7 @@ public enum IndexBuild {
         try FileManager.default.createDirectory(at: sources, withIntermediateDirectories: true)
         try manifest.write(to: umbrella.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
         try "enum SextantUmbrella {}\n".write(to: sources.appendingPathComponent("Umbrella.swift"), atomically: true, encoding: .utf8)
+        CacheEviction.recordOwner(CanonicalPath.of(root), in: umbrella)
         return umbrella
     }
 

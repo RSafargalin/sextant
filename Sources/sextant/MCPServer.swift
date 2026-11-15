@@ -51,11 +51,15 @@ func runMCP(arguments: [String]) -> Int32 {
             (method, id, params) = (name, given, arguments)
         }
 
+        // The stores this call is answered from, decided once per call: the signature below and
+        // the trust label of the answer are read from the same decision.
+        let resolution = CallResolution { resolveStores(in: arguments) }
+
         // Checked on every call that needs the index, not only while there is none. The signature
         // covers the chosen store paths and their unit times, so it moves when the project is
         // rebuilt, when the policy changes which store is read, and when a store appears.
         if indexNeedingMethods.contains(method) {
-            let signature = storeSignature(in: arguments)
+            let signature = IndexFreshness.signature(ofStores: resolution.value.resolution.chosen.map(\.path))
             if index == nil, let signature, signature != lastOpenSignature {
                 lastOpenSignature = signature
                 index = openIndex(arguments, label: "mcp", listen: true)
@@ -74,9 +78,9 @@ func runMCP(arguments: [String]) -> Int32 {
         // answer onto the current text come from the same one.
         let provenance = CallProvenance {
             guard opened != nil else { return nil }
-            let (resolution, source) = resolveStores(in: arguments)
-            guard !resolution.chosen.isEmpty else { return nil }
-            return indexProvenance(resolution, source: source, arguments: arguments)
+            let (decision, source) = resolution.value
+            guard !decision.chosen.isEmpty else { return nil }
+            return indexProvenance(decision, source: source, arguments: arguments)
         }
         let translated = index.map { set in
             LazyTranslatedIndex { TranslatedIndex(set, drift: provenance.value?.report.flatMap { IndexDrift(report: $0, projectRoot: project) }) }
@@ -87,6 +91,16 @@ func runMCP(arguments: [String]) -> Int32 {
         handleMCP(method: method, id: id, params: params, context: context)
     }
     return 0
+}
+
+/// The store decision of one call, made on first use.
+private final class CallResolution {
+    private let make: () -> (resolution: StoreResolution, source: IndexProvenance.Source)
+    private lazy var stored = make()
+
+    init(_ make: @escaping () -> (resolution: StoreResolution, source: IndexProvenance.Source)) { self.make = make }
+
+    var value: (resolution: StoreResolution, source: IndexProvenance.Source) { stored }
 }
 
 /// Computed once, on first use, within one call.

@@ -8,7 +8,7 @@ breaking something invisible.
 ## Build and verify
 
 ```bash
-swift build && swift test          # 552 tests
+swift build && swift test          # 576 tests
 make ci                            # build + test + self-lint — run this before committing
 swift test --filter "<suite name>" # one suite
 ```
@@ -106,6 +106,13 @@ wrong answer rather than a crash.
   `explanation(of:)`; they do not re-derive the decision, and no locator picks a store on its own.
   What refreshes a store is `StoreSelection.refreshAdvice` — advice to rebuild is never written
   without it.
+- **`Command`** is the only way another program is started: stdin is the null device unless input
+  is passed on purpose, a helper run while a query is answered has a timeout and a timed-out one
+  is a failure (`Command.Failure`), never an empty success. Do not create a `Process` elsewhere.
+- **`CacheNamespace`** names every persistent cache, and **`CacheEviction`** is the one routine
+  that removes anything from `~/Library/Caches/sextant` (superseded versions, entries whose store
+  or project is gone). It runs from `sextant index` and `doctor`, never from a query. A new cache
+  directory needs a rule there, or it grows forever.
 
 ## Code conventions
 

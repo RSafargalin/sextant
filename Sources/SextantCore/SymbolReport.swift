@@ -262,9 +262,15 @@ public enum SymbolReport {
             context.callers.forEach { lines.append("\(style.level2)• \(located($0))") }
         }
         if !context.callees.isEmpty {
-            lines.append("\(style.level1)calls: \(context.callees.count)")
-            for callee in context.callees.prefix(sampleLimit) {
+            // Counted from every callee the index records, not from the sample below it.
+            let total = max(context.calleeCount, context.callees.count)
+            lines.append("\(style.level1)calls: \(total)")
+            let shown = context.callees.prefix(sampleLimit)
+            for callee in shown {
                 lines.append("\(style.level2)→ \(callee.name) [\(callee.kind)]  \(path(callee.location.path)):\(callee.location.line)\(callee.location.marker)")
+            }
+            if let note = CallHierarchy.omissionNote(total: total, shown: shown.count, direction: .callees) {
+                lines.append("\(style.level2)\(note)")
             }
         }
         if !context.implementations.isEmpty {

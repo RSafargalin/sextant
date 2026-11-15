@@ -97,6 +97,38 @@ struct IndexLayerDecisionTests {
         #expect(StoreSelection.resolve([umbrella, ordinary], policy: .recency).chosen.map(\.path) == [ordinary.path])
     }
 
+    /// The umbrella's store used to be picked as the freshest across layouts and configurations
+    /// before the selection ever saw it — a second selection path. The selection now sees every
+    /// store in the tree and keeps the one written last, by a rule it names.
+    @Test("Of the stores in one tree `sextant index` builds, the selection keeps the one written last, whatever the policy")
+    func ownTreeKeepsItsLastStore() {
+        let tree = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Caches/sextant/umbrella/_work_app/.build").path
+        let older = StoreCandidate(path: tree + "/arm64-apple-macosx/debug/index/store", origin: "/u",
+                                   unitCount: 80, modified: Date().addingTimeInterval(-7200))
+        let newer = StoreCandidate(path: tree + "/out/Products/Debug/index/store", origin: "/u",
+                                   unitCount: 90, modified: Date().addingTimeInterval(-60))
+        for policy in [nil, StorePolicy.union, .recency, .coverage] {
+            let resolution = StoreSelection.resolve([older, newer], policy: policy)
+            #expect(resolution.chosen.map(\.path) == [newer.path], "\(String(describing: policy))")
+            #expect(resolution.candidates.first { $0.path == older.path }?.rejection == StoreSelection.earlierOwnBuildReason)
+        }
+        // A package's own index tree follows the same rule; an ordinary build's stores do not.
+        let own = "/work/pkg/.build/sextant-index"
+        let ownOlder = StoreCandidate(path: own + "/arm64-apple-macosx/debug/index/store", origin: "/work/pkg",
+                                      unitCount: 10, modified: Date().addingTimeInterval(-7200))
+        let ownNewer = StoreCandidate(path: own + "/out/Products/Debug/index/store", origin: "/work/pkg",
+                                      unitCount: 10, modified: Date())
+        let ordinaryNative = StoreCandidate(path: "/work/pkg/.build/arm64-apple-macosx/debug/index/store", origin: "/work/pkg",
+                                            unitCount: 10, modified: Date().addingTimeInterval(-30))
+        let ordinaryBuild = StoreCandidate(path: "/work/pkg/.build/out/Products/Debug/index/store", origin: "/work/pkg",
+                                           unitCount: 10, modified: Date().addingTimeInterval(-10))
+        let union = StoreSelection.resolve([ownOlder, ownNewer, ordinaryNative, ordinaryBuild], policy: .union)
+        #expect(Set(union.chosen.map(\.path)) == [ownNewer.path, ordinaryNative.path, ordinaryBuild.path])
+        #expect(StoreSelection.ownBuildTree(ofStorePath: ordinaryBuild.path) == nil)
+        #expect(StoreSelection.ownBuildTree(ofStorePath: ownOlder.path) == own + "/")
+    }
+
     // MARK: Keys
 
     @Test("Coverage measured for one project is not served for another with as many files",

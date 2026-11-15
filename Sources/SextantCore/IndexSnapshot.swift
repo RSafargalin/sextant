@@ -160,7 +160,8 @@ public struct IndexSnapshot: Codable, Sendable, Equatable {
         guard !recorded.isSameBinary(as: current) else { return nil }
         // Another binary is not necessarily another compiler (an Xcode update may reinstall the same
         // one); only its version says so.
-        let currentVersion = current.version ?? ToolchainIdentity.version(of: current.executable)
+        let currentVersion = current.version
+            ?? ToolchainIdentity.version(of: current.executable, environment: CallerContext.effectiveEnvironment())
         guard let currentVersion, currentVersion != recorded.version else { return nil }
         return ToolchainChange(recorded: recorded.version ?? recorded.executable, current: currentVersion)
     }
@@ -277,8 +278,9 @@ public struct ToolchainIdentity: Codable, Sendable, Equatable {
         self.modified = modified
     }
 
-    /// The toolchain in use now, without its version.
-    public static func current(environment: [String: String] = ProcessInfo.processInfo.environment)
+    /// The toolchain in use now, without its version — as the caller of the command finds it, which
+    /// under `sextant serve` is the client's environment rather than the daemon's.
+    public static func current(environment: [String: String] = CallerContext.effectiveEnvironment())
         -> ToolchainIdentity? {
         guard let found = executable(environment: environment) else { return nil }
         let attributes = try? FileManager.default.attributesOfItem(atPath: found)
@@ -299,11 +301,12 @@ public struct ToolchainIdentity: Codable, Sendable, Equatable {
     }
 
     /// The first line `swift --version` prints, run through the resolved executable's directory.
-    static func version(of executable: String) -> String? {
+    static func version(of executable: String,
+                        environment: [String: String] = ProcessInfo.processInfo.environment) -> String? {
         let swift = URL(fileURLWithPath: executable).deletingLastPathComponent().appendingPathComponent("swift").path
         let launch = FileManager.default.isExecutableFile(atPath: swift) ? swift : "/usr/bin/env"
         let arguments = launch == "/usr/bin/env" ? ["swift", "--version"] : ["--version"]
-        return Command.output(launch, arguments, timeout: 30)?
+        return Command.output(launch, arguments, timeout: Command.toolchainTimeout, environment: environment)?
             .split(separator: "\n").first.map(String.init)
     }
 
@@ -315,7 +318,8 @@ public struct ToolchainIdentity: Codable, Sendable, Equatable {
             .first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else { return nil }
         var resolved = URL(fileURLWithPath: named).resolvingSymlinksInPath().path
         if resolved == "/usr/bin/swift",
-           let found = Command.output("/usr/bin/xcrun", ["--find", "swift"], timeout: 30), !found.isEmpty {
+           let found = Command.output("/usr/bin/xcrun", ["--find", "swift"], timeout: Command.toolchainTimeout,
+                                      environment: environment), !found.isEmpty {
             resolved = URL(fileURLWithPath: found).resolvingSymlinksInPath().path
         }
         return resolved
