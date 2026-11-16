@@ -62,6 +62,24 @@ Human-readable text output is not covered — parse `--json`, not prose.
 
 ### Changed
 
+- **`--max-files` bounds every file read, Swift and Objective-C/C/C++ together.** It counted only
+  Swift files while clang read every C-family one: in the fixture `map --max-files 1` said
+  "covered 1 of 3 file(s)" and listed five C-family files, and `search '$X * 2' --max-files 1`
+  matched in `.c` and `.cpp`. The bound is now one sorted list of both, cut to its first N, for
+  `map`, `api`, `search`, `lint` and their MCP tools (`maxFiles` in `.sextant.json`), and the
+  "covered N of M" line counts the same files. `changed` is not bounded by it: it reads the files
+  the diff names. Documented in `--help` and the README.
+- **The MCP `api` tool declares its `budget` argument** (an additive schema change: the argument
+  already worked). It was read without being declared, so validation never saw it — `"5"`, `2.5`,
+  `1e30` and `9223372036854775808` were answered with the default surface and no word; they are now
+  `-32602`, as for `repo_map`. A test reads the dispatcher and fails when a handler reads an
+  argument its schema does not declare, or declares one it never reads.
+- **CLI `lint` refuses a `.sextant.json` it cannot parse** (exit `2`) instead of checking the
+  built-in rules in place of the ones the config may name; the MCP `lint` tool already refused it.
+  `--rules` still runs.
+- **`SEXTANT_CACHE_MAX` of `0` or a negative number is named, and the default is used** — it used to
+  turn pruning off without a word, while `abc` was named. One reading decides both.
+
 - **Input that is not understood is refused (exit `2`).** A positional argument a command does
   not take (`refs a b`, `map extra`), an unknown flag after `version`, and flags that contradict
   each other (`hierarchy --callers --callees`, `refs --compact --full`, `map --semantic --pagerank`)
@@ -258,6 +276,44 @@ Human-readable text output is not covered — parse `--json`, not prose.
   input schemas and the `-32601` for an unknown method are unchanged.
 
 ### Fixed
+
+- **`store show extra` is refused** like every other extra word: each subcommand declares how many
+  arguments it takes (`show` none, `use` one) in `CommandCatalog`.
+- **An umbrella index with a test target no longer advises dropping `--no-tests`**, a flag that was
+  never passed and that an umbrella cannot act on: it says that a multi-package index builds the
+  packages' library products, never their test targets, and that indexing the package on its own
+  answers its tests. A single package whose tests were built is no longer told to drop the flag
+  either.
+- **`sextant store` under an explicit policy gives the reason for every store it does not read**
+  (`not read: …`), in the words of the explanation every answer prints (`StoreSelection.reasonNotRead`).
+  A `recency` tie is named as one rather than as "not the most recent".
+- **`changed` reads a renamed C-family source with the flags of the path it was renamed from**, so a
+  pure `git mv` of a `.cpp` is no change instead of "no compile flags — build the index", which could
+  not help.
+- **`changed` labels declarations of a public header `public`** — a header under `include/`, the
+  same rule `api` uses (`IndexDeclarations.isPublicHeader`); they were `internal`, in text and
+  `--json`. A C++ member declared private or protected there is labelled `private`.
+- **A budget from `.sextant.json` is named as the config's**: `map` with a configured budget past the
+  maximum said `--budget 9223372036854775807 is above the maximum…`; it now says
+  `.sextant.json budget …`, and so do the MCP raised-minimum and lowered-maximum notes.
+- **`--help` lists `version` once**, from the catalog; the hand-written "Other: version" line is gone.
+- **`body --context-lines` sizes the line-number gutter from the lines shown**, not from the request:
+  a huge value printed a 19-character gutter for an 81-line file.
+- **A store that cannot be opened is not reported as missing**: with a read-only cache directory,
+  `map` followed "could not open the index" with "no index store. Build one"; it now says the store
+  could not be opened, or, with several stores and no policy, that a policy is needed.
+- **`doctor` counts against the root only the C-family sources the root's build compiles.** A nested
+  package's sources (this repository's `Tests/Fixtures/IndexFixture`, say) are named as that
+  package's to index (`sextant index --project <it>`) rather than as "added since the last build?".
+- **The trust label says why a snapshot was not used** when one exists and is not trusted:
+  `compared by build time; snapshot not used: …`, in the words `sextant store` uses.
+- **`index --app --derived-data <dir>` says that queries need the same location** (`--derived-data`
+  or `SEXTANT_DERIVED_DATA`) when it is not Xcode's default; a plain query looked in the default one
+  and found no store.
+- **Copies of an index database IndexStoreDB has discarded are removed when it is opened** — by its
+  own rule (`…-dead`, or `p<pid>-…` of a process that has exited). It removes them on a background
+  queue a short command never lets finish, so concurrent cold queries left ~28 MB copies behind until
+  the next `index` or `doctor`.
 
 - **No Swift rule matches every node of a C++ file.** After clang's twenty-error limit the probes of
   later patterns raised no error, and the recovered `$X` alone matched everything — `lint` reported

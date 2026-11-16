@@ -29,12 +29,15 @@ public enum CFamilyLint {
     /// How a rule's pattern is told apart from the same text in another rule.
     public static func patternKey(ruleID: String, pattern: String) -> String { "\(ruleID)\u{1}\(pattern)" }
 
-    public static func run(rules: [Rule], lintRoot: String, projectRoot: String, includeTests: Bool) -> Outcome {
+    /// `fileLimit` is the `--max-files` bound, shared with the Swift files of the same run.
+    public static func run(rules: [Rule], lintRoot: String, projectRoot: String, includeTests: Bool,
+                           fileLimit: Int? = nil) -> Outcome {
         let root = URL(fileURLWithPath: lintRoot, isDirectory: true)
-        let sources = CompilationDatabase.compilableSources(projectRoot: lintRoot, includeTests: includeTests)
+        let sources = CompilationDatabase.compilableSources(projectRoot: lintRoot, includeTests: includeTests,
+                                                            fileLimit: fileLimit)
         // What a header contains is never matched — only a translation unit's own declarations
         // are — so a header is named whatever happens to the sources.
-        let headers = CFamilySearch.unscannedHeaders(root: lintRoot, includeTests: includeTests)
+        let headers = CFamilySearch.unscannedHeaders(root: lintRoot, includeTests: includeTests, fileLimit: fileLimit)
         guard !sources.isEmpty else { return Outcome(violations: [], unscanned: headers, inactive: [], targets: []) }
 
         // Rule and pattern side by side, so a match knows which rule to report.

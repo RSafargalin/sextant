@@ -71,7 +71,7 @@ public struct IndexProvenance: Sendable {
 
     /// The freshness verdict with its basis and, when stale, what to do about it.
     public var freshnessLabel: String {
-        let basis = report.map { " (\($0.basisDescription))" } ?? ""
+        let basis = report.map { " (\($0.basisWithReason))" } ?? ""
         switch freshness {
         case .fresh:
             return "fresh\(basis)"

@@ -338,7 +338,8 @@ struct MCPAnswerBoundsTests {
         let contents = try #require(results[2]?["contents"] as? [[String: Any]])
         let resource = try #require(contents.first?["text"] as? String)
 
-        #expect(tool.contains("covered 1 of 2 file(s)"))
+        // The bound counts the Objective-C file as well as the two Swift ones.
+        #expect(tool.contains("covered 1 of 3 file(s)"))
         #expect(tool.contains("non-Swift file(s) are missing"))
         #expect(resource == tool)
     }

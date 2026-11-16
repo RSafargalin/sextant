@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import SextantCore
 
 /// The file limit and the surface budget. Both exist because four commands are minutes of work on
 /// a large project — measured on a 12 351-file one: `search` 335s, `api` 139s and 3.75 MB, `lint`
@@ -111,6 +112,40 @@ struct ScaleDegradationTests {
             let run = try sextant(arguments + ["--json", "--project", package.path, "--max-files", "3"])
             #expect(run.stderr.contains("covered 3 of 13"), "\(arguments): \(run.stderr)")
             #expect((try? JSONSerialization.jsonObject(with: Data(run.stdout.utf8))) != nil, "\(arguments): \(run.stdout)")
+        }
+    }
+
+    /// The bound counted only Swift files while clang read every C-family one: `--max-files 1`
+    /// said "covered 1 of 3" and then matched in `.c` and `.cpp` files. It is one bound over every
+    /// file read, in one sorted list, and the note counts the same files.
+    @Test("--max-files bounds Swift and C-family files together, and the note counts both")
+    func boundCountsEveryLanguage() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("sextant-scale-mixed-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let files = ["Package.swift": "// swift-tools-version: 5.9\nimport PackageDescription\nlet package = Package(name: \"m\")\n",
+                     "Sources/a/a.c": "int a(int x) { return x * 2; }\n",
+                     "Sources/a/include/a.h": "int a(int x);\n",
+                     "Sources/b/b.swift": "func b(x: Int) -> Int { x * 2 }\n"]
+        for (path, text) in files {
+            let url = root.appendingPathComponent(path)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try text.write(to: url, atomically: true, encoding: .utf8)
+        }
+        let walked = SwiftSources.files(under: root, includeTests: false, extensions: SwiftSources.boundedExtensions, limit: 2)
+        #expect(walked.map(\.lastPathComponent) == ["Package.swift", "a.c"])
+        #expect(SwiftSources.files(under: root, includeTests: false, limit: 2).map(\.lastPathComponent) == ["Package.swift"])
+        #expect(SwiftSources.boundedCount(under: root, includeTests: false) == 4)
+
+        // The walk is Package.swift, a.c, a.h, b.swift: two of them are read, the header and the
+        // Swift source are not — and neither is named as read or unread past the bound.
+        let search = try sextant(["search", "$X * 2", "--project", root.path, "--max-files", "2"])
+        #expect(search.all.contains("covered 2 of 4"), "\(search.all)")
+        #expect(!search.all.contains("a.h"), "\(search.all)")
+        #expect(!search.stdout.contains("b.swift"), "\(search.all)")
+        #expect(search.all.contains("a.c"), "\(search.all)")
+        for command in [["map"], ["lint"], ["api"]] {
+            let run = try sextant(command + ["--project", root.path, "--max-files", "2"])
+            #expect(run.all.contains("covered 2 of 4"), "\(command): \(run.all)")
         }
     }
 

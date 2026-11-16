@@ -148,6 +148,48 @@ struct CFamilyDiffTests {
         #expect(!borrowed.notDiffed.contains { $0.reason.contains("sextant index") }, "\(borrowed.notDiffed)")
     }
 
+    /// A renamed source has no entry under its new path until the next build, and the old answer
+    /// was "no compile flags — build the index" for a move that changes no symbol.
+    @Test("A renamed source is read with the flags of the path it was renamed from",
+          .enabled(if: isReady, "the fixture has not been built and indexed, or there is no toolchain"))
+    func renamedSourceBorrowsItsOldFlags() throws {
+        let (root, commands) = try repositoryCopy()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let sources = root.appendingPathComponent("Sources/CxxFixture")
+        try FileManager.default.moveItem(at: sources.appendingPathComponent("CxxFixture.cpp"),
+                                         to: sources.appendingPathComponent("Cxx2.cpp"))
+        let outcome = CFamilyDiff.changes(files: ["Sources/CxxFixture/Cxx2.cpp"], topLevel: root.path,
+                                          projectRoot: root.path, from: "HEAD", to: nil,
+                                          renamedFrom: ["Sources/CxxFixture/Cxx2.cpp": "Sources/CxxFixture/CxxFixture.cpp"],
+                                          commands: commands)
+        #expect(outcome.notDiffed.isEmpty, "\(outcome.notDiffed)")
+        #expect(outcome.files.isEmpty, "a pure move changes no symbol: \(outcome.files.map(\.file))")
+    }
+
+    /// `api` lists a header under `include/` as public surface; `changed` labelled the same
+    /// declarations `internal`.
+    @Test("Declarations of a public header are labelled public, those of a source file are not",
+          .enabled(if: isReady, "the fixture has not been built and indexed, or there is no toolchain"))
+    func publicHeaderDeclarationsArePublic() throws {
+        let (root, commands) = try repositoryCopy()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let header = root.appendingPathComponent("Sources/CFixture/include/CFixture.h")
+        try (try String(contentsOf: header, encoding: .utf8)).replacingOccurrences(
+            of: "int c_fixture_double(int input);", with: "int c_fixture_double(int input);\nint c_fixture_triple(int input);")
+            .write(to: header, atomically: true, encoding: .utf8)
+        let source = root.appendingPathComponent("Sources/CFixture/CFixture.c")
+        try (try String(contentsOf: source, encoding: .utf8) + "\nint c_fixture_quadruple(int input) { return input * 4; }\n")
+            .write(to: source, atomically: true, encoding: .utf8)
+        let outcome = CFamilyDiff.changes(files: ["Sources/CFixture/CFixture.c", "Sources/CFixture/include/CFixture.h"],
+                                          topLevel: root.path, projectRoot: root.path, from: "HEAD", to: nil,
+                                          commands: commands)
+        let added = outcome.files.flatMap(\.result.added)
+        let triple = try #require(added.first { $0.header.contains("c_fixture_triple") }, "\(added.map(\.header))")
+        #expect(triple.diffHeader.hasPrefix("public "), "\(triple.diffHeader)")
+        let quadruple = try #require(added.first { $0.header.contains("c_fixture_quadruple") }, "\(added.map(\.header))")
+        #expect(quadruple.diffHeader.hasPrefix("internal "), "\(quadruple.diffHeader)")
+    }
+
     @Test("A file with no compile flags is named, not silently skipped")
     func namesFilesWithoutFlags() {
         let outcome = CFamilyDiff.changes(files: ["Sources/Nothing/Unknown.m"],

@@ -37,7 +37,7 @@ public enum RepoMap {
                 let relative = SwiftSources.relativePath(of: url, root: root)
                 return FileSummary(relativePath: relative, package: SwiftSources.package(for: relative, root: root), declarations: declarations)
             }
-        return swift + IndexDeclarations.summaries(root: root, index: index, includeTests: includeTests)
+        return swift + IndexDeclarations.summaries(root: root, index: index, includeTests: includeTests, fileLimit: fileLimit)
     }
 
     /// Generates the textual map for a project root.

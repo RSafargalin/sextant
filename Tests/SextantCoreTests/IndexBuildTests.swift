@@ -47,17 +47,28 @@ struct IndexBuildTests {
     /// and 504 references where the scheme's default gives 43 files and 25.
     @Test("A build that indexed no tests says so, and the remedy differs per build system")
     func missingTestsAreNamedWithTheRemedy() throws {
-        let xcode = try #require(IndexBuild.missingTestsNote(uncoveredTests: 44, isXcode: true))
+        let xcode = try #require(IndexBuild.missingTestsNote(uncoveredTests: 44, build: .xcode))
         #expect(xcode.contains("44 test file(s)"))
         #expect(xcode.contains("Build action"))
         #expect(xcode.contains("build-for-testing writes no index store") || xcode.contains("writes no index store"))
 
-        let package = try #require(IndexBuild.missingTestsNote(uncoveredTests: 3, isXcode: false))
+        let package = try #require(IndexBuild.missingTestsNote(uncoveredTests: 3, build: .package(testsBuilt: false)))
         #expect(package.contains("--no-tests"))
         #expect(!package.contains("scheme"))
 
+        // A flag that was never passed is no remedy: the tests were built, and the files are ones
+        // no test target compiles.
+        let built = try #require(IndexBuild.missingTestsNote(uncoveredTests: 3, build: .package(testsBuilt: true)))
+        #expect(!built.contains("--no-tests"))
+
+        // An umbrella cannot build a package's test targets at all; the remedy is the package alone.
+        let umbrella = try #require(IndexBuild.missingTestsNote(uncoveredTests: 1, build: .umbrella))
+        #expect(!umbrella.contains("--no-tests"))
+        #expect(umbrella.contains("multi-package index"))
+        #expect(umbrella.contains("index that package on its own"))
+
         // Nothing missing, nothing said.
-        #expect(IndexBuild.missingTestsNote(uncoveredTests: 0, isXcode: true) == nil)
+        #expect(IndexBuild.missingTestsNote(uncoveredTests: 0, build: .xcode) == nil)
     }
 
     @Test("Test files the store was not built from are named in the coverage line")

@@ -61,7 +61,7 @@ private func showStores(arguments: [String]) -> Int32 {
         }
         if let writer = StoreSelection.writer(ofPath: candidate.path) { print("     \(writer)") }
         if let origin = candidate.origin { print("     built from: \(shorten(origin))") }
-        if let rejection = candidate.rejection { print("     not read: \(rejection)") }
+        if let reason = StoreSelection.reasonNotRead(candidate, in: resolution) { print("     not read: \(reason)") }
     }
 
     let usable = candidates.filter(\.isUsable)
@@ -109,7 +109,7 @@ private func freshnessLine(_ report: IndexFreshness.Report) -> String {
     }
     line += " (\(report.basisDescription))"
     if report.testsSkipped { line += "; built without tests (`--no-tests`)" }
-    if let problem = report.snapshotProblem { line += "; snapshot not used: \(problem)" }
+    if let note = report.snapshotNote { line += "; \(note)" }
     return line
 }
 

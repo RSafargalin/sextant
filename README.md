@@ -156,7 +156,10 @@ is named:
   The rest were not looked at — narrow with --scope <subdirectory>, or raise --max-files.
 ```
 
-The bound is a prefix of the file list in a fixed order, so two runs cover the same files. It used
+The bound is a prefix of the file list in a fixed order, so two runs cover the same files. It counts
+every file the command reads — Swift and Objective-C, C and C++ together, in one list — so clang's
+work is bounded too, and the "covered N of M" line counts the same files. `changed` is not bounded
+by it: it reads only the files the diff names. It used
 to be a refusal instead, which answered a question about the first four thousand files with
 nothing at all.
 

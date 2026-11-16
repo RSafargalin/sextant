@@ -26,7 +26,6 @@ func printUsage() {
     \(CommandCatalog.overview())
 
     Other:
-      version                 tool version
       help                    this help
 
     Detail on a command and its flags: sextant <command> --help

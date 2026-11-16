@@ -118,4 +118,20 @@ struct MCPInvalidInputTests {
         #expect(code(responses[8]) == -32602, "a read without a uri is malformed: \(responses[8])")
         #expect(huge.contains("budget \(Int.max) is above the maximum of \(TokenBudget.maximum)"), "\(responses[7])")
     }
+
+    /// `api` read `budget` without declaring it, so validation never saw it and every bad value
+    /// was answered with the default surface and no word about it.
+    @Test("A bad api budget is Invalid params, as it is for repo_map",
+          .enabled(if: binary != nil, "sextant is not built — run `swift build` first"), .timeLimit(.minutes(2)))
+    func apiBudgetIsValidated() throws {
+        let values = [#""5""#, "2.5", "1e30", "9223372036854775808"]
+        let responses = try session(values.enumerated().map { offset, value in
+            #"{"jsonrpc":"2.0","id":\#(offset + 1),"method":"tools/call","params":{"name":"api","arguments":{"budget":\#(value)}}}"#
+        })
+        #expect(responses.count == values.count, "\(responses)")
+        for (value, response) in zip(values, responses) {
+            #expect(code(response) == -32602, "budget \(value): \(response)")
+            #expect(message(response).contains("'budget'"), "budget \(value): \(response)")
+        }
+    }
 }

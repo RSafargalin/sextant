@@ -62,7 +62,8 @@ public enum MCPTools {
                 "properties": [
                     "package": ["type": "string", "description": "Package name (for example MyLibrary) — its entire public surface."],
                     "type": ["type": "string", "description": "Type name — only that type, an exact filter rather than grepping the output."],
-                    "scope": ["type": "string", "description": "Subdirectory of the project, to narrow the area."]
+                    "scope": ["type": "string", "description": "Subdirectory of the project, to narrow the area."],
+                    "budget": ["type": "integer", "description": "Token budget for the surface (default: budget from .sextant.json, else 8000; from 500 to \(TokenBudget.maximum) — a value outside is moved to the nearer bound and the answer says so)."]
                 ]
             ]]),
             ([.readsArea], ["name": "changed", "description": "Symbol-level git diff: which declarations were added, removed, or changed signature between revisions. Not a line diff. Use for 'what changed' and 'what did I break'. Covers Swift, Objective-C, C and C++ (the last three need the flags from `sextant index`, which RUNS the project's build (its manifest, plugins and macros are code) — so it is the user's call, not an automatic step); a file that could not be compared is listed with the reason, so an empty result never means it is unchanged.", "inputSchema": [

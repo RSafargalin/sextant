@@ -67,6 +67,10 @@ public struct ProjectConfig: Codable, Sendable {
         }
     }
 
+    /// How a value read from this file is named in a note about it — `.sextant.json budget` —
+    /// so that a note never names a flag or an argument that was not given.
+    public static func valueName(ofKey key: String) -> String { ".sextant.json \(key)" }
+
     static let knownKeys: Set<String> = ["budget", "maxFiles", "scope", "rules", "exclude", StorePolicy.configKey]
 
     /// Top-level keys the config does not declare.

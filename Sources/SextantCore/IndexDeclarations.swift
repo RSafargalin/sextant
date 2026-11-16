@@ -18,11 +18,22 @@ public enum IndexDeclarations {
     /// implements it; listing both doubles the map for no new information.
     static let headerExtensions: Set<String> = ["h", "hpp", "hh"]
 
+    /// Whether a file is a public header: a header under an `include/` directory. In SwiftPM a
+    /// target's public headers live in `include/`, and that directory *is* the module map's answer
+    /// to "what does this target expose". `api` lists these as the surface and `changed` labels
+    /// their declarations public, by this one rule.
+    public static func isPublicHeader(_ url: URL) -> Bool {
+        headerExtensions.contains(url.pathExtension.lowercased()) && url.pathComponents.contains("include")
+    }
+
     /// Per-file summaries for non-Swift sources under the root. Empty without an index — the
     /// syntactic commands must keep working on a machine with no toolchain at all.
-    public static func summaries(root: URL, index: FileSymbolIndex?, includeTests: Bool) -> [FileSummary] {
+    /// `fileLimit` is the `--max-files` bound, shared with the Swift files of the same map.
+    public static func summaries(root: URL, index: FileSymbolIndex?, includeTests: Bool,
+                                 fileLimit: Int? = nil) -> [FileSummary] {
         guard let index else { return [] }
-        let summaries = SwiftSources.files(under: root, includeTests: includeTests, extensions: clangExtensions)
+        let summaries = SwiftSources.files(under: root, includeTests: includeTests, extensions: clangExtensions,
+                                           limit: fileLimit)
             .compactMap { url -> FileSummary? in
                 let declarations = index.declarations(inFile: url.path)
                 guard !declarations.isEmpty else { return nil }
@@ -116,13 +127,14 @@ extension IndexDeclarations {
     public static func publicHeaderSummaries(
         root: URL,
         index: FileSymbolIndex?,
-        package: String?
+        package: String?,
+        fileLimit: Int? = nil
     ) -> (summaries: [FileSummary], cxxHeaders: [URL]) {
         guard let index else { return ([], []) }
         var summaries: [FileSummary] = []
         var cxxHeaders: [URL] = []
-        for url in SwiftSources.files(under: root, includeTests: false, extensions: Array(headerExtensions)) {
-            guard url.pathComponents.contains("include") else { continue }
+        for url in SwiftSources.files(under: root, includeTests: false, extensions: Array(headerExtensions), limit: fileLimit) {
+            guard isPublicHeader(url) else { continue }
             let relative = SwiftSources.relativePath(of: url, root: root)
             let packageName = SwiftSources.package(for: relative, root: root)
             if let package, packageName != package { continue }
@@ -148,25 +160,26 @@ extension IndexDeclarations {
     /// whatever sits in a branch that configuration does not contain is absent from the surface.
     /// One line, not a list: on an Objective-C project nearly every header has a `#if`, and a
     /// warning per header would be noise rather than information.
-    public static func conditionalHeaderNote(root: URL, package: String?) -> [String] {
-        let count = conditionalFileCount(root: root, package: package, extensions: Array(headerExtensions), publicOnly: true)
+    public static func conditionalHeaderNote(root: URL, package: String?, fileLimit: Int? = nil) -> [String] {
+        let count = conditionalFileCount(root: root, package: package, extensions: Array(headerExtensions), publicOnly: true,
+                                         fileLimit: fileLimit)
         guard count > 0 else { return [] }
         return ["ℹ \(count) public header(s) use #if — only the declarations of the configuration that was built are listed."]
     }
 
     /// The same caveat for the map, which reads every non-Swift file rather than public headers.
-    public static func conditionalSourceNote(root: URL, includeTests: Bool) -> [String] {
+    public static func conditionalSourceNote(root: URL, includeTests: Bool, fileLimit: Int? = nil) -> [String] {
         let count = conditionalFileCount(root: root, package: nil, extensions: clangExtensions, publicOnly: false,
-                                         includeTests: includeTests)
+                                         includeTests: includeTests, fileLimit: fileLimit)
         guard count > 0 else { return [] }
         return ["ℹ \(count) Objective-C/C/C++ file(s) use #if — declarations in branches this build does not contain are not on the map."]
     }
 
     private static func conditionalFileCount(root: URL, package: String?, extensions: [String],
-                                             publicOnly: Bool, includeTests: Bool = false) -> Int {
+                                             publicOnly: Bool, includeTests: Bool = false, fileLimit: Int? = nil) -> Int {
         var count = 0
-        for url in SwiftSources.files(under: root, includeTests: includeTests, extensions: extensions) {
-            if publicOnly, !url.pathComponents.contains("include") { continue }
+        for url in SwiftSources.files(under: root, includeTests: includeTests, extensions: extensions, limit: fileLimit) {
+            if publicOnly, !isPublicHeader(url) { continue }
             let relative = SwiftSources.relativePath(of: url, root: root)
             if let package, SwiftSources.package(for: relative, root: root) != package { continue }
             if let source = try? String(contentsOf: url, encoding: .utf8), ConditionalRegions.areUsed(inSource: source) {

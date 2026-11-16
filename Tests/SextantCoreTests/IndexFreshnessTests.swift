@@ -66,6 +66,20 @@ struct IndexFreshnessTests {
         #expect(!summary.contains("· fresh]"))
     }
 
+    /// A snapshot that exists but is not trusted sent the label to the build-time basis without
+    /// saying why; `sextant store` said why. The label now says it in the same words.
+    @Test("The trust label names why a snapshot was not used")
+    func labelNamesTheUntrustedSnapshot() {
+        let reason = "the store's units changed after the snapshot was taken"
+        let report = IndexFreshness.Report(state: .fresh, basis: .buildTime, snapshotProblem: reason)
+        let summary = IndexProvenance(source: .spm, storeCount: 1, report: report).summary
+        #expect(summary.contains("compared by build time; snapshot not used: \(reason)"), "\(summary)")
+        #expect(report.snapshotNote == "snapshot not used: \(reason)")
+        // Without a snapshot there is nothing to explain, and the label is what it was.
+        let plain = IndexProvenance(source: .spm, storeCount: 1, report: IndexFreshness.Report(state: .fresh, basis: .buildTime)).summary
+        #expect(plain.contains("fresh (compared by build time)]"), "\(plain)")
+    }
+
     @Test("With several store versions the freshest is used")
     func picksNewestVersionDirectory() throws {
         let store = try makeStore(unitsModified: Date().addingTimeInterval(-7200))

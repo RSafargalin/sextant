@@ -33,19 +33,41 @@ public enum IndexBuild {
         umbrellaDirectory(forRoot: root).appendingPathComponent("swift-build.log")
     }
 
+    /// Which build produced a store, as far as its tests are concerned.
+    public enum TestsBuild: Sendable, Equatable {
+        /// One package, built by `sextant index`; `testsBuilt` is false under `--no-tests`.
+        case package(testsBuilt: Bool)
+        /// Several packages in one umbrella manifest, which depends on their library products
+        /// only — so no package's test target is ever built into it.
+        case umbrella
+        /// An app target, built by `xcodebuild`.
+        case xcode
+    }
+
     /// What to say when the store a build just produced holds none of the project's tests.
     ///
-    /// On the SwiftPM path this is a flag the user passed. On the Xcode path it is a property of
+    /// On the SwiftPM path of one package this is a flag the user passed, or files no test target
+    /// compiles. A multi-package index cannot hold tests at all: the umbrella reaches the packages
+    /// through their products, so the remedy is to index the package on its own. On the Xcode path it is a property of
     /// the scheme, and the obvious remedy does not work: `xcodebuild build-for-testing` builds the
     /// test targets and writes **no index store at all** — measured on Xcode 26 against
     /// Alamofire's own project, twice, where a plain `build` of the same scheme wrote one. What
     /// does work is the scheme's Build action: with the test target in it, a plain build indexes
     /// 87 of 98 files and answers 504 references where the scheme's default 43 files answer 25.
-    public static func missingTestsNote(uncoveredTests: Int, isXcode: Bool) -> String? {
+    public static func missingTestsNote(uncoveredTests: Int, build: TestsBuild) -> String? {
         guard uncoveredTests > 0 else { return nil }
-        let remedy = isXcode
-            ? "Xcode indexes what the scheme's BUILD action builds — `build-for-testing` writes no index store at all. Add the test targets to the scheme's Build action, or pass `--scheme <one that builds them>`."
-            : "Build them in: drop `--no-tests`."
+        let remedy = switch build {
+        case .xcode:
+            "Xcode indexes what the scheme's BUILD action builds — `build-for-testing` writes no index store at all. Add the test targets to the scheme's Build action, or pass `--scheme <one that builds them>`."
+        case .package(testsBuilt: false):
+            "Build them in: drop `--no-tests`."
+        case .package(testsBuilt: true):
+            "The test targets were built, so these are files no test target of the manifest compiles."
+        case .umbrella:
+            "A multi-package index builds each package's library products, never its test targets. "
+                + "To have a package's tests answered, index that package on its own: `sextant index --project <package>`, "
+                + "and query from there."
+        }
         return "⚠ \(uncoveredTests) test file(s) are outside this index — a reference written in a test "
             + "is missing from every answer.\n   " + remedy
     }

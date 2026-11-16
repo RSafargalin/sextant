@@ -33,6 +33,27 @@ struct IndexDatabaseTests {
 
     // MARK: Naming
 
+    /// IndexStoreDB removes its discarded copies on a background queue that a short command never
+    /// lets run, so concurrent cold queries each left a full copy behind until the next `index`.
+    @Test("Copies IndexStoreDB discarded are removed when a database is opened, nothing else")
+    func discardedCopiesAreRemoved() throws {
+        let database = FileManager.default.temporaryDirectory.appendingPathComponent("sextant-db-\(UUID().uuidString.prefix(8))")
+        defer { try? FileManager.default.removeItem(at: database) }
+        let finished = Process()
+        finished.executableURL = URL(fileURLWithPath: "/usr/bin/true")
+        try finished.run()
+        finished.waitUntilExit()
+        let gone = finished.processIdentifier
+        let own = getpid()
+        let names = ["saved", "p1-saved-dead", "p\(gone)-saved", "p\(own)-saved", "p\(own)", "p\(gone)", "notes"]
+        for name in names {
+            try FileManager.default.createDirectory(at: database.appendingPathComponent("v13/\(name)"), withIntermediateDirectories: true)
+        }
+        IndexStoreSet.removeDiscardedCopies(in: database)
+        let left = Set(try FileManager.default.contentsOfDirectory(atPath: database.appendingPathComponent("v13").path))
+        #expect(left == ["saved", "p\(own)-saved", "p\(own)", "p\(gone)", "notes"], "\(left.sorted())")
+    }
+
     @Test("A database is named by a bounded hash of the canonical store path")
     func namingIsBoundedAndCanonical() {
         let deep = "/" + Array(repeating: String(repeating: "d", count: 60), count: 8).joined(separator: "/") + "/index/store"

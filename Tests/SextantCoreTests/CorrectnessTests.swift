@@ -348,6 +348,12 @@ struct ProjectConfigTests {
     func cacheLimitProblemIsNamed() {
         #expect(PersistentCacheLimit.problem(environment: ["SEXTANT_CACHE_MAX": "abc"])?.contains("'abc'") == true)
         #expect(PersistentCacheLimit.problem(environment: ["SEXTANT_CACHE_MAX": "500"]) == nil)
+        // Zero and a negative number turned pruning off without a word; they are named, and the
+        // default is used.
+        for raw in ["0", "-5"] {
+            #expect(PersistentCacheLimit.problem(environment: ["SEXTANT_CACHE_MAX": raw])?.contains("'\(raw)'") == true)
+            #expect(PersistentCacheLimit.read(environment: ["SEXTANT_CACHE_MAX": raw]).files == PersistentCacheLimit.defaultFiles)
+        }
         #expect(PersistentCacheLimit.problem(environment: [:]) == nil)
     }
 

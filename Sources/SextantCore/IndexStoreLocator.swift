@@ -90,6 +90,23 @@ public enum IndexStoreLocator {
         storePath.contains("/.build/\(indexBuildDirectoryName)/") || IndexBuild.isUmbrellaStore(storePath)
     }
 
+    /// The package a source belongs to when `sextant index` at `root` does not build it: the
+    /// nearest directory above the source that holds a `Package.swift`, when that directory is not
+    /// one of `swiftPackages(under: root)`. nil for a source one of those packages holds, and for
+    /// every source of a root with no SwiftPM package (an app target builds whatever it builds).
+    public static func unbuiltPackage(containing source: String, root: URL) -> URL? {
+        let built = Set(swiftPackages(under: root).map { $0.standardizedFileURL.path })
+        guard !built.isEmpty else { return nil }
+        let rootPath = root.standardizedFileURL.path
+        var directory = URL(fileURLWithPath: source).deletingLastPathComponent().standardizedFileURL
+        while directory.path.hasPrefix(rootPath + "/") || directory.path == rootPath {
+            if hasManifest(directory) { return built.contains(directory.path) ? nil : directory }
+            guard directory.path != rootPath else { break }
+            directory = directory.deletingLastPathComponent()
+        }
+        return nil
+    }
+
     private static func hasManifest(_ directory: URL) -> Bool {
         FileManager.default.fileExists(atPath: directory.appendingPathComponent("Package.swift").path)
     }

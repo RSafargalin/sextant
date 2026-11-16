@@ -14,8 +14,15 @@ private func clangIndex(root: String, arguments: [String], includeTests: Bool) -
     guard !foreign.isEmpty else { return nil }
     guard let index = openIndex(arguments, label: "map", quiet: true) else {
         // Never omit them in silence: a map that looks complete while skipping every
-        // Objective-C and C file is exactly the quiet wrongness this tool exists to avoid.
-        reportError("⚠ \(foreign.count) non-Swift file(s) are missing from the map: no index store. Build one with `sextant index`.")
+        // Objective-C and C file is exactly the quiet wrongness this tool exists to avoid. The
+        // reason is the one that holds: a store that exists but could not be opened is not "no store".
+        let resolution = resolveStores(in: arguments).resolution
+        let reason = !resolution.chosen.isEmpty
+            ? "the index store could not be opened (the reason is above)."
+            : resolution.needsPolicy
+            ? "several index stores are usable and no store policy is set — `sextant store` compares them."
+            : "no index store. Build one with `sextant index`."
+        reportError("⚠ \(foreign.count) non-Swift file(s) are missing from the map: \(reason)")
         return nil
     }
     return index
@@ -45,16 +52,19 @@ func runMap(arguments: [String]) -> Int32 {
     // from the index, which holds one configuration, so those can only be accounted for.
     if index != nil {
         IndexDeclarations.conditionalSourceNote(root: URL(fileURLWithPath: root, isDirectory: true),
-                                                includeTests: includeTests).forEach(reportError)
+                                                includeTests: includeTests, fileLimit: limit).forEach(reportError)
     }
     return 0
 }
 
 /// The token budget of `map`: `--budget`, the config, else 6000, lowered to `TokenBudget.maximum`
-/// with a note when it is larger.
+/// with a note when it is larger. The note names where the value came from.
 func mapBudget(_ arguments: [String]) -> RaisedValue {
-    let requested = optionValue("--budget", in: arguments).flatMap(Int.init) ?? loadConfig(arguments)?.budget ?? 6000
-    return TokenBudget.bounded(requested, minimum: 1, name: "--budget")
+    if let flag = optionValue("--budget", in: arguments).flatMap(Int.init) {
+        return TokenBudget.bounded(flag, minimum: 1, name: "--budget")
+    }
+    return TokenBudget.bounded(loadConfig(arguments)?.budget ?? 6000, minimum: 1,
+                               name: ProjectConfig.valueName(ofKey: "budget"))
 }
 
 /// Type name from a header ("struct Box<T>: Foo"→"Box"; "extension A.B"→"B"; "struct `class`"→"class").
@@ -173,10 +183,12 @@ func runAPI(arguments: [String]) -> Int32 {
     // not. Whichever cannot be reached that way is named: a surface that quietly omits a header
     // looks complete when it is not.
     let rootURL = URL(fileURLWithPath: root, isDirectory: true)
-    let cxxHeaders = IndexDeclarations.publicHeaderSummaries(root: rootURL, index: index, package: package).cxxHeaders
+    let cxxHeaders = IndexDeclarations.publicHeaderSummaries(root: rootURL, index: index, package: package,
+                                                             fileLimit: fileLimit).cxxHeaders
     let unanswered = IndexDeclarations.cxxHeaderSummaries(cxxHeaders, root: rootURL,
                                                           compileDatabaseRoot: databaseRoot).unanswered
-    let conditional = index == nil ? [] : IndexDeclarations.conditionalHeaderNote(root: rootURL, package: package)
+    let conditional = index == nil ? [] : IndexDeclarations.conditionalHeaderNote(root: rootURL, package: package,
+                                                                                  fileLimit: fileLimit)
 
     if arguments.contains("--json") {
         printJSON(PublicAPI.summaries(projectRoot: root, package: package, type: type, index: index,
@@ -232,7 +244,8 @@ func runSearch(arguments: [String]) -> Int32 {
     // Whatever it could not read is named: "No matches." over files that were never opened is a
     // confident wrong answer.
     let cFamily = CFamilySearch.run(pattern: pattern, searchRoot: rootPath,
-                                    projectRoot: projectRoot(in: arguments), includeTests: includeTests)
+                                    projectRoot: projectRoot(in: arguments), includeTests: includeTests,
+                                    fileLimit: fileLimit)
     hits += cFamily.hits.map { SearchHit(file: $0.file, line: $0.line, column: $0.column, text: $0.text) }
     hits.sort { ($0.file, $0.line, $0.column) < ($1.file, $1.line, $1.column) }
     let unscanned = swift.unscanned + cFamily.unscanned
@@ -296,6 +309,14 @@ func runLint(arguments: [String]) -> Int32 {
     let includeTests = arguments.contains("--include-tests")
     guard let root = scopedRoot(in: arguments) else { return 2 }
     let fileLimit = scaleLimit(in: arguments)
+    // A config that does not parse may hold the project's rules: a gate is not run against the
+    // built-in set in their place. The MCP tool refuses the same config.
+    if optionValue("--rules", in: arguments) == nil,
+       case .invalid(let reason) = ProjectConfig.read(projectRoot: projectRoot(in: arguments)) {
+        reportError("sextant lint: .sextant.json could not be parsed (\(reason)) — the rules it may name cannot be read, "
+                    + "and no other rule set is checked in their place. Fix it, or pass --rules.")
+        return 2
+    }
     let ruleSet: RuleEngine.RuleSet
     if let rulesPath = optionValue("--rules", in: arguments)
         ?? loadConfig(arguments)?.rulesPath(projectRoot: projectRoot(in: arguments)) {

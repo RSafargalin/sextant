@@ -65,12 +65,28 @@ public final class PersistentCache<Value: Codable>: @unchecked Sendable {
 
 /// The size limit of every persistent cache namespace, in files.
 public enum PersistentCacheLimit {
-    /// `SEXTANT_CACHE_MAX`, default 10000.
-    public static var files: Int { ProcessInfo.processInfo.environment["SEXTANT_CACHE_MAX"].flatMap(Int.init) ?? 10000 }
+    /// The limit when `SEXTANT_CACHE_MAX` is unset or not usable.
+    public static let defaultFiles = 10000
 
-    /// Why `SEXTANT_CACHE_MAX` is not used as given, or nil when it is unset or a whole number.
+    /// `SEXTANT_CACHE_MAX` when it is a positive whole number, otherwise the default.
+    public static var files: Int { read().files }
+
+    /// Why `SEXTANT_CACHE_MAX` is not used as given, or nil when it is unset or a positive whole number.
     public static func problem(environment: [String: String] = ProcessInfo.processInfo.environment) -> String? {
-        guard let raw = environment["SEXTANT_CACHE_MAX"], !raw.isEmpty, Int(raw) == nil else { return nil }
-        return "SEXTANT_CACHE_MAX '\(raw)' is not a whole number, so the default of 10000 files is used — correct or unset it"
+        read(environment: environment).problem
+    }
+
+    /// The one reading of `SEXTANT_CACHE_MAX`: a positive whole number is the limit. Anything else
+    /// set — text, zero, a negative number — is not a limit, so the default is used and the reason
+    /// is named; zero used to turn pruning off without a word.
+    static func read(environment: [String: String] = ProcessInfo.processInfo.environment) -> (files: Int, problem: String?) {
+        guard let raw = environment["SEXTANT_CACHE_MAX"], !raw.isEmpty else { return (defaultFiles, nil) }
+        guard let value = Int(raw) else {
+            return (defaultFiles, "SEXTANT_CACHE_MAX '\(raw)' is not a whole number, so the default of \(defaultFiles) files is used — correct or unset it")
+        }
+        guard value > 0 else {
+            return (defaultFiles, "SEXTANT_CACHE_MAX '\(raw)' is not a positive number of files, so the default of \(defaultFiles) files is used — correct or unset it")
+        }
+        return (value, nil)
     }
 }

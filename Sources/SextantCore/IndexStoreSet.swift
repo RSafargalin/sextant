@@ -22,6 +22,7 @@ public final class IndexStoreSet {
             let database = Self.databaseDirectory(forStore: path, in: databaseRoot)
             try? FileManager.default.createDirectory(at: database, withIntermediateDirectories: true)
             CacheEviction.recordOwner(CanonicalPath.of(path), in: database)
+            Self.removeDiscardedCopies(in: database)
             let units = Self.unitStamps(ofStore: path)
             let recorded = Self.recordedUnits(in: database)
             let kept = Self.prepareDatabase(database, forUnits: units, recorded: recorded)
@@ -111,6 +112,29 @@ public final class IndexStoreSet {
         }
         for entry in data { try? manager.removeItem(at: database.appendingPathComponent(entry)) }
         return false
+    }
+
+    /// Removes the copies of a database that IndexStoreDB itself has discarded, by its own rule: a
+    /// directory named `…-dead`, or `p<pid>-…` of a process that is no longer running. IndexStoreDB
+    /// removes them on a background queue after it opens, which a command that exits right after
+    /// answering never lets finish — so every concurrent cold query left a full copy behind.
+    static func removeDiscardedCopies(in database: URL) {
+        let manager = FileManager.default
+        let own = getpid()
+        for version in (try? manager.contentsOfDirectory(atPath: database.path)) ?? [] {
+            let directory = database.appendingPathComponent(version)
+            for name in (try? manager.contentsOfDirectory(atPath: directory.path)) ?? [] where isDiscarded(name, ownProcess: own) {
+                try? manager.removeItem(at: directory.appendingPathComponent(name))
+            }
+        }
+    }
+
+    /// Whether IndexStoreDB treats a directory of a database version as discarded.
+    static func isDiscarded(_ name: String, ownProcess: pid_t) -> Bool {
+        if name.hasSuffix("-dead") { return true }
+        guard name.hasPrefix("p"), let dash = name.firstIndex(of: "-"),
+              let pid = pid_t(name[name.index(after: name.startIndex)..<dash]), pid != ownProcess, pid > 0 else { return false }
+        return kill(pid, 0) != 0 && errno == ESRCH
     }
 
     static func recordUnits(_ units: [String: UnitStamp], in database: URL) {

@@ -39,7 +39,7 @@ public enum PublicAPI {
             return kept.isEmpty ? nil : FileSummary(relativePath: file.relativePath, package: file.package, declarations: kept)
         }
 
-        let fromIndex = IndexDeclarations.publicHeaderSummaries(root: root, index: index, package: package)
+        let fromIndex = IndexDeclarations.publicHeaderSummaries(root: root, index: index, package: package, fileLimit: fileLimit)
         var headers = fromIndex.summaries
         // C++ headers carry no access level in the index, so they are read through clang instead.
         headers += IndexDeclarations.cxxHeaderSummaries(fromIndex.cxxHeaders, root: root,

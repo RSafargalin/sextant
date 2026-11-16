@@ -64,6 +64,12 @@ public enum CFamilyDiff {
             if let command = commandByFile[absolute] {
                 file = command.file
                 arguments = CompilationDatabase.parseArguments(of: command)
+            } else if previous != relative,
+                      let command = commandByFile[CompilationDatabase.resolvedPath("\(topLevel)/\(previous)")] {
+                // A renamed source is compiled as it was before the move: git names the path it came
+                // from, and the flags recorded for that path are the ones it was built with.
+                file = absolute
+                arguments = CompilationDatabase.parseArguments(of: command).filter { $0 != command.file }
             } else if let borrowed = borrowedArguments(for: absolute, from: known, deleted: deleted) {
                 // A header has no command of its own, and a deleted source may have left none: their
                 // text is parsed with the flags of the source nearest to them, as that header is
@@ -78,7 +84,9 @@ public enum CFamilyDiff {
 
             do {
                 let comparison = try compare(old: oldSource, new: newSource, file: file,
-                                             arguments: arguments, library: library, from: from)
+                                             arguments: arguments, library: library, from: from,
+                                             access: IndexDeclarations.isPublicHeader(URL(fileURLWithPath: absolute))
+                                                 ? .public : .internal)
                 if !comparison.result.isEmpty { diffed.append((label, comparison.result)) }
                 if let unanalysed = comparison.unanalysed { partial.append(UnscannedFile(file: label, reason: unanalysed)) }
             } catch {
@@ -130,11 +138,13 @@ public enum CFamilyDiff {
 
     /// The declaration diff of two texts of one file, and — when code under an inactive
     /// preprocessor branch differs between them — which lines of it went uncompared.
+    /// `access` labels the declarations: `public` in a public header (`IndexDeclarations.isPublicHeader`),
+    /// as `api` reads it, otherwise `internal`.
     static func compare(old oldSource: String, new newSource: String, file: String, arguments: [String],
-                        library: ClangLibrary, from: String) throws
+                        library: ClangLibrary, from: String, access: Access = .internal) throws
         -> (result: DeclarationDiff.Result, unanalysed: String?) {
-        let old = try parse(oldSource, file: file, arguments: arguments, library: library)
-        let new = try parse(newSource, file: file, arguments: arguments, library: library)
+        let old = try parse(oldSource, file: file, arguments: arguments, library: library, access: access)
+        let new = try parse(newSource, file: file, arguments: arguments, library: library, access: access)
         let result = DeclarationDiff.compare(old: old.declarations, new: new.declarations)
 
         // The preprocessor drops inactive branches before clang builds the tree, so a declaration
@@ -178,7 +188,7 @@ public enum CFamilyDiff {
     /// Declarations of one revision's text, parsed with the flags the file is built with today,
     /// and the regions of it the preprocessor skipped.
     private static func parse(_ source: String, file: String, arguments: [String],
-                              library: ClangLibrary) throws -> (declarations: [Declaration], skipped: [SkippedRegion]) {
+                              library: ClangLibrary, access: Access) throws -> (declarations: [Declaration], skipped: [SkippedRegion]) {
         guard !source.isEmpty else { return ([], []) }
         let unit = try ClangTranslationUnit.parse(file: file, arguments: arguments, library: library, overlay: source)
         // A tree built from errors would produce a diff nobody can trust — say so instead.
@@ -195,6 +205,6 @@ public enum CFamilyDiff {
             return SkippedRegion(text: text, lines: first...last)
         }
         return (ClangDeclarations.declarations(of: unit.root.children, source: bytes,
-                                               publicOnly: false, access: .internal), skipped)
+                                               publicOnly: false, access: access), skipped)
     }
 }

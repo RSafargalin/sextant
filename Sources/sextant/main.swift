@@ -104,7 +104,8 @@ func scopedRoot(in arguments: [String]) -> String? {
 }
 
 /// How many files the file-walking commands (map, api, search, lint) may read: `--max-files`, the
-/// config, else 4000.
+/// config, else 4000. The bound counts Swift and Objective-C, C and C++ files together
+/// (`SwiftSources.files(limit:)`), and so does the note that says what it left out.
 ///
 /// The limit exists because those four are minutes of work on a large project — measured on a
 /// 12 351-file project: `search` 335s, `api` 139s and 3.75 MB of output, `lint` over six minutes.
@@ -118,7 +119,7 @@ func scaleLimit(in arguments: [String]) -> Int {
 /// The line that keeps a bounded walk from reading as a complete one. Empty when everything was read.
 func scaleNote(root: String, includeTests: Bool, arguments: [String]) -> [String] {
     let limit = scaleLimit(in: arguments)
-    let total = SwiftSources.count(under: URL(fileURLWithPath: root, isDirectory: true), includeTests: includeTests)
+    let total = SwiftSources.boundedCount(under: URL(fileURLWithPath: root, isDirectory: true), includeTests: includeTests)
     guard total > limit else { return [] }
     return ["⚠ covered \(limit) of \(total) file(s): the walk stops at --max-files \(limit). "
             + "The rest were not looked at — narrow with --scope <subdirectory>, or raise --max-files."]

@@ -89,10 +89,14 @@ public struct CommandSpec: Sendable {
     public let positionals: ClosedRange<Int>
     /// Flags of which at most one may be given in a command line: each set contradicts itself.
     public let exclusive: [[String]]
+    /// For a command whose first positional argument is a subcommand: how many positional
+    /// arguments each subcommand takes after its own name. A subcommand not listed is the
+    /// command's own to refuse.
+    public let subcommands: [String: ClosedRange<Int>]
 
     public init(name: String, argument: String? = nil, summary: String, group: String, flags: [FlagSpec] = [],
                 details: [String] = [], servedByDaemon: Bool = false, positionals: ClosedRange<Int>? = nil,
-                exclusive: [[String]] = []) {
+                exclusive: [[String]] = [], subcommands: [String: ClosedRange<Int>] = [:]) {
         self.name = name
         self.argument = argument
         self.summary = summary
@@ -102,6 +106,7 @@ public struct CommandSpec: Sendable {
         self.servedByDaemon = servedByDaemon
         self.positionals = positionals ?? (argument == nil ? 0...0 : 1...1)
         self.exclusive = exclusive
+        self.subcommands = subcommands
     }
 
     public var invocation: String {
@@ -133,7 +138,7 @@ public enum CommandCatalog {
     static let json = FlagSpec("--json", "structured output instead of text")
     static let scope = FlagSpec("--scope", value: .subdirectory, "narrow the area to a subdirectory")
     static let maxFiles = FlagSpec("--max-files", value: .integer(minimum: 1),
-                                   "how many files to read (default 4000); the answer names what it left out")
+                                   "how many files to read, Swift and Objective-C/C/C++ together (default 4000); the answer names what it left out")
     static let apiBudget = FlagSpec("--budget", value: .integer(minimum: 1), "token budget for the surface (unbounded by default; at most \(TokenBudget.maximum))")
     static let exclude = FlagSpec("--exclude", takesValue: true, "glob to leave out; repeatable, replaces the config list")
     static let includeTests = FlagSpec("--include-tests", "include test files")
@@ -296,7 +301,7 @@ public enum CommandCatalog {
                               "choice is a person's: `store use recency` or `store use union`, recorded",
                               "in .sextant.json. Until it is made, semantic commands refuse rather than guess.",
                               "`store` prints what each policy gives, what it does not, and its risk."],
-                    positionals: 0...2),
+                    positionals: 0...2, subcommands: ["show": 0...0, "use": 1...1]),
         CommandSpec(name: "doctor", summary: "self-check of the setup",
                     group: "Integration and setup",
                     flags: [project, FlagSpec("--fix", "build the index if missing or stale"),
@@ -392,7 +397,13 @@ public enum CommandCatalog {
         // A positional argument the command does not take used to be dropped without a word, and
         // `refs a b` answered about `a` alone.
         let positionals = ArgumentParsing.positionals(arguments, valueFlags: Set(kinds.keys))
-        if positionals.count > spec.positionals.upperBound {
+        if let subcommand = positionals.first, let arity = spec.subcommands[subcommand],
+           positionals.count - 1 > arity.upperBound, 1 + arity.upperBound < spec.positionals.upperBound {
+            let extra = positionals.dropFirst(1 + arity.upperBound).map { "'\($0)'" }.joined(separator: ", ")
+            problems.append(arity.upperBound == 0
+                ? "\(subcommand) takes no further argument; got \(extra)."
+                : "\(subcommand) takes at most \(arity.upperBound) argument(s); \(extra) would be ignored.")
+        } else if positionals.count > spec.positionals.upperBound {
             let extra = positionals.dropFirst(spec.positionals.upperBound).map { "'\($0)'" }.joined(separator: ", ")
             problems.append(spec.positionals.upperBound == 0
                 ? "takes no positional argument; got \(extra)."

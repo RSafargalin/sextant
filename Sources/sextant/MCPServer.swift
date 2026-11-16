@@ -373,8 +373,8 @@ private func fileLimit(_ context: ToolContext) -> Int { max(1, context.config?.m
 
 private func scaleNoteMCP(_ context: ToolContext, includeTests: Bool = false) -> [String] {
     let limit = fileLimit(context)
-    let total = SwiftSources.count(under: URL(fileURLWithPath: context.project, isDirectory: true),
-                                   includeTests: includeTests)
+    let total = SwiftSources.boundedCount(under: URL(fileURLWithPath: context.project, isDirectory: true),
+                                          includeTests: includeTests)
     guard total > limit else { return [] }
     return ["⚠ covered \(limit) of \(total) file(s) — the walk stops at maxFiles \(limit) "
             + "(.sextant.json). Narrow with scope, or raise it."]
@@ -525,10 +525,10 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
         let shownLimit = 200
         var lines: [String] = []
         // Matches past the first 200 are counted, not printed: the answer states the total it cut.
-        let files = SwiftSources.files(under: root, includeTests: false)
-        let stopped = engine != nil && files.count > scanLimit
+        let files = SwiftSources.files(under: root, includeTests: false, limit: scanLimit)
+        let stopped = SwiftSources.boundedCount(under: root, includeTests: false) > scanLimit
         let swift = engine.map {
-            SwiftPatternScan.run($0, pattern: pattern, files: Array(files.prefix(scanLimit)), root: root,
+            SwiftPatternScan.run($0, pattern: pattern, files: files, root: root,
                                  cache: SourceParseCache())
         } ?? SwiftPatternScan.Outcome()
         lines += swift.hits.prefix(shownLimit).map { "\($0.file):\($0.line):\($0.column): \($0.text)" }
@@ -538,7 +538,8 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
         if stopped { lines.append("… (scanned \(scanLimit) files, search stopped — narrow the scope)") }
         // Objective-C, C and C++ go through clang, with the flags each file was built with.
         let cFamily = CFamilySearch.run(pattern: pattern, searchRoot: context.project,
-                                        projectRoot: context.projectRoot, includeTests: false)
+                                        projectRoot: context.projectRoot, includeTests: false,
+                                        fileLimit: scanLimit)
         lines += cFamily.hits.prefix(shownLimit).map { "\($0.file):\($0.line):\($0.column): \($0.text)" }
         if cFamily.hits.count > shownLimit {
             lines.append("… (first \(shownLimit) of \(cFamily.hits.count) C-family matches shown)")
@@ -616,7 +617,8 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
         let rootURL = URL(fileURLWithPath: root, isDirectory: true)
         let package = (args["package"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         // Below 500 tokens the surface holds nothing useful; a smaller budget is raised, and the answer says so.
-        let raisedBudget = TokenBudget.bounded((args["budget"] as? Int) ?? context.config?.budget ?? 8000, minimum: 500, name: "budget")
+        let raisedBudget = TokenBudget.bounded((args["budget"] as? Int) ?? context.config?.budget ?? 8000, minimum: 500,
+                                               name: args["budget"] is Int ? "budget" : ProjectConfig.valueName(ofKey: "budget"))
         let surface = PublicAPI.generate(
             projectRoot: root,
             package: package,
@@ -629,11 +631,13 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
             tokenBudget: raisedBudget.value
         )
         let bounded = scaleNoteMCP(context)
-        let cxxHeaders = IndexDeclarations.publicHeaderSummaries(root: rootURL, index: index, package: package).cxxHeaders
+        let cxxHeaders = IndexDeclarations.publicHeaderSummaries(root: rootURL, index: index, package: package,
+                                                                 fileLimit: fileLimit(context)).cxxHeaders
         let unanswered = IndexDeclarations.cxxHeaderSummaries(cxxHeaders, root: rootURL,
                                                               compileDatabaseRoot: context.projectRoot).unanswered
         let answer = ([capped(surface, hint: "narrow it with package, type, or scope")]
-                      + (index == nil ? [] : IndexDeclarations.conditionalHeaderNote(root: rootURL, package: package))
+                      + (index == nil ? [] : IndexDeclarations.conditionalHeaderNote(root: rootURL, package: package,
+                                                                                     fileLimit: fileLimit(context)))
                       + StructuralCoverage.report(unanswered) + bounded
                       + [raisedBudget.note].compactMap { $0.map { "⚠ \($0)" } }).joined(separator: "\n")
         return (answer, false)
@@ -674,7 +678,8 @@ private func repoMapText(budget requested: Int?, context: ToolContext) -> String
     // The token budget is honoured (a field report found it being ignored); the default
     // comes from .sextant.json, as in the CLI. Below 500 the map would collapse, so a smaller
     // budget is raised and the answer says so.
-    let raised = TokenBudget.bounded(requested ?? context.config?.budget ?? 4000, minimum: 500, name: "budget")
+    let raised = TokenBudget.bounded(requested ?? context.config?.budget ?? 4000, minimum: 500,
+                                     name: requested != nil ? "budget" : ProjectConfig.valueName(ofKey: "budget"))
     let budget = raised.value
     // The index is passed here as it is in the CLI: without it the map covers Swift only,
     // while the same command in a terminal covers Objective-C, C and C++ as well. What is

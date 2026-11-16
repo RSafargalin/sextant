@@ -444,10 +444,12 @@ public enum CompilationDatabase {
     /// Compilable C-family sources under a root. Headers are excluded: a header is not a
     /// compilation unit and never has a command of its own.
     /// The walk is the one over every C-family extension, shared (and memoised) with the header
-    /// list, so a command that needs both walks the tree once.
-    public static func compilableSources(projectRoot: String, includeTests: Bool) -> [String] {
+    /// list, so a command that needs both walks the tree once. `fileLimit` is the `--max-files`
+    /// bound, shared with the Swift files (`SwiftSources.files(limit:)`).
+    public static func compilableSources(projectRoot: String, includeTests: Bool, fileLimit: Int? = nil) -> [String] {
         let root = URL(fileURLWithPath: projectRoot, isDirectory: true)
-        return SwiftSources.files(under: root, includeTests: includeTests, extensions: IndexDeclarations.clangExtensions)
+        return SwiftSources.files(under: root, includeTests: includeTests, extensions: IndexDeclarations.clangExtensions,
+                                  limit: fileLimit)
             .filter { compilableExtensions.contains($0.pathExtension) }
             .map { $0.resolvingSymlinksInPath().path }
             .sorted()

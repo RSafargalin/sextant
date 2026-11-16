@@ -132,7 +132,8 @@ public enum RuleEngine {
                            cache: SourceParseCache = SourceParseCache(), fileLimit: Int? = nil) -> Outcome {
         let swift = runSwift(rules: rules, projectRoot: lintRoot, includeTests: includeTests, cache: cache,
                              fileLimit: fileLimit)
-        let cFamily = CFamilyLint.run(rules: rules, lintRoot: lintRoot, projectRoot: projectRoot, includeTests: includeTests)
+        let cFamily = CFamilyLint.run(rules: rules, lintRoot: lintRoot, projectRoot: projectRoot, includeTests: includeTests,
+                                      fileLimit: fileLimit)
         var outcome = Outcome(violations: swift.violations + cFamily.violations,
                               unscanned: swift.unscanned + cFamily.unscanned
                                 + StructuralCoverage.skippedDirectories(projectRoot: lintRoot),

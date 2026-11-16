@@ -28,6 +28,8 @@ public enum ClangDeclarations {
     ///
     /// `publicOnly` drops what a caller outside the type cannot use — the point of a public
     /// surface, and the wrong filter for a diff, where a private member changing is still a change.
+    /// `access` labels what is declared; where it is `public`, a C++ member declared private or
+    /// protected, and whatever it holds, is labelled `private` instead.
     public static func declarations(of nodes: [ClangNode], source: Data?,
                                     publicOnly: Bool, access: Access) -> [Declaration] {
         nodes.flatMap { declarations(of: $0, source: source, publicOnly: publicOnly, access: access) }
@@ -42,6 +44,7 @@ public enum ClangDeclarations {
         }
         if publicOnly, !node.isPublic { return [] }
         guard let kind = listedKinds[node.kindName], let name = name(of: node) else { return [] }
+        let access: Access = access == .public && !node.isPublic ? .private : access
         return [Declaration(
             kind: kind,
             header: header(of: node, source: source),

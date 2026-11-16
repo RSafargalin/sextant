@@ -367,14 +367,21 @@ public enum StoreSelection {
         for candidate in candidates.sorted(by: { ($0.modified ?? .distantPast) > ($1.modified ?? .distantPast) }) {
             let mark = chosenPaths.contains(candidate.path) ? "→ using" : "  left  "
             let facts = describe(candidate)
-            let why = candidate.rejection.map { " — \($0)" }
-                ?? (chosenPaths.contains(candidate.path) || resolution.policy == nil
-                    ? "" : " — \(leftOutReason(candidate, chosen: chosen, policy: resolution.policy!))")
+            let why = reasonNotRead(candidate, in: resolution).map { " — \($0)" } ?? ""
             lines.append("   \(mark) \(shorten(candidate.path))  [\(facts)]\(why)")
             if let writer = writer(ofPath: candidate.path) { lines.append("            \(writer)") }
             if showOrigin, let origin = candidate.origin { lines.append("            built from \(shorten(origin))") }
         }
         return lines
+    }
+
+    /// Why `candidate` is not read under `resolution`, in the words every explanation uses; nil for
+    /// a store that is read, and for a usable one left only because no policy chose between several.
+    public static func reasonNotRead(_ candidate: StoreCandidate, in resolution: StoreResolution) -> String? {
+        if let rejection = candidate.rejection { return rejection }
+        guard let policy = resolution.policy, !resolution.chosen.contains(where: { $0.path == candidate.path })
+        else { return nil }
+        return leftOutReason(candidate, chosen: resolution.chosen, policy: policy)
     }
 
     /// What to print when several stores are usable and nobody has chosen a policy. The tool does
@@ -413,6 +420,10 @@ public enum StoreSelection {
     static func leftOutReason(_ candidate: StoreCandidate, chosen: [StoreCandidate], policy: StorePolicy) -> String {
         switch policy {
         case .recency:
+            if let mine = candidate.modified, chosen.contains(where: { $0.modified == mine }) {
+                return "as recent as the store read — the tie goes to the path that sorts last "
+                    + "(`union` or `coverage` would weigh it differently)"
+            }
             return "not the most recent (`union` or `coverage` would weigh it differently)"
         case .coverage:
             guard let mine = candidate.coverage else {

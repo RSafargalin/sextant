@@ -15,6 +15,24 @@ struct InputValidationTests {
         return CommandCatalog.usageProblems(in: arguments, for: spec, environment: { environment[$0] })
     }
 
+    /// `store` took up to two positional arguments whatever the subcommand, so `store show extra`
+    /// ran `show` and dropped the word in silence.
+    @Test("A subcommand takes its own number of arguments, and an extra one is refused")
+    func subcommandArity() throws {
+        #expect(try problems("store", []).isEmpty)
+        #expect(try problems("store", ["show"]).isEmpty)
+        #expect(try problems("store", ["use", "recency"]).isEmpty)
+        let show = try problems("store", ["show", "extra"])
+        #expect(show.count == 1 && show.first?.contains("'extra'") == true, "\(show)")
+        #expect(!(try problems("store", ["use", "recency", "extra"])).isEmpty)
+        // Every declared subcommand fits within the command's own bound.
+        for spec in CommandCatalog.commands {
+            for (name, arity) in spec.subcommands {
+                #expect(1 + arity.upperBound <= spec.positionals.upperBound, "\(spec.name) \(name)")
+            }
+        }
+    }
+
     // MARK: - CLI flags
 
     /// Walks the catalog, so a flag added later is covered without touching this test.

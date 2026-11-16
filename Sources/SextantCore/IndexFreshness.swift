@@ -76,6 +76,13 @@ public enum IndexFreshness {
             }
         }
 
+        /// Why the snapshot was not used, when one exists and was not, in the words the trust label
+        /// and `sextant store` both state it in.
+        public var snapshotNote: String? { snapshotProblem.map { "snapshot not used: \($0)" } }
+
+        /// The basis, with `snapshotNote` when there is one — as the trust label states it.
+        public var basisWithReason: String { basisDescription + (snapshotNote.map { "; \($0)" } ?? "") }
+
         /// Why the index is stale, as short clauses: the files that changed (up to `naming` of
         /// them by name), the manifests, the toolchain, a failed build. Empty when nothing is known
         /// beyond "stale", as on the build-time basis.

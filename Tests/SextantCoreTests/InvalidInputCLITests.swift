@@ -97,6 +97,95 @@ struct InvalidInputCLITests {
         }
         let body = try run(["body", "greet", "--context-lines", huge, "--project", project], scratch: scratch)
         #expect(body.code != 133 && body.code < 128, "body --context-lines \(huge) crashed: \(body.code)")
+        // The gutter is sized from the lines shown: for the same file, a larger request past its
+        // end prints the same lines the same way.
+        let modest = try run(["body", "greet", "--context-lines", "1000", "--project", project], scratch: scratch)
+        let lines: (String) -> [Substring] = { $0.split(separator: "\n").filter { !$0.hasPrefix("──") } }
+        #expect(!lines(modest.output).isEmpty, "\(modest.output)\n\(modest.errors)")
+        #expect(lines(body.output) == lines(modest.output), "\(body.output)")
+
+        // A budget from the config is named as the config's, never as a flag nobody passed.
+        let configured = scratch.base.appendingPathComponent("configured")
+        try FileManager.default.createDirectory(at: configured, withIntermediateDirectories: true)
+        try "struct A {}\n".write(to: configured.appendingPathComponent("A.swift"), atomically: true, encoding: .utf8)
+        try #"{"budget": \#(huge)}"#.write(to: configured.appendingPathComponent(".sextant.json"), atomically: true, encoding: .utf8)
+        let map = try run(["map", "--project", configured.path], scratch: scratch)
+        #expect(map.errors.contains(".sextant.json budget \(huge) is above the maximum"), "\(map.errors)")
+        #expect(!map.errors.contains("--budget"), "\(map.errors)")
+    }
+
+    /// With a cache directory nothing can be written to, the store exists and cannot be opened —
+    /// and the map then said there was no index store and to build one.
+    @Test("A store that cannot be opened is not reported as a missing one",
+          .enabled(if: binary != nil && getuid() != 0, "needs the built binary, and a user a read-only directory stops"),
+          .timeLimit(.minutes(2)))
+    func unopenableStoreIsNotMissing() throws {
+        let scratch = try Scratch()
+        let caches = scratch.home.appendingPathComponent("Library/Caches/sextant")
+        try FileManager.default.createDirectory(at: caches, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: caches.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: caches.path) }
+        let map = try run(["map", "--project", Self.fixture.path], scratch: scratch)
+        guard map.errors.contains("could not open the index") else { return }   // the store opened after all
+        #expect(!map.errors.contains("no index store"), "\(map.errors)")
+        #expect(map.errors.contains("could not be opened"), "\(map.errors)")
+    }
+
+    /// A nested package's C-family sources are built only by that package. Counting them against
+    /// the root told a user to run `sextant index` at the root, which never builds them.
+    @Test("doctor names a nested package's sources as that package's to index",
+          .enabled(if: binary != nil, "sextant is not built — run `swift build` first"), .timeLimit(.minutes(2)))
+    func doctorNamesNestedPackage() throws {
+        let scratch = try Scratch()
+        let root = scratch.base.appendingPathComponent("outer")
+        let files = ["Package.swift": "// swift-tools-version: 5.9\nimport PackageDescription\nlet package = Package(name: \"outer\")\n",
+                     "Sources/Outer/Outer.swift": "public struct Outer {}\n",
+                     "Nested/Package.swift": "// swift-tools-version: 5.9\nimport PackageDescription\nlet package = Package(name: \"nested\")\n",
+                     "Nested/Sources/NC/nc.c": "int nc(int x) { return x; }\n"]
+        for (path, text) in files {
+            let url = root.appendingPathComponent(path)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try text.write(to: url, atomically: true, encoding: .utf8)
+        }
+        let doctor = try run(["doctor", "--project", root.path], scratch: scratch)
+        let lines = doctor.output.split(separator: "\n").filter { $0.contains("compile database") }
+        #expect(lines.count == 1, "\(doctor.output)")
+        #expect(lines.first?.contains("nested package Nested") == true, "\(doctor.output)")
+        #expect(lines.first?.contains("sextant index --project Nested") == true, "\(doctor.output)")
+    }
+
+    /// `rules` takes a path; an array there made the config unparseable, and the CLI then linted
+    /// with the built-in set and passed while the MCP tool refused the same config.
+    @Test("lint refuses a config it cannot parse instead of checking the built-in rules",
+          .enabled(if: binary != nil, "sextant is not built — run `swift build` first"), .timeLimit(.minutes(2)))
+    func lintRefusesAnUnparseableConfig() throws {
+        let scratch = try Scratch()
+        let root = scratch.base.appendingPathComponent("gate")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try "struct A {}\n".write(to: root.appendingPathComponent("A.swift"), atomically: true, encoding: .utf8)
+        try #"{"rules": [{"id": "x", "message": "m", "patterns": ["print($$$)"]}]}"#
+            .write(to: root.appendingPathComponent(".sextant.json"), atomically: true, encoding: .utf8)
+        for json in [false, true] {
+            let lint = try run(["lint", "--project", root.path] + (json ? ["--json"] : []), scratch: scratch)
+            #expect(lint.code == 2, "\(lint.output)\n\(lint.errors)")
+            #expect(lint.errors.contains("sextant lint: .sextant.json could not be parsed"), "\(lint.errors)")
+            #expect(!lint.output.contains("No violations"), "\(lint.output)")
+        }
+    }
+
+    /// `version` was listed twice: once from the catalog, once in a hand-written "Other" section.
+    @Test("The general help lists every command once, as the catalog declares it",
+          .enabled(if: binary != nil, "sextant is not built — run `swift build` first"), .timeLimit(.minutes(2)))
+    func helpListsEachCommandOnce() throws {
+        let scratch = try Scratch()
+        let help = try run(["--help"], scratch: scratch)
+        let listed = help.output.split(separator: "\n").compactMap { line -> String? in
+            guard line.hasPrefix("  "), !line.hasPrefix("   ") else { return nil }
+            return line.split(separator: " ").first.map(String.init)
+        }
+        for spec in CommandCatalog.commands {
+            #expect(listed.filter { $0 == spec.name }.count == 1, "\(spec.name) is listed \(listed.filter { $0 == spec.name }.count) time(s)")
+        }
     }
 
     @Test("A lint whose rules check nothing fails with a usage error instead of reporting success",

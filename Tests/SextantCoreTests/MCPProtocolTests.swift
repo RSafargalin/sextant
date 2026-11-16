@@ -109,6 +109,39 @@ struct MCPProtocolTests {
         }
     }
 
+    /// An argument a handler reads but the schema does not declare escapes validation: `api` read
+    /// `budget` that way, and every bad value was answered as if none had been given. One the
+    /// schema declares but no handler reads is a promise the tool does not keep. The arguments
+    /// are taken from the dispatcher's own source, one `case` at a time.
+    @Test("Every argument a handler reads is declared in its schema, and every declared one is read")
+    func handlersReadExactlyTheDeclaredArguments() throws {
+        let source = try String(contentsOf: repositoryRoot.appendingPathComponent("Sources/sextant/MCPServer.swift"),
+                                encoding: .utf8)
+        let start = try #require(source.range(of: "private func callMCPTool("), "the dispatcher was not found")
+        let end = try #require(source.range(of: "\n}\n", range: start.upperBound..<source.endIndex))
+        let body = String(source[start.upperBound..<end.lowerBound])
+        let caseLabel = try Regex(#"\n\s*case "([a-z_]+)":"#)
+        let argumentRead = try Regex(#"args\["([A-Za-z_]+)"\]"#)
+        let labels = body.matches(of: caseLabel)
+        var readByTool: [String: Set<String>] = [:]
+        for (offset, label) in labels.enumerated() {
+            let name = String(try #require(label.output[1].substring))
+            let blockEnd = offset + 1 < labels.count ? labels[offset + 1].range.lowerBound : body.endIndex
+            let block = body[label.range.upperBound..<blockEnd]
+            var read = Set(block.matches(of: argumentRead).compactMap { $0.output[1].substring.map(String.init) })
+            if block.contains("symbol()") { read.insert("symbol") }
+            readByTool[name] = read
+        }
+        #expect(Set(readByTool.keys) == Set(MCPTools.names), "could not parse the dispatcher: \(readByTool.keys.sorted())")
+        for name in MCPTools.names {
+            let schema = MCPTools.definition(named: name)?["inputSchema"] as? [String: Any] ?? [:]
+            let declared = Set((schema["properties"] as? [String: Any] ?? [:]).keys)
+            let read = readByTool[name] ?? []
+            #expect(read.subtracting(declared).isEmpty, "\(name) reads undeclared argument(s): \(read.subtracting(declared).sorted())")
+            #expect(declared.subtracting(read).isEmpty, "\(name) declares argument(s) it never reads: \(declared.subtracting(read).sorted())")
+        }
+    }
+
     @Test("A structural miss names the files it never opened")
     func structuralSearchNamesUnscannedFiles() throws {
         let responses = try session([

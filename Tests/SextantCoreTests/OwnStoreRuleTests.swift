@@ -145,5 +145,20 @@ struct OwnStoreRuleRunTests {
         let screen = try run(["store", "--project", root.path], home: home)
         #expect(screen.output.contains("rule: \(StoreSelection.ownStoreRule)"), "\(screen.output)")
         #expect(screen.output.contains("the rule decides"), "\(screen.output)")
+
+        // Under an explicit policy, the store it does not read carries the reason on this screen
+        // too, in the words of the explanation every answer prints.
+        for policy in ["recency", "coverage"] {
+            let screen = try run(["store", "--project", root.path], home: home, environment: ["SEXTANT_STORE_POLICY": policy])
+            let blocks = screen.output.components(separatedBy: "\n\n")
+            let ownBlock = try #require(blocks.first { $0.contains("sextant-index/out") && $0.contains("units:") }, "\(screen.output)")
+            let explanation = try run(["defs", "EnglishGreeter", "--project", root.path], home: home,
+                                      environment: ["SEXTANT_STORE_POLICY": policy])
+            let left = try #require(explanation.errors.split(separator: "\n")
+                .first { $0.contains("left") && $0.contains("sextant-index") }, "\(explanation.errors)")
+            let dash = try #require(left.range(of: "] — "), "\(left)")
+            let reason = String(left[dash.upperBound...])
+            #expect(ownBlock.contains("not read: \(reason)"), "\(policy): \(screen.output)")
+        }
     }
 }

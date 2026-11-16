@@ -54,16 +54,19 @@ public enum CFamilySearch {
 
     /// Headers, each named as not scanned. Only a translation unit's own declarations are matched,
     /// so what a header contains is never searched, whichever unit includes it.
-    public static func unscannedHeaders(root: String, includeTests: Bool) -> [UnscannedFile] {
+    public static func unscannedHeaders(root: String, includeTests: Bool, fileLimit: Int? = nil) -> [UnscannedFile] {
         let rootURL = URL(fileURLWithPath: root, isDirectory: true)
-        return headerFiles(searchRoot: root, includeTests: includeTests)
+        return headerFiles(searchRoot: root, includeTests: includeTests, fileLimit: fileLimit)
             .map { UnscannedFile(file: relative($0, rootURL), reason: "a header is not a compilation unit") }
     }
 
-    public static func run(pattern: String, searchRoot: String, projectRoot: String, includeTests: Bool) -> Outcome {
+    /// `fileLimit` is the `--max-files` bound, shared with the Swift files of the same search.
+    public static func run(pattern: String, searchRoot: String, projectRoot: String, includeTests: Bool,
+                           fileLimit: Int? = nil) -> Outcome {
         let root = URL(fileURLWithPath: searchRoot, isDirectory: true)
-        let sources = CompilationDatabase.compilableSources(projectRoot: searchRoot, includeTests: includeTests)
-        let headers = unscannedHeaders(root: searchRoot, includeTests: includeTests)
+        let sources = CompilationDatabase.compilableSources(projectRoot: searchRoot, includeTests: includeTests,
+                                                            fileLimit: fileLimit)
+        let headers = unscannedHeaders(root: searchRoot, includeTests: includeTests, fileLimit: fileLimit)
         guard !sources.isEmpty else { return Outcome(hits: [], unscanned: headers, scannedCount: 0, targets: [], inactive: []) }
 
         let engine: ClangPatternSearch
@@ -145,9 +148,10 @@ public enum CFamilySearch {
 
     /// Headers, listed separately: they carry no compile command of their own, so the search
     /// reaches them only through the files that include them. The same walk as the sources'.
-    static func headerFiles(searchRoot: String, includeTests: Bool) -> [String] {
+    static func headerFiles(searchRoot: String, includeTests: Bool, fileLimit: Int? = nil) -> [String] {
         let root = URL(fileURLWithPath: searchRoot, isDirectory: true)
-        return SwiftSources.files(under: root, includeTests: includeTests, extensions: IndexDeclarations.clangExtensions)
+        return SwiftSources.files(under: root, includeTests: includeTests, extensions: IndexDeclarations.clangExtensions,
+                                  limit: fileLimit)
             .filter { IndexDeclarations.headerExtensions.contains($0.pathExtension) }
             .map { $0.resolvingSymlinksInPath().path }
             .sorted()

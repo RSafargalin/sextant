@@ -200,12 +200,12 @@ func saveCompileDatabase(_ captured: [CompileCommand], forRoot root: String, emp
 /// What the build just produced, measured rather than assumed: a store that holds none of the
 /// project's tests answers every question about them with silence, and the build is the last moment
 /// at which that can still be said out loud.
-func reportTestCoverage(ofStore store: String, root: String, arguments: [String], isXcode: Bool) {
+func reportTestCoverage(ofStore store: String, root: String, arguments: [String], build: IndexBuild.TestsBuild) {
     let coverage = StoreCoverage.measure(store: store,
                                          projectRoot: URL(fileURLWithPath: root, isDirectory: true),
                                          libraryPath: optionValue("--index-lib", in: arguments))
     guard let note = IndexBuild.missingTestsNote(uncoveredTests: coverage?.uncoveredTests ?? 0,
-                                                 isXcode: isXcode) else { return }
+                                                 build: build) else { return }
     reportError(note)
 }
 
@@ -310,7 +310,26 @@ func runDoctor(arguments: [String]) -> Int32 {
 
     // The compile database matters only where there is C-family code; a pure Swift project is
     // not told about a layer it does not use.
-    let clangSources = CompilationDatabase.compilableSources(projectRoot: root, includeTests: false)
+    let allClangSources = CompilationDatabase.compilableSources(projectRoot: root, includeTests: false)
+    // A nested package's sources are compiled only by that package's own build, never by indexing
+    // this root, so they are not counted against the root's flags; where they have none, the
+    // package to index is named instead.
+    let resolvedRoot = rootURL.resolvingSymlinksInPath()
+    let unbuilt = Dictionary(grouping: allClangSources.compactMap { source in
+        IndexStoreLocator.unbuiltPackage(containing: source, root: resolvedRoot).map { (package: $0, source: source) }
+    }, by: \.package)
+    let unbuiltSources = Set(unbuilt.values.flatMap { $0.map(\.source) })
+    let clangSources = allClangSources.filter { !unbuiltSources.contains($0) }
+    if !unbuilt.isEmpty {
+        let commands = CompilationDatabase.commands(forFilesUnder: root)
+        for (package, entries) in unbuilt.sorted(by: { $0.key.path < $1.key.path }) {
+            let missing = CompilationDatabase.missingSources(commands, among: entries.map(\.source))
+            guard !missing.isEmpty else { continue }
+            let path = SwiftSources.relativePath(of: package, root: resolvedRoot)
+            print("ℹ compile database: \(missing.count) C-family source(s) of the nested package \(path) have no flags — "
+                  + "indexing this root does not build it; `sextant index --project \(path)` does")
+        }
+    }
     if !clangSources.isEmpty {
         let commands = CompilationDatabase.commands(forFilesUnder: root)
         let missing = CompilationDatabase.missingSources(commands, among: clangSources)
@@ -418,11 +437,18 @@ func runXcodeIndex(root: URL, arguments: [String]) -> Int32 {
     let container = CanonicalPath.of(containerFlag[1])
     if let store = candidates.first(where: { $0.isUsable && $0.origin.map(CanonicalPath.of) == container })?.path {
         print("\nindex ready (app, DerivedData): \(store)")
+        // A store outside Xcode's default DerivedData is found only where that location is named
+        // again: a later query without it looks in the default one and finds nothing.
+        if let flag = optionValue("--derived-data", in: arguments),
+           derivedDataRoot(in: arguments) != derivedDataRoot(in: []) {
+            print("   it is outside Xcode's default DerivedData: queries find it only with `--derived-data \(flag)` "
+                  + "or SEXTANT_DERIVED_DATA set to it")
+        }
         if StoreSelection.resolve(candidates, policy: storePolicy(in: arguments)?.policy).needsPolicy {
             reportError("⚠ this is one of \(candidates.filter(\.isUsable).count) usable index stores for this project, and no store policy is set —")
             reportError("   semantic commands will refuse rather than guess between them. `sextant store` compares them.")
         }
-        reportTestCoverage(ofStore: store, root: root.path, arguments: arguments, isXcode: true)
+        reportTestCoverage(ofStore: store, root: root.path, arguments: arguments, build: .xcode)
         // Xcode writes no build graph with arguments in it, so the flags are read from the log
         // the build just produced — the one place they are stated in full.
         let log = (try? String(contentsOf: logFile, encoding: .utf8)) ?? ""
@@ -504,7 +530,7 @@ func runIndex(arguments: [String]) -> Int32 {
             reportError("⚠ this is one of \(candidates.filter(\.isUsable).count) usable index stores for this project, and no store policy is set —")
             reportError("   semantic commands will refuse rather than guess between them. `sextant store` compares them.")
         }
-        reportTestCoverage(ofStore: store, root: rootPath, arguments: arguments, isXcode: false)
+        reportTestCoverage(ofStore: store, root: rootPath, arguments: arguments, build: .package(testsBuilt: testsBuilt))
         captureCompileDatabase(root: rootPath, stores: [store], buildLog: log)
         return 0
     }
@@ -569,7 +595,7 @@ func runIndex(arguments: [String]) -> Int32 {
         return 1
     }
     print("\nindex ready (single store): \(store)")
-    reportTestCoverage(ofStore: store, root: rootPath, arguments: arguments, isXcode: false)
+    reportTestCoverage(ofStore: store, root: rootPath, arguments: arguments, build: .umbrella)
     captureCompileDatabase(root: rootPath, stores: [store], buildLog: log)
     return 0
 }

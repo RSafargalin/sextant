@@ -311,20 +311,34 @@ public enum SwiftSources {
         exclusions.set(patterns)
     }
 
+    /// What a walk bounded by `--max-files` counts: Swift and Objective-C, C and C++ files together.
+    public static let boundedExtensions = ["swift"] + IndexDeclarations.clangExtensions
+
     /// Every `.swift` file under the root: the git list in a repository, otherwise a FileManager walk. Memoised.
-    /// `limit` bounds how many files the caller will look at. The walk itself is not cut — the
-    /// full list is what says how much was left out — so the limit is applied to the returned
-    /// prefix and the total stays available through `count(under:)`.
+    /// `limit` bounds how many files the caller will look at. It is one bound over every language
+    /// the area commands read: the files of `boundedExtensions`, in one sorted order, are cut to
+    /// their first `limit`, and the files of `extensions` among them are returned — so Swift and
+    /// C-family readers given the same limit together read at most `limit` files. The walk itself
+    /// is not cut — the full list is what says how much was left out — and the total stays
+    /// available through `boundedCount(under:)`.
     public static func files(under root: URL, includeTests: Bool, extensions: [String] = ["swift"],
                              limit: Int? = nil) -> [URL] {
         let all = allFiles(under: root, includeTests: includeTests, extensions: extensions)
-        guard let limit, all.count > limit else { return all }
-        return Array(all.prefix(limit))
+        guard let limit else { return all }
+        let walk = allFiles(under: root, includeTests: includeTests, extensions: boundedExtensions)
+        guard walk.count > limit else { return all }
+        let read = Set(walk.prefix(limit).map(\.path))
+        return all.filter { read.contains($0.path) }
     }
 
     /// How many files a walk finds, whatever a caller intends to read of them.
     public static func count(under root: URL, includeTests: Bool, extensions: [String] = ["swift"]) -> Int {
         allFiles(under: root, includeTests: includeTests, extensions: extensions).count
+    }
+
+    /// How many files a walk bounded by `--max-files` counts toward its bound.
+    public static func boundedCount(under root: URL, includeTests: Bool) -> Int {
+        count(under: root, includeTests: includeTests, extensions: boundedExtensions)
     }
 
     private static func allFiles(under root: URL, includeTests: Bool, extensions: [String] = ["swift"]) -> [URL] {

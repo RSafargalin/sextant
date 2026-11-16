@@ -284,12 +284,13 @@ func runBody(arguments: [String]) -> Int32 {
         let span = body.text.components(separatedBy: "\n").count
         let last = body.line + span - 1
         let (end, overflow) = last.addingReportingOverflow(contextLines)
-        let width = String(overflow ? Int.max : end).count
         print("── \(shorten(body.file)):\(body.line)  (±\(contextLines) lines)")
         let first = max(1, body.line - contextLines)
         let final = min(overflow ? Int.max : end, max(reader.lineCount(inFile: body.file), first))
-        for number in first...final {
-            guard let text = reader.rawLine(number, inFile: body.file) else { continue }
+        let shown = (first...final).compactMap { number in reader.rawLine(number, inFile: body.file).map { (number, $0) } }
+        // The gutter is as wide as the largest number shown, not the largest one asked for.
+        let width = String(shown.last?.0 ?? first).count
+        for (number, text) in shown {
             let gutter = String(number).leftPadded(to: width)
             print("\(gutter) \(number >= body.line && number <= last ? "▸" : "│") \(text)")
         }
