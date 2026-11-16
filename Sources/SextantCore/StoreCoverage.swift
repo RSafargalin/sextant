@@ -12,7 +12,7 @@ public enum StoreCoverage {
     public struct Result: Sendable, Equatable, Codable {
         /// Project files the store was built from.
         public let covered: Int
-        /// Project files on disk.
+        /// Project files on disk a unit can be built from: sources, not manifests or headers.
         public let total: Int
         /// Units whose main file lies outside the project — another checkout, or the SDK.
         public let foreign: Int
@@ -46,8 +46,13 @@ public enum StoreCoverage {
                                libraryPath: String? = nil) -> Result? {
         // The walk is memoised and cheap; resolving 12 000 paths through their symlinks is not, so
         // it happens only when the cache has nothing — measured 1.7s against 0.1s on a large project.
+        // Only what a unit is built from: a package manifest describes the build and a header is
+        // compiled inside the sources that include it, so neither is ever a unit's main file, and
+        // counting them kept a complete index short of 100%.
         let files = SwiftSources.files(under: projectRoot, includeTests: includeTests,
                                        extensions: ["swift"] + IndexDeclarations.clangExtensions)
+            .filter { !SwiftSources.isPackageManifest(relativePath: $0.lastPathComponent)
+                      && !IndexDeclarations.headerExtensions.contains($0.pathExtension) }
         guard !files.isEmpty else { return nil }
 
         let key = cacheKey(store: store, projectRoot: projectRoot, includeTests: includeTests,

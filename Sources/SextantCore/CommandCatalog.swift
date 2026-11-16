@@ -84,9 +84,15 @@ public struct CommandSpec: Sendable {
     /// stdin, writes into the project, builds, or serves something itself must run where it was
     /// invoked. Off unless a command says otherwise.
     public let servedByDaemon: Bool
+    /// How many positional arguments the command takes: one for a `<name>` argument, none without
+    /// an argument, unless the command says otherwise.
+    public let positionals: ClosedRange<Int>
+    /// Flags of which at most one may be given in a command line: each set contradicts itself.
+    public let exclusive: [[String]]
 
     public init(name: String, argument: String? = nil, summary: String, group: String, flags: [FlagSpec] = [],
-                details: [String] = [], servedByDaemon: Bool = false) {
+                details: [String] = [], servedByDaemon: Bool = false, positionals: ClosedRange<Int>? = nil,
+                exclusive: [[String]] = []) {
         self.name = name
         self.argument = argument
         self.summary = summary
@@ -94,6 +100,8 @@ public struct CommandSpec: Sendable {
         self.flags = flags
         self.details = details
         self.servedByDaemon = servedByDaemon
+        self.positionals = positionals ?? (argument == nil ? 0...0 : 1...1)
+        self.exclusive = exclusive
     }
 
     public var invocation: String {
@@ -126,7 +134,7 @@ public enum CommandCatalog {
     static let scope = FlagSpec("--scope", value: .subdirectory, "narrow the area to a subdirectory")
     static let maxFiles = FlagSpec("--max-files", value: .integer(minimum: 1),
                                    "how many files to read (default 4000); the answer names what it left out")
-    static let apiBudget = FlagSpec("--budget", value: .integer(minimum: 1), "token budget for the surface (unbounded by default)")
+    static let apiBudget = FlagSpec("--budget", value: .integer(minimum: 1), "token budget for the surface (unbounded by default; at most \(TokenBudget.maximum))")
     static let exclude = FlagSpec("--exclude", takesValue: true, "glob to leave out; repeatable, replaces the config list")
     static let includeTests = FlagSpec("--include-tests", "include test files")
     static let limit = FlagSpec("--limit", value: .integer(minimum: 1), "how many entries to show")
@@ -145,9 +153,13 @@ public enum CommandCatalog {
     static let indexStore = FlagSpec("--index-store", value: .directory, "path to an index store")
     static let indexLib = FlagSpec("--index-lib", takesPath: true, "path to libIndexStore.dylib")
     static let derivedData = FlagSpec("--derived-data", value: .directory,
-                                      "Xcode DerivedData directory (default: ~/Library/Developer/Xcode/DerivedData)")
+                                      "Xcode DerivedData directory, or one `xcodebuild -derivedDataPath` built into "
+                                      + "(default: SEXTANT_DERIVED_DATA, else ~/Library/Developer/Xcode/DerivedData)")
     static let storePolicyFlag = FlagSpec("--store-policy", value: .choice(StorePolicy.allCases.map(\.rawValue)),
                                           "for this command only: \(StorePolicy.known) (see `sextant store`)")
+
+    /// `--full` and `--compact` choose opposite renderings.
+    static let outputModes = ["--full", "--compact"]
 
     static var semanticFlags: [FlagSpec] {
         [project, indexStore, indexLib, storePolicyFlag, derivedData, reindex, referenceLimit, symbols, fullPaths, full, compact, verify, json]
@@ -159,12 +171,12 @@ public enum CommandCatalog {
         CommandSpec(
             name: "map", summary: "repository map under a token budget",
             group: navigationGroup,
-            flags: [project, FlagSpec("--budget", value: .integer(minimum: 1), "token budget for the map (default 6000)"),
+            flags: [project, FlagSpec("--budget", value: .integer(minimum: 1), "token budget for the map (default 6000; at most \(TokenBudget.maximum))"),
                     FlagSpec("--semantic", "types by usage count (needs an index)"),
                     FlagSpec("--pagerank", "files by centrality (needs an index)"),
                     includeTests, scope, maxFiles, exclude, json],
             details: ["Defaults are taken from .sextant.json."],
-            servedByDaemon: true
+            servedByDaemon: true, exclusive: [["--semantic", "--pagerank"]]
         ),
         CommandSpec(
             name: "api", summary: "public surface of a package, subdirectory, or type",
@@ -214,8 +226,10 @@ public enum CommandCatalog {
                     FlagSpec("--scheme", takesValue: true, "Xcode scheme (otherwise auto-detected)"),
                     FlagSpec("--destination", takesValue: true, "xcodebuild destination"),
                     FlagSpec("--no-tests", "skip the test targets (a faster build, and their usages go missing)"),
-                    FlagSpec("--no-build", "only locate an existing index, do not build")],
+                    FlagSpec("--no-build", "only locate an existing index, do not build"), derivedData],
             details: [BuildTrust.summary,
+                      "With --app, xcodebuild builds into --derived-data (or SEXTANT_DERIVED_DATA) when one is",
+                      "given — where the store is then looked for — and into Xcode's default location otherwise.",
                       "A package is built in a tree of its own, `.build/sextant-index`, always with the index",
                       "store on: a second build tree on disk, and a full build the first time.",
                       "Test targets are built into the index. Measured on Alamofire: without them the",
@@ -224,13 +238,14 @@ public enum CommandCatalog {
         CommandSpec(name: "refs", argument: "<symbol>", summary: "every usage of a symbol",
                     group: semanticsGroup, flags: semanticFlags,
                     details: ["Default when piped (an agent) is a histogram by file; TTY or --full gives line by line.",
-                              SourceColumn.positionFormat], servedByDaemon: true),
+                              SourceColumn.positionFormat], servedByDaemon: true, exclusive: [outputModes]),
         CommandSpec(name: "defs", argument: "<symbol>", summary: "where a symbol is defined",
-                    group: semanticsGroup, flags: semanticFlags, details: [SourceColumn.positionFormat], servedByDaemon: true),
+                    group: semanticsGroup, flags: semanticFlags, details: [SourceColumn.positionFormat], servedByDaemon: true,
+                    exclusive: [outputModes]),
         CommandSpec(name: "callers", argument: "<symbol>", summary: "call sites, accounting for protocol dispatch",
                     group: semanticsGroup, flags: semanticFlags,
                     details: ["Types have no call sites — use refs, context, or blast for those.",
-                              SourceColumn.positionFormat], servedByDaemon: true),
+                              SourceColumn.positionFormat], servedByDaemon: true, exclusive: [outputModes]),
         CommandSpec(name: "callees", argument: "<symbol>", summary: "what a symbol calls (best effort)",
                     group: semanticsGroup, flags: [project, indexStore, indexLib, storePolicyFlag, derivedData, reindex, limit, json], servedByDaemon: true),
         CommandSpec(name: "impls", argument: "<type>", summary: "implementations and subtypes of a protocol or class",
@@ -242,7 +257,7 @@ public enum CommandCatalog {
             group: semanticsGroup,
             flags: [project, FlagSpec("--callees", "down the call graph (default)"), FlagSpec("--callers", "up to the callers"),
                     FlagSpec("--depth", value: .integer(minimum: 1), "traversal depth (default 3)"), indexStore, indexLib, storePolicyFlag, derivedData, reindex, json],
-            servedByDaemon: true
+            servedByDaemon: true, exclusive: [["--callees", "--callers"]]
         ),
         CommandSpec(name: "context", argument: "<symbol>", summary: "everything about one symbol in a single query",
                     group: semanticsGroup, flags: [project, indexStore, indexLib, storePolicyFlag, derivedData, reindex, limit, json],
@@ -272,6 +287,7 @@ public enum CommandCatalog {
                     details: ["Clients use it automatically; with no daemon they take the normal path.",
                               "SEXTANT_NO_DAEMON=1 disables any use of the daemon.",
                               "The daemon never builds or sets up (index/init/doctor) — queries only."]),
+        CommandSpec(name: "version", summary: "print the version", group: "Integration and setup"),
         CommandSpec(name: "store", argument: "[show | use <policy>]",
                     summary: "index stores in reach, and the policy that decides between them",
                     group: "Integration and setup",
@@ -279,7 +295,8 @@ public enum CommandCatalog {
                     details: ["With several usable stores the answer depends on which is read, so the",
                               "choice is a person's: `store use recency` or `store use union`, recorded",
                               "in .sextant.json. Until it is made, semantic commands refuse rather than guess.",
-                              "`store` prints what each policy gives, what it does not, and its risk."]),
+                              "`store` prints what each policy gives, what it does not, and its risk."],
+                    positionals: 0...2),
         CommandSpec(name: "doctor", summary: "self-check of the setup",
                     group: "Integration and setup",
                     flags: [project, FlagSpec("--fix", "build the index if missing or stale"),
@@ -371,6 +388,20 @@ public enum CommandCatalog {
                 problems.append("\(argument) '\(value)' \(problem).")
             }
             index += 2
+        }
+        // A positional argument the command does not take used to be dropped without a word, and
+        // `refs a b` answered about `a` alone.
+        let positionals = ArgumentParsing.positionals(arguments, valueFlags: Set(kinds.keys))
+        if positionals.count > spec.positionals.upperBound {
+            let extra = positionals.dropFirst(spec.positionals.upperBound).map { "'\($0)'" }.joined(separator: ", ")
+            problems.append(spec.positionals.upperBound == 0
+                ? "takes no positional argument; got \(extra)."
+                : "takes at most \(spec.positionals.upperBound) positional argument(s) (\(spec.argument ?? "")); "
+                  + "\(extra) would be ignored.")
+        }
+        for set in spec.exclusive {
+            let given = set.filter(arguments.contains)
+            if given.count > 1 { problems.append("\(given.joined(separator: " and ")) cannot be given together.") }
         }
         if let policyFlag = spec.flags.first(where: { $0.name == "--store-policy" }), !arguments.contains(policyFlag.name),
            let raw = environment(storePolicyVariable), !raw.isEmpty, let problem = policyFlag.value.problem(with: raw) {

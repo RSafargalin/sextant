@@ -42,6 +42,21 @@ struct CxxHeaderAPITests {
         #expect(!members.contains { $0.contains("size_") })
     }
 
+    @Test("A header spelled through a symlink is the file clang reads under its real path",
+          .enabled(if: isReady, "the fixture has not been built and indexed, or there is no toolchain"))
+    func headerSpellingDoesNotDecideTheAnswer() throws {
+        // `/tmp` and `/private/tmp` are one directory spelled two ways; clang reports the real path
+        // while a resolved URL may spell another, and the header came back "not included" at all.
+        let link = URL(fileURLWithPath: "/tmp/sextant-hdr-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: Self.fixture)
+        defer { try? FileManager.default.removeItem(at: link) }
+        let spelled = link.appendingPathComponent("Sources/CxxFixture/include/CxxFixture.hpp").path
+        let commands = CompilationDatabase.commands(forFilesUnder: Self.fixture.path)
+        let found = CxxHeaderAPI.declarations(headers: [spelled], commands: commands, library: try ClangLibrary.shared())
+        #expect(found[spelled]?.contains { $0.header.contains("class Widget") } == true, "\(found.keys)")
+        #expect(ClangTranslationUnit.fileKey("/private/tmp/x") == ClangTranslationUnit.fileKey("/tmp/x"))
+    }
+
     @Test("A struct, its members, both overloads and a template all survive",
           .enabled(if: isReady, "the fixture has not been built and indexed, or there is no toolchain"))
     func reportsTheWholeSurface() throws {

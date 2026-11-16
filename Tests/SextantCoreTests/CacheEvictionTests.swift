@@ -135,6 +135,28 @@ struct CacheEvictionTests {
         }
     }
 
+    /// Regression: `doctor` before the first `index` of a new version removed the old file, and the
+    /// next `index` had nothing to carry over.
+    @Test("A compile database of the earlier naming stays while its project has no entry of the new naming")
+    func unmigratedLegacyDatabaseStays() throws {
+        let home = try Home()
+        let project = home.outside.appendingPathComponent("not-yet-migrated")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        let source = project.appendingPathComponent("a.c")
+        try "int a;".write(to: source, atomically: true, encoding: .utf8)
+        let legacy = "compile-db/" + CompilationDatabase.legacyFileName(ofCanonicalRoot: CanonicalPath.of(project.path))
+        try home.file(legacy, #"[{"directory":"/","file":"\#(source.path)","arguments":[]}]"#)
+
+        CacheEviction.run(home: home.home)
+        #expect(home.exists(legacy), "the only copy of the project's flags was removed before it was carried over")
+        #expect(CompilationDatabase.legacyCommandCount(forRoot: project.path, home: home.home) == 1)
+
+        _ = CompilationDatabase.migrateLegacyEntry(forRoot: project.path, home: home.home)
+        CacheEviction.run(home: home.home)
+        #expect(!home.exists(legacy), "once carried over, the old file goes")
+        #expect(CompilationDatabase.legacyCommandCount(forRoot: project.path, home: home.home) == nil)
+    }
+
     /// The eviction removes a compile database of the earlier naming, and it runs after
     /// `sextant index`; the index run carries the flags over first, or they would be lost.
     @Test("A compile database of the earlier naming survives one `sextant index` into the new entry, then goes",

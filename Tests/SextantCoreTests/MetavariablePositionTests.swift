@@ -27,6 +27,22 @@ struct MetavariablePositionTests {
                  nearMiss: "let s = name"),
         Position(pattern: "let $N: Array<$T> = $V", match: "let xs: Array<[Int]> = []", matched: "let xs: Array<[Int]> = []",
                  nearMiss: "let xs: Set<Int> = []"),
+        // A generic specialization is matched where it is a type as well as where it is an expression.
+        Position(pattern: "Array<$T>", match: "let xs: Array<Int> = []", matched: "Array<Int>",
+                 nearMiss: "let xs: Set<Int> = []"),
+        Position(pattern: "Array<$T>", match: "func f() -> Array<String> { [] }", matched: "Array<String>",
+                 nearMiss: "func f() -> [String] { [] }"),
+        Position(pattern: "Dictionary<$K, $V>", match: "var d: Dictionary<String,Int> = [:]",
+                 matched: "Dictionary<String,Int>", nearMiss: "var d: [String: Int] = [:]"),
+        Position(pattern: "Array<$T>", match: "let xs = Array<Int>()", matched: "Array<Int>",
+                 nearMiss: "let xs = Set<Int>()"),
+        // A declaration pattern written without a body matches a declaration with any body.
+        Position(pattern: "func $F($P)", match: "func run(_ x: Int) { print(x) }",
+                 matched: "func run(_ x: Int) { print(x) }", nearMiss: "func run(_ x: Int, _ y: Int) { }"),
+        Position(pattern: "func $F($$$)", match: "func run(a: Int, b: Int) { print(a + b) }",
+                 matched: "func run(a: Int, b: Int) { print(a + b) }", nearMiss: "func run(a: Int) -> Int { a }"),
+        Position(pattern: "func $F($P)", match: "protocol P { func run(_ x: Int) }",
+                 matched: "func run(_ x: Int)", nearMiss: "protocol P { var run: Int { get } }"),
         Position(pattern: "func $F(a: $T) -> $R { $$$ }", match: "func f(a: Int) -> String { \"\" }",
                  matched: "func f(a: Int) -> String { \"\" }", nearMiss: "func f(b: Int) -> String { \"\" }"),
         // Binding names.

@@ -72,9 +72,11 @@ private func showStores(arguments: [String]) -> Int32 {
         print("   with it, \(resolution.chosen.count) of \(usable.count) usable store(s) are read:")
         resolution.chosen.forEach { print("     \(shorten($0.path))") }
     } else if resolution.decidedByOwnStoreRule {
-        print("   policy: not set — the rule decides: the store `sextant index` built is read, and the")
-        print("   \(resolution.setAsideByOwnStoreRule) store(s) an ordinary build left are not:")
+        print("   policy: not set — the rule decides: the store `sextant index` built is read:")
         resolution.chosen.forEach { print("     \(shorten($0.path))") }
+        print("   and the \(resolution.setAsideByOwnStoreRule) store(s) an ordinary build left are not:")
+        resolution.candidates.filter { $0.rejection == StoreSelection.ownStoreRuleReason }
+            .forEach { print("     \(shorten($0.path))") }
         print("   To read them instead or as well, set a policy: `sextant store use <\(StorePolicy.known)>`.")
     } else if resolution.needsPolicy {
         print("   policy: NOT SET — with several usable stores nothing is chosen, and every")
@@ -128,6 +130,13 @@ private func useStorePolicy(named name: String, arguments: [String]) -> Int32 {
             return 2
         }
         object = parsed
+    }
+    // An atomic write replaces the file by renaming over it, which a read-only file does not
+    // stop: its protection is honoured here instead of being silently undone.
+    if FileManager.default.fileExists(atPath: path), !FileManager.default.isWritableFile(atPath: path) {
+        reportError("sextant store use: \(shorten(path)) is read-only — the policy was not written. "
+                    + "Make it writable, or pass --store-policy per command.")
+        return 1
     }
     object[StorePolicy.configKey] = policy.rawValue
     do {

@@ -11,7 +11,8 @@ public enum DerivedDataLocator {
         "\(home)/Library/Developer/Xcode/DerivedData/\(projectName)-*/Index.noindex/DataStore"
     }
 
-    /// Every DataStore Xcode holds for this project, with the facts needed to choose between them.
+    /// Every DataStore Xcode holds for this project under `derivedData`, with the facts needed to
+    /// choose between them.
     /// A project routinely has several: a second checkout, an opened nested package, a stale
     /// directory from a renamed scheme. Which one answers is a decision, so they all come back.
     public static func candidates(forProjectRoot projectRoot: String, derivedData: String) -> [StoreCandidate] {
@@ -20,11 +21,13 @@ public enum DerivedDataLocator {
 
         var apps: [StoreCandidate] = []
         var packages: [StoreCandidate] = []
-        for entry in entries.sorted() {
-            let infoPlist = "\(derivedData)/\(entry)/info.plist"
+        // Xcode's own location holds a directory per project; `xcodebuild -derivedDataPath <dir>`
+        // writes that directory's contents into `<dir>` itself. Both layouts are read.
+        for directory in [derivedData] + entries.sorted().map({ "\(derivedData)/\($0)" }) {
+            let infoPlist = "\(directory)/info.plist"
             guard let info = NSDictionary(contentsOfFile: infoPlist),
                   let workspacePath = info["WorkspacePath"] as? String else { continue }
-            let store = "\(derivedData)/\(entry)/Index.noindex/DataStore"
+            let store = "\(directory)/Index.noindex/DataStore"
             guard manager.fileExists(atPath: store) else { continue }
 
             let modified = IndexFreshness.timestamp(ofStore: store)

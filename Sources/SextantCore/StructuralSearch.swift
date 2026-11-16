@@ -76,7 +76,9 @@ public struct PatternSearch {
     }
 
     private let patternRoot: Syntax
-    private let patternRootKind: SyntaxKind
+    /// The same pattern read as a type, for a generic specialization (`Array<$T>`): written in an
+    /// expression it is an expression, and in `let xs: Array<Int>` the same text is a type.
+    private let typeRoot: Syntax?
     private let sentinelToName: [String: String]
     private let variadicSentinels: Set<String>
 
@@ -125,11 +127,23 @@ public struct PatternSearch {
             throw Failure.tooBroad
         }
         self.patternRoot = root
-        self.patternRootKind = root.kind
+        self.typeRoot = root.kind == .genericSpecializationExpr ? Self.typeReading(of: substitution.text) : nil
         self.sentinelToName = sentinelToName
         self.variadicSentinels = variadicSentinels
         try checkEveryMetavariableIsBound(in: tree)
     }
+
+    /// The pattern text parsed as a type annotation's type; nil when it does not parse as one.
+    private static func typeReading(of text: String) -> Syntax? {
+        let parsed = Parser.parse(source: "let _: " + text)
+        guard !parsed.hasError,
+              let binding = parsed.statements.first?.item.as(VariableDeclSyntax.self)?.bindings.first,
+              let type = binding.typeAnnotation?.type, binding.initializer == nil else { return nil }
+        return Syntax(type)
+    }
+
+    /// The roots the pattern is matched with, each against nodes of its own kind.
+    private var roots: [Syntax] { [patternRoot] + (typeRoot.map { [$0] } ?? []) }
 
     /// Matches in a source file.
     public func search(source: String, fileName: String) -> [StructuralMatch] {
@@ -163,9 +177,10 @@ public struct PatternSearch {
         var results: [(index: Int, match: StructuralMatch)] = []
         func visit(_ node: Syntax) {
             let nodeKind = node.kind
-            for (index, search) in searches.enumerated() where search.patternRootKind == nodeKind {
+            for (index, search) in searches.enumerated() {
+                guard let root = search.roots.first(where: { $0.kind == nodeKind }) else { continue }
                 var bindings: [String: String] = [:]
-                if search.matchNode(search.patternRoot, node, &bindings) {
+                if search.matchNode(root, node, &bindings) {
                     let location = columns.position(of: node.positionAfterSkippingLeadingTrivia)
                     let firstLine = node.trimmedDescription.split(separator: "\n").first.map(String.init) ?? ""
                     results.append((index, StructuralMatch(line: location.line, column: location.column, text: firstLine)))
@@ -180,9 +195,9 @@ public struct PatternSearch {
     // MARK: - Walking and matching
 
     private func walk(_ node: Syntax, columns: SwiftColumns, into results: inout [StructuralMatch]) {
-        if node.kind == patternRootKind {
+        if let root = roots.first(where: { $0.kind == node.kind }) {
             var bindings: [String: String] = [:]
-            if matchNode(patternRoot, node, &bindings) {
+            if matchNode(root, node, &bindings) {
                 let location = columns.position(of: node.positionAfterSkippingLeadingTrivia)
                 let firstLine = node.trimmedDescription.split(separator: "\n").first.map(String.init) ?? ""
                 results.append(StructuralMatch(line: location.line, column: location.column, text: firstLine))
@@ -212,7 +227,24 @@ public struct PatternSearch {
         if let patternToken = pattern.as(TokenSyntax.self) {
             return patternToken.text == candidate.as(TokenSyntax.self)?.text
         }
-        return matchChildren(meaningfulChildren(pattern), meaningfulChildren(candidate), &bindings)
+        var candidateChildren = meaningfulChildren(candidate)
+        // A function or initializer written without a body matches whatever body the declaration
+        // has, or none — the way a catch clause without a body does.
+        if Self.canHaveBody(pattern), Self.body(of: pattern) == nil, let body = Self.body(of: candidate) {
+            candidateChildren.removeAll { $0.id == body.id }
+        }
+        return matchChildren(meaningfulChildren(pattern), candidateChildren, &bindings)
+    }
+
+    private static func body(of node: Syntax) -> Syntax? {
+        if let function = node.as(FunctionDeclSyntax.self) { return function.body.map(Syntax.init) }
+        if let initializer = node.as(InitializerDeclSyntax.self) { return initializer.body.map(Syntax.init) }
+        return nil
+    }
+
+    /// Whether the node is a declaration that can have a body, so a missing one means "any body".
+    private static func canHaveBody(_ node: Syntax) -> Bool {
+        node.is(FunctionDeclSyntax.self) || node.is(InitializerDeclSyntax.self)
     }
 
     /// A node's children without separating commas: a comma is a positional list separator, and

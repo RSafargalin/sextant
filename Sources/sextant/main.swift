@@ -97,6 +97,9 @@ func scopedRoot(in arguments: [String]) -> String? {
     case .missingDirectory:
         reportError("sextant: --scope '\(scope ?? "")' — directory does not exist.")
         return nil
+    case .notADirectory:
+        reportError("sextant: --scope '\(scope ?? "")' \(ProjectScope.notADirectoryReason).")
+        return nil
     }
 }
 
@@ -181,16 +184,20 @@ final class SourceLineReader {
     /// The line as it is written, indentation included. A snippet is trimmed because it is quoted
     /// inside a sentence; an excerpt is not, because its shape is part of what is being read.
     func rawLine(_ number: Int, inFile path: String) -> String? {
-        let lines: [String]
-        if let cached = cache[path] {
-            lines = cached
-        } else {
-            let content = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
-            lines = content.components(separatedBy: "\n")
-            cache[path] = lines
-        }
+        let lines = self.lines(inFile: path)
         guard number >= 1, number <= lines.count else { return nil }
         return lines[number - 1]
+    }
+
+    /// How many lines the file has as read (0 when it cannot be read).
+    func lineCount(inFile path: String) -> Int { lines(inFile: path).count }
+
+    private func lines(inFile path: String) -> [String] {
+        if let cached = cache[path] { return cached }
+        let content = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
+        let lines = content.components(separatedBy: "\n")
+        cache[path] = lines
+        return lines
     }
 }
 

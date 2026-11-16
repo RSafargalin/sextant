@@ -15,7 +15,7 @@ public enum DisplayPath {
     public static func of(_ path: String, root: String?, tail: Int = 3) -> String {
         guard let root, !root.isEmpty else { return trimmed(path, tail: tail) }
         let rootURL = URL(fileURLWithPath: root, isDirectory: true).resolvingSymlinksInPath()
-        let fileURL = URL(fileURLWithPath: path).resolvingSymlinksInPath()
+        let fileURL = URL(fileURLWithPath: CanonicalPath.ofFile(path))
 
         let rootComponents = rootURL.standardizedFileURL.pathComponents
         let fileComponents = fileURL.standardizedFileURL.pathComponents

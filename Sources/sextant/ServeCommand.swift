@@ -74,7 +74,8 @@ func runServe(arguments: [String]) -> Int32 {
             // in, so the two are captured as one stream for it.
             let captured = CallerContext.during(request.caller) {
                 OutputCapture.capture(mergingStreams: request.caller?.outputSharesErrorStream == true,
-                                      lineBufferedOutput: request.caller?.outputIsTerminal == true) {
+                                      lineBufferedOutput: request.caller?.outputIsTerminal == true,
+                                      outputBufferSize: request.caller?.outputBufferSize) {
                     dispatch(request.arguments)
                 }
             }

@@ -419,6 +419,9 @@ public enum StoreSelection {
                 return "coverage not measurable, so it cannot win on it (`recency` would use its timestamp)"
             }
             let best = chosen.compactMap(\.coverage).map(\.covered).max() ?? 0
+            guard mine.covered < best else {
+                return "covers as much of the project (\(mine.covered) files) — the tie goes to the newer store"
+            }
             return "covers less of the project (\(mine.covered) files against \(best))"
         case .union:
             return "not usable"

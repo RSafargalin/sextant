@@ -58,6 +58,13 @@ struct StorePolicyTests {
         #expect(byCoverage.contains("covers less of the project (69 files against 132)"))
         #expect(byCoverage.contains("covers 132/143 files (92%)"))
 
+        // Equal coverage is a tie the newer store wins, not "less" coverage.
+        let twin = candidate("/twin/store", units: 532, minutesAgo: 20_000, covers: 132, of: 143)
+        let tie = StoreSelection.explanation(candidates: [full, twin], chosen: [full],
+                                             policy: .coverage, shorten: { $0 }).joined(separator: "\n")
+        #expect(!tie.contains("covers less"), "\(tie)")
+        #expect(tie.contains("covers as much of the project (132 files) — the tie goes to the newer store"), "\(tie)")
+
         let byRecency = StoreSelection.explanation(candidates: [thin, full], chosen: [thin],
                                                    policy: .recency, shorten: { $0 }).joined(separator: "\n")
         #expect(byRecency.contains("not the most recent"))

@@ -67,4 +67,10 @@ public final class PersistentCache<Value: Codable>: @unchecked Sendable {
 public enum PersistentCacheLimit {
     /// `SEXTANT_CACHE_MAX`, default 10000.
     public static var files: Int { ProcessInfo.processInfo.environment["SEXTANT_CACHE_MAX"].flatMap(Int.init) ?? 10000 }
+
+    /// Why `SEXTANT_CACHE_MAX` is not used as given, or nil when it is unset or a whole number.
+    public static func problem(environment: [String: String] = ProcessInfo.processInfo.environment) -> String? {
+        guard let raw = environment["SEXTANT_CACHE_MAX"], !raw.isEmpty, Int(raw) == nil else { return nil }
+        return "SEXTANT_CACHE_MAX '\(raw)' is not a whole number, so the default of 10000 files is used — correct or unset it"
+    }
 }

@@ -119,6 +119,32 @@ struct ClangPatternSearchTests {
         #expect(outcome.targets.contains { $0.contains("-apple-macos") })
     }
 
+    @Test("Patterns that fail in a file never lend their errors' absence to the next: no Swift rule matches C++",
+          .enabled(if: isReady, "the fixture is not built and indexed (`make fixture`), or there is no toolchain"))
+    func failingPatternsDoNotExhaustTheDiagnostics() throws {
+        // Enough failing probes before `$X!` used to exhaust clang's twenty-error limit; the probes
+        // after it then raised no error, and the recovered `$X` alone matched every node of the file.
+        // `$X * 2` compiles in the C++ file, so the file is read and the others are judged in it.
+        let rules = [Rule(id: "a", message: "m", patterns: ["a.b", "c.d", "e.f"]),
+                     Rule(id: "ft", message: "m", patterns: ["try! $X"]),
+                     Rule(id: "fu", message: "m", patterns: ["$X!"]),
+                     Rule(id: "mul", message: "m", patterns: ["$X * 2"])]
+        let outcome = CFamilyLint.run(rules: rules, lintRoot: Self.fixture.path, projectRoot: Self.fixture.path,
+                                      includeTests: false)
+        let cxx = outcome.violations.filter { $0.file.hasSuffix("CxxFixture.cpp") }
+        #expect(!cxx.isEmpty, "the C++ file was not read: \(outcome.unscanned)")
+        #expect(cxx.allSatisfy { $0.ruleID == "mul" }, "\(cxx.map { "[\($0.ruleID)] \($0.line):\($0.column)" })")
+        #expect(outcome.recovered.isEmpty, "\(outcome.recovered)")
+    }
+
+    @Test("A bare metavariable is refused for the C family: it would match every expression",
+          .enabled(if: isReady, "the fixture is not built and indexed (`make fixture`), or there is no toolchain"))
+    func refusesBareMetavariable() throws {
+        #expect(throws: ClangPatternSearch.Failure.self) {
+            try search("$X", in: "CxxFixture.cpp")
+        }
+    }
+
     @Test("A variadic is refused for the C family rather than quietly ignored")
     func refusesVariadic() {
         #expect(throws: ClangPatternSearch.Failure.self) {

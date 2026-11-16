@@ -13,6 +13,9 @@ public struct SymbolContext: Sendable, Codable {
     /// Every callee the index records, of which `callees` is the sample. Not part of the encoded
     /// form, whose shape is fixed.
     public var calleeCount: Int = 0
+    /// How many call sites those callees are called from — more than `calleeCount` when one is
+    /// called several times. Not part of the encoded form.
+    public var calleeSiteCount: Int = 0
     public let implementations: [RelatedSymbol]
     public let supertypes: [RelatedSymbol]
     /// Present only over an index that is stale against its snapshot.
@@ -55,7 +58,9 @@ public extension SemanticIndex {
             implementations: related(toName: name, query: .implementations, limit: .max),
             supertypes: related(toName: name, query: .supertypes, limit: .max)
         )
-        context.calleeCount = callees.count
+        // Callees are counted by symbol, as `callees` counts them; the sites are counted apart.
+        context.calleeCount = Set(callees.map(\.usr)).count
+        context.calleeSiteCount = callees.count
         return context
     }
 }

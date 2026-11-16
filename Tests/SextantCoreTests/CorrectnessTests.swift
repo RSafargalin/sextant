@@ -207,6 +207,8 @@ struct ProjectScopeTests {
         #expect(ProjectScope.resolve(root: root.path, scope: "Sources/Feature") == .resolved(nested.resolvingSymlinksInPath().standardizedFileURL.path))
         #expect(ProjectScope.resolve(root: root.path, scope: "../..") == .outsideProject)
         #expect(ProjectScope.resolve(root: root.path, scope: "Sources/Missing") == .missingDirectory)
+        try "struct A {}\n".write(to: nested.appendingPathComponent("A.swift"), atomically: true, encoding: .utf8)
+        #expect(ProjectScope.resolve(root: root.path, scope: "Sources/Feature/A.swift") == .notADirectory)
     }
 }
 
@@ -342,6 +344,13 @@ struct ProjectConfigTests {
         #expect(ProjectConfig.load(projectRoot: directory.path) == nil)
     }
 
+    @Test("A cache limit that is not a number is named, not ignored without a word")
+    func cacheLimitProblemIsNamed() {
+        #expect(PersistentCacheLimit.problem(environment: ["SEXTANT_CACHE_MAX": "abc"])?.contains("'abc'") == true)
+        #expect(PersistentCacheLimit.problem(environment: ["SEXTANT_CACHE_MAX": "500"]) == nil)
+        #expect(PersistentCacheLimit.problem(environment: [:]) == nil)
+    }
+
     @Test("A raised value names the request and the value used; one at the minimum is left alone")
     func raisedValueNamesTheChange() {
         let raised = RaisedValue(50, minimum: 200, name: "--budget")
@@ -349,6 +358,10 @@ struct ProjectConfigTests {
         #expect(raised.note == "--budget 50 is below the minimum of 200; 200 was used")
         #expect(RaisedValue(200, minimum: 200, name: "--budget").note == nil)
         #expect(RaisedValue(201, minimum: 200, name: "--budget").value == 201)
+        let lowered = TokenBudget.bounded(Int.max, minimum: 200, name: "--budget")
+        #expect(lowered.value == TokenBudget.maximum)
+        #expect(lowered.note == "--budget \(Int.max) is above the maximum of \(TokenBudget.maximum); \(TokenBudget.maximum) was used")
+        #expect(TokenBudget.characters(Int.max) == Int.max)
     }
 
     @Test("A number the matching flag would refuse is named, not clamped or used as it is")
@@ -636,6 +649,33 @@ struct ChangedSwiftFilesTests {
         do { try process.run() } catch { return -1 }
         process.waitUntilExit()
         return process.terminationStatus
+    }
+
+    @Test("A tracked source deleted from the working tree and not yet committed is not listed")
+    func uncommittedDeletionIsNotListed() throws {
+        let repo = FileManager.default.temporaryDirectory.appendingPathComponent("sextant-deleted-\(UUID().uuidString)")
+        let sources = repo.appendingPathComponent("Sources/A")
+        try FileManager.default.createDirectory(at: sources, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: repo) }
+        try "struct Kept {}\n".write(to: sources.appendingPathComponent("Kept.swift"), atomically: true, encoding: .utf8)
+        try "struct Gone {}\n".write(to: sources.appendingPathComponent("Gone.swift"), atomically: true, encoding: .utf8)
+        try "int gone;\n".write(to: sources.appendingPathComponent("gone.c"), atomically: true, encoding: .utf8)
+        git(["init", "-q"], in: repo.path)
+        git(["add", "."], in: repo.path)
+        git(["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "init"], in: repo.path)
+        try FileManager.default.removeItem(at: sources.appendingPathComponent("Gone.swift"))
+        try FileManager.default.removeItem(at: sources.appendingPathComponent("gone.c"))
+        SwiftSources.clearFileListMemo()
+
+        let listed = SwiftSources.files(under: repo, includeTests: true, extensions: SwiftSources.indexedExtensions)
+        #expect(listed.map(\.lastPathComponent) == ["Kept.swift"])
+        // A build tree that `.gitignore` forgot is not a set of changed sources either.
+        let buildTree = repo.appendingPathComponent(".build/sextant-index/checkouts/Dep")
+        try FileManager.default.createDirectory(at: buildTree, withIntermediateDirectories: true)
+        try "struct Dep {}\n".write(to: buildTree.appendingPathComponent("Dep.swift"), atomically: true, encoding: .utf8)
+        let changed = try #require(SwiftSources.changedFiles(root: repo.path, from: "HEAD", to: nil))
+        #expect(!changed.swift.contains { $0.hasPrefix(".build/") }, "\(changed.swift)")
+        #expect(CompilationDatabase.compilableSources(projectRoot: repo.path, includeTests: true).isEmpty)
     }
 
     @Test("Paths come from the repository root, the working copy is read from topLevel, and a non-ASCII name survives")

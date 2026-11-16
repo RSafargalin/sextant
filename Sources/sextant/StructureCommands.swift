@@ -34,11 +34,12 @@ func runMap(arguments: [String]) -> Int32 {
         scaleNote(root: root, includeTests: includeTests, arguments: arguments).forEach(reportError)
         return 0
     }
-    let budget = optionValue("--budget", in: arguments).flatMap(Int.init) ?? loadConfig(arguments)?.budget ?? 6000
+    let budget = mapBudget(arguments)
     let index = clangIndex(root: root, arguments: arguments, includeTests: includeTests)
     print(RepoMap.generate(projectRoot: root,
-                           options: .init(tokenBudget: budget, includeTests: includeTests, fileLimit: limit),
+                           options: .init(tokenBudget: budget.value, includeTests: includeTests, fileLimit: limit),
                            index: index))
+    budget.note.map { reportError("sextant map: \($0).") }
     scaleNote(root: root, includeTests: includeTests, arguments: arguments).forEach(reportError)
     // Swift declarations under `#if` are on the map with their condition; the non-Swift ones come
     // from the index, which holds one configuration, so those can only be accounted for.
@@ -47,6 +48,13 @@ func runMap(arguments: [String]) -> Int32 {
                                                 includeTests: includeTests).forEach(reportError)
     }
     return 0
+}
+
+/// The token budget of `map`: `--budget`, the config, else 6000, lowered to `TokenBudget.maximum`
+/// with a note when it is larger.
+func mapBudget(_ arguments: [String]) -> RaisedValue {
+    let requested = optionValue("--budget", in: arguments).flatMap(Int.init) ?? loadConfig(arguments)?.budget ?? 6000
+    return TokenBudget.bounded(requested, minimum: 1, name: "--budget")
 }
 
 /// Type name from a header ("struct Box<T>: Foo"→"Box"; "extension A.B"→"B"; "struct `class`"→"class").
@@ -124,7 +132,9 @@ func runPageRankMap(root: String, arguments: [String]) -> Int32 {
         return 0
     }
 
-    let budgetChars = (optionValue("--budget", in: arguments).flatMap(Int.init) ?? loadConfig(arguments)?.budget ?? 6000) * 4
+    let budget = mapBudget(arguments)
+    budget.note.map { reportError("sextant map: \($0).") }
+    let budgetChars = budget.value * 4
     print("# PageRank map (files by centrality)")
     var chars = 0
     for file in ranked {
@@ -144,7 +154,7 @@ func runAPI(arguments: [String]) -> Int32 {
     // answer says. Asked for, it bounds the output and the header states what it left out.
     // Below 200 tokens a surface holds nothing useful; a smaller budget is raised and the raise named.
     let raisedBudget = optionValue("--budget", in: arguments).flatMap(Int.init)
-        .map { RaisedValue($0, minimum: 200, name: "--budget") }
+        .map { TokenBudget.bounded($0, minimum: 200, name: "--budget") }
     let tokenBudget = raisedBudget?.value
     let package = optionValue("--package", in: arguments)
     let type = optionValue("--type", in: arguments)
@@ -259,6 +269,8 @@ func runSearch(arguments: [String]) -> Int32 {
         }
         printJSON(SearchOutput(matches: hits, notScanned: unscanned, inactiveOccurrences: cFamily.inactive,
                                readWithReservations: recovered))
+        // The JSON lists what was read; a walk the limit stopped is said where `map` and `api` say it.
+        scaleNote(root: rootPath, includeTests: includeTests, arguments: arguments).forEach(reportError)
         return 0
     }
     // `--limit` shortens the list; the total keeps counting everything found, and the difference
@@ -299,6 +311,16 @@ func runLint(arguments: [String]) -> Int32 {
                                  includeTests: includeTests, fileLimit: fileLimit)
     let violations = outcome.violations
     let unscanned = outcome.unscanned
+    // A rule set none of whose patterns any engine could use checked nothing, and a gate that
+    // checked nothing must not pass: it is refused as the unusable input it is, like a rules file
+    // that does not parse.
+    let nothingChecked = RuleEngine.nothingChecked(rules: rules, outcome: outcome)
+    func refuseUnchecked(_ reason: String) -> Int32 {
+        RuleEngine.brokenReport(outcome.broken).forEach(reportError)
+        reportError("sextant lint: nothing was checked — \(reason) (rules: \(ruleSet.origin)). "
+                    + "Fix the rules; a rule set that checks nothing is not a passed check.")
+        return 2
+    }
     if arguments.contains("--json") {
         struct LintOutput: Encodable {
             let violations: [RuleViolation]
@@ -312,8 +334,11 @@ func runLint(arguments: [String]) -> Int32 {
         }
         printJSON(LintOutput(violations: violations, notScanned: unscanned, inactiveOccurrences: outcome.inactive,
                              brokenRules: RuleEngine.brokenReport(outcome.broken), readWithReservations: outcome.recovered))
+        scaleNote(root: root, includeTests: includeTests, arguments: arguments).forEach(reportError)
+        if let nothingChecked { return refuseUnchecked(nothingChecked) }
         return violations.isEmpty ? 0 : 1
     }
+    if let nothingChecked { return refuseUnchecked(nothingChecked) }
     let inactive = StructuralCoverage.inactiveReport(outcome.inactive, targets: outcome.targets,
                                                      noun: "possible violation(s)")
     guard !violations.isEmpty else {

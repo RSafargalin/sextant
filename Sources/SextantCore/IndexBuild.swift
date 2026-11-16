@@ -52,11 +52,17 @@ public enum IndexBuild {
 
     public struct Package: Sendable, Equatable {
         public let reference: UmbrellaManifest.PackageReference
+        /// The macOS minimum the manifest declares; nil when it declares none, and SwiftPM's
+        /// default for the tools version applies.
         public let macOSVersion: String?
+        /// Source targets no library product reaches, directly or through a target dependency. The
+        /// umbrella can depend only on products, so it never builds them.
+        public let unreachableTargets: [String]
 
-        public init(reference: UmbrellaManifest.PackageReference, macOSVersion: String?) {
+        public init(reference: UmbrellaManifest.PackageReference, macOSVersion: String?, unreachableTargets: [String] = []) {
             self.reference = reference
             self.macOSVersion = macOSVersion
+            self.unreachableTargets = unreachableTargets
         }
     }
 
@@ -66,7 +72,6 @@ public enum IndexBuild {
         case ready(manifest: String, macOSVersion: String, skipped: [String])
         case noManifests
         case duplicateIdentities([String])
-        case unsupportedPlatform([String])
     }
 
     /// Planning result: the verdict plus packages whose manifests could not be read. `skipped` is
@@ -75,6 +80,9 @@ public enum IndexBuild {
     public struct Plan: Sendable, Equatable {
         public let outcome: UmbrellaPlan
         public let skipped: [String]
+        /// Packages whose source targets the umbrella does not build, as `Package (Target, …)`:
+        /// no library product reaches those targets.
+        public var unreachable: [String] = []
     }
 
     /// Plan for the umbrella build. `expected` holds the package paths found on disk; the
@@ -90,16 +98,15 @@ public enum IndexBuild {
             .filter { $0.value.count > 1 }.keys.sorted()
         guard duplicates.isEmpty else { return Plan(outcome: .duplicateIdentities(duplicates), skipped: skipped) }
 
-        let withoutMacOS = packages.filter { $0.macOSVersion == nil }.map { $0.reference.identity }
-        guard withoutMacOS.isEmpty else { return Plan(outcome: .unsupportedPlatform(withoutMacOS.sorted()), skipped: skipped) }
-
-        // The umbrella platform is the maximum of the packages' requirements, or the strictest fails.
+        // A package that declares no macOS minimum builds on macOS with SwiftPM's default, so it
+        // takes part without raising the umbrella's requirement. The umbrella platform is the
+        // maximum of the declared requirements, or the strictest fails.
         let macOSVersion = packages.compactMap { $0.macOSVersion }.reduce(nil as String?) { best, version in
             guard let best else { return version }
             return SemanticVersion.atLeast(version, best) ? version : best
         } ?? "13.0"
 
-        return Plan(
+        var plan = Plan(
             outcome: .ready(
                 manifest: UmbrellaManifest.manifest(packages: packages.map { $0.reference }, macOSVersion: macOSVersion),
                 macOSVersion: macOSVersion,
@@ -107,6 +114,10 @@ public enum IndexBuild {
             ),
             skipped: skipped
         )
+        plan.unreachable = packages.filter { !$0.unreachableTargets.isEmpty }
+            .sorted { $0.reference.identity < $1.reference.identity }
+            .map { "\($0.reference.identity) (\($0.unreachableTargets.joined(separator: ", ")))" }
+        return plan
     }
 
     /// Umbrella cache directory for a project, kept outside the project so as not to litter it.
@@ -160,10 +171,42 @@ public enum IndexBuild {
     public static func readPackage(at directory: URL) -> Package? {
         guard let output = Command.output("/usr/bin/env", ["swift", "package", "dump-package", "--package-path", directory.path]),
               let json = parseJSON(output) else { return nil }
-        return Package(
+        return package(fromManifest: json, at: directory)
+    }
+
+    /// A package as the umbrella sees it, from the output of `swift package dump-package`.
+    public static func package(fromManifest json: [String: Any], at directory: URL) -> Package {
+        Package(
             reference: .init(path: directory.path, identity: directory.lastPathComponent, products: libraryProducts(in: json)),
-            macOSVersion: macOSRequirement(in: json)
+            macOSVersion: macOSRequirement(in: json),
+            unreachableTargets: unreachableTargets(in: json)
         )
+    }
+
+    /// Source targets (regular and executable) that no library product reaches, directly or
+    /// through the targets it depends on, in manifest order.
+    public static func unreachableTargets(in manifest: [String: Any]) -> [String] {
+        let targets = (manifest["targets"] as? [[String: Any]]) ?? []
+        let products = (manifest["products"] as? [[String: Any]]) ?? []
+        var dependencies: [String: [String]] = [:]
+        for target in targets {
+            guard let name = target["name"] as? String else { continue }
+            dependencies[name] = ((target["dependencies"] as? [[String: Any]]) ?? []).compactMap { dependency in
+                ((dependency["byName"] ?? dependency["target"]) as? [Any])?.first as? String
+            }
+        }
+        var reached = Set<String>()
+        var pending = products.filter { ($0["type"] as? [String: Any])?["library"] != nil }
+            .flatMap { ($0["targets"] as? [String]) ?? [] }
+        while let next = pending.popLast() {
+            guard reached.insert(next).inserted else { continue }
+            pending += dependencies[next] ?? []
+        }
+        return targets.compactMap { target in
+            guard let name = target["name"] as? String, ["regular", "executable"].contains(target["type"] as? String),
+                  !reached.contains(name) else { return nil }
+            return name
+        }
     }
 
     /// Library products from a manifest (executables are not pulled into the umbrella).
@@ -175,7 +218,7 @@ public enum IndexBuild {
         }
     }
 
-    /// The macOS requirement from a manifest; nil means the package does not support the host platform.
+    /// The macOS minimum a manifest declares; nil when it declares none (SwiftPM's default applies).
     public static func macOSRequirement(in manifest: [String: Any]) -> String? {
         let platforms = (manifest["platforms"] as? [[String: Any]]) ?? []
         return platforms.first { ($0["platformName"] as? String) == "macos" }?["version"] as? String

@@ -58,7 +58,8 @@ public enum RepoMap {
     private static func render(_ summaries: [FileSummary], projectName: String, budget: Int) -> String {
         let totalDeclarations = summaries.reduce(0) { $0 + count($1.declarations) }
         let packages = Dictionary(grouping: summaries, by: \.package)
-        let budgetChars = budget * 4
+        let budgetChars = TokenBudget.characters(budget)
+        let collapseLimit = budgetChars / 2 * 3
 
         var body = ""
         var compact = false
@@ -68,7 +69,7 @@ public enum RepoMap {
             let packageFiles = (packages[packageName] ?? []).sorted { $0.relativePath < $1.relativePath }
             body += "\n## \(packageName)\n"
             for file in packageFiles {
-                if body.count > budgetChars * 3 / 2 { omittedFiles += 1; continue }
+                if body.count > collapseLimit { omittedFiles += 1; continue }
                 body += compact ? renderCompact(file) : renderFull(file)
                 if body.count > budgetChars { compact = true }
             }

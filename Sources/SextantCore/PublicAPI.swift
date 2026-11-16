@@ -74,7 +74,7 @@ public enum PublicAPI {
     /// that says so is an answer; a shorter surface that does not is a wrong one.
     static func render(_ summaries: [FileSummary], budget: Int? = nil) -> String {
         let packages = Dictionary(grouping: summaries, by: \.package)
-        let budgetChars = budget.map { $0 * 4 }
+        let budgetChars = budget.map(TokenBudget.characters)
         var body = ""
         var total = 0
         var omittedFiles = 0

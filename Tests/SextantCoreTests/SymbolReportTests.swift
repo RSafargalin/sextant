@@ -171,6 +171,8 @@ struct SymbolReportTests {
     /// An index that relates a symbol to many callees, for the count `context` states.
     private struct ManyCallees: SemanticIndex {
         let callees: Int
+        /// How many times each callee is called.
+        var sitesEach = 1
         func lookup(name: String, query: SymbolQuery, limit: Int) -> [SymbolHit] {
             [SymbolHit(name: name, usr: "s:\(name)", kind: "function",
                        definition: SextantCore.SourceLocation(path: "/repo/A.swift", line: 1, column: 6, isDefinition: true),
@@ -178,11 +180,23 @@ struct SymbolReportTests {
         }
         func related(toName name: String, query: RelationQuery, limit: Int) -> [RelatedSymbol] {
             guard query == .callees else { return [] }
-            return Array((0..<callees).map { index in
-                RelatedSymbol(name: "f\(index)()", usr: "s:f\(index)", kind: "function",
-                              location: SextantCore.SourceLocation(path: "/repo/B.swift", line: index + 1, column: 5, isDefinition: false))
+            return Array((0..<(callees * sitesEach)).map { site in
+                let index = site / sitesEach
+                return RelatedSymbol(name: "f\(index)()", usr: "s:f\(index)", kind: "function",
+                                     location: SextantCore.SourceLocation(path: "/repo/B.swift", line: site + 1, column: 5, isDefinition: false))
             }.prefix(limit))
         }
+    }
+
+    /// Regression: `context` counted call sites as callees, and disagreed with `callees`.
+    @Test("context counts callees by symbol, as callees does, and names the call sites apart")
+    func contextCountsCalleesBySymbol() throws {
+        let context = try #require(ManyCallees(callees: 4, sitesEach: 3).context(forName: "run", sampleLimit: 10))
+        #expect(context.calleeCount == 4)
+        let lines = SymbolReport.context(context, sampleLimit: 10, style: .cli(compact: true, referenceLimit: 10),
+                                         path: { $0 }, snippet: { _ in nil })
+        #expect(lines.contains { $0.hasSuffix("calls: 4 (12 call sites)") }, "\(lines)")
+        #expect(lines.contains { $0.contains("first 10 of 12 call sites shown") }, "\(lines)")
     }
 
     @Test("context counts every callee, and says how many of them it shows")

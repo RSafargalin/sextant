@@ -98,11 +98,20 @@ func indexProvenance(_ resolution: StoreResolution, source: IndexProvenance.Sour
 /// locally — puts its index somewhere the default never looks, and the tool would report no index
 /// for a project that has one.
 func derivedDataRoot(in arguments: [String]) -> String {
-    if let explicit = optionValue("--derived-data", in: arguments) { return explicit }
+    explicitDerivedData(in: arguments)
+        ?? "\(FileManager.default.homeDirectoryForCurrentUser.path)/Library/Developer/Xcode/DerivedData"
+}
+
+/// The DerivedData location the caller chose — `--derived-data`, else `SEXTANT_DERIVED_DATA` — as
+/// an absolute path; nil when neither is set and Xcode's default applies.
+func explicitDerivedData(in arguments: [String]) -> String? {
+    if let explicit = optionValue("--derived-data", in: arguments) {
+        return URL(fileURLWithPath: explicit).standardizedFileURL.path
+    }
     if let environment = CallerContext.environmentValue("SEXTANT_DERIVED_DATA"), !environment.isEmpty {
         return (environment as NSString).standardizingPath
     }
-    return "\(FileManager.default.homeDirectoryForCurrentUser.path)/Library/Developer/Xcode/DerivedData"
+    return nil
 }
 
 /// Whether the index is stale, by the freshness layer.
@@ -167,6 +176,9 @@ func saveCompileDatabase(_ captured: [CompileCommand], forRoot root: String, emp
         // one already did: changed flags would have recompiled the file and been printed.
         let known = CompilationDatabase.load(forRoot: root)
         let missing = CompilationDatabase.missingSources(known, among: sources)
+        // Only a successful build reaches here, and it recompiled none of the files the database
+        // describes: their flags are current for this build.
+        CompilationDatabase.confirm(forRoot: root)
         guard !missing.isEmpty else {
             print("compile database: \(known.count) file(s), kept from an earlier build — this one compiled none of them")
             return
@@ -302,7 +314,9 @@ func runDoctor(arguments: [String]) -> Int32 {
     if !clangSources.isEmpty {
         let commands = CompilationDatabase.commands(forFilesUnder: root)
         let missing = CompilationDatabase.missingSources(commands, among: clangSources)
-        if commands.isEmpty {
+        if commands.isEmpty, let carried = CompilationDatabase.legacyCommandCount(forRoot: root) {
+            print("⚠ compile database: \(carried) file(s) kept by an earlier version — the next `sextant index` carries them over")
+        } else if commands.isEmpty {
             print("⚠ compile database: none — Objective-C, C and C++ stay outside the structural layer. Build one: `sextant index`")
         } else if missing.isEmpty {
             print("✅ compile database: \(commands.count) file(s), covering all \(clangSources.count) C-family source(s)")
@@ -310,6 +324,8 @@ func runDoctor(arguments: [String]) -> Int32 {
             print("⚠ compile database: \(missing.count) of \(clangSources.count) C-family source(s) have no flags (added since the last build?) — `sextant index`")
         }
     }
+
+    if let problem = PersistentCacheLimit.problem() { print("⚠ \(problem)") }
 
     // Which binary a shell would run. Not a fault of the setup, but a version answering that is
     // not the version installed is the kind of thing nobody thinks to check.
@@ -375,14 +391,18 @@ func runXcodeIndex(root: URL, arguments: [String]) -> Int32 {
     let destination = optionValue("--destination", in: arguments) ?? "generic/platform=macOS"
 
     reportError(BuildTrust.xcodeNotice)
-    print("▶ xcodebuild build -scheme \(scheme) -destination '\(destination)' (COMPILER_INDEX_STORE_ENABLE=YES)")
+    // Built where the store will be looked for: a DerivedData location given by flag or
+    // environment is passed on, or the build and the lookup would go to two different places.
+    let location = explicitDerivedData(in: arguments).map { ["-derivedDataPath", $0] } ?? []
+    print("▶ xcodebuild build -scheme \(scheme) -destination '\(destination)'"
+          + location.map { " \($0)" }.joined() + " (COMPILER_INDEX_STORE_ENABLE=YES)")
     // The log goes to a file, not the terminal: the compile flags appear only in full output,
     // which is thousands of lines, and that output is the only place Xcode states them.
     let logFile = IndexBuild.umbrellaDirectory(forRoot: root.path).appendingPathComponent("xcodebuild.log")
     _ = try? IndexBuild.prepareUmbrellaDirectory(forRoot: root.path)
     print("   build log: \(logFile.path)")
     let buildArgs = ["xcodebuild", "build", "-scheme", scheme, "-destination", destination,
-                     "COMPILER_INDEX_STORE_ENABLE=YES", "CODE_SIGNING_ALLOWED=NO"] + containerFlag
+                     "COMPILER_INDEX_STORE_ENABLE=YES", "CODE_SIGNING_ALLOWED=NO"] + containerFlag + location
     let status = Command.status("/usr/bin/env", buildArgs, in: root, loggingTo: logFile)
     guard status == 0 else {
         reportError("sextant index --app: xcodebuild failed (code \(status)). Check --scheme and --destination.")
@@ -505,11 +525,15 @@ func runIndex(arguments: [String]) -> Int32 {
     case .duplicateIdentities(let identities):
         reportError("sextant index: packages share a directory name (\(identities.joined(separator: ", "))) — the umbrella will not build. Rename the directory or use --index-store.")
         return 1
-    case .unsupportedPlatform(let names):
-        reportError("sextant index: packages without macOS support (\(names.joined(separator: ", "))) — `swift build` cannot run on the host. Use an Xcode build (DerivedData) or --index-store.")
-        return 1
     case .ready(let text, _, _):
         manifest = text
+    }
+    // The umbrella depends on products, so a target no library product reaches is never built:
+    // named here, or the index reads as covering a package it does not.
+    if !plan.unreachable.isEmpty {
+        reportError("⚠ sextant index: targets no library product reaches are not built by the umbrella "
+                    + "(they will NOT be in the index): \(plan.unreachable.joined(separator: "; ")). "
+                    + "Add a library product for them, or index that package on its own with --project.")
     }
 
     let umbrella: URL

@@ -220,6 +220,8 @@ private func makeToolContext(project: String, index: IndexStoreSet?, translated:
         scopeProblem = "scope '\(config?.scope ?? "")' from .sextant.json is outside the project"
     case .missingDirectory:
         scopeProblem = "scope '\(config?.scope ?? "")' from .sextant.json — directory does not exist"
+    case .notADirectory:
+        scopeProblem = "scope '\(config?.scope ?? "")' from .sextant.json \(ProjectScope.notADirectoryReason)"
     }
 
     // Per call, not once at start-up: `.sextant.json` may have been edited since the last one,
@@ -292,7 +294,11 @@ private func handleMCP(method: String, id: Any?, params: [String: Any], context:
              "description": "Everything about a symbol: definition, usages, callers, hierarchy.", "mimeType": "text/plain"]
         ]])
     case "resources/read":
-        let uri = params["uri"] as? String ?? ""
+        // A request without a uri is malformed, not a request for an unknown resource.
+        guard let uri = params["uri"] as? String, !uri.isEmpty else {
+            errorMCP(id: id, code: JSONRPCErrorCode.invalidParams, "resources/read: uri is required (a non-empty string)")
+            break
+        }
         var resource = readResource(uri: uri, context: context)
         // The same trust label a tool answer carries: a resource read from the index is the same
         // answer asked another way, and an agent cannot see stderr either way.
@@ -575,6 +581,10 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
             + StructuralCoverage.report(outcome.unscanned)
             + RuleEngine.brokenReport(outcome.broken)
             + scaleNoteMCP(context)
+        if let reason = RuleEngine.nothingChecked(rules: rules, outcome: outcome) {
+            return ((["nothing was checked — \(reason) (rules: \(ruleSet.origin)); fix the rules in .sextant.json"]
+                     + unscanned).joined(separator: "\n"), true)
+        }
         guard !violations.isEmpty else {
             return ((["✅ no violations found — rules: \(ruleSet.origin)"] + unscanned).joined(separator: "\n"), false)
         }
@@ -597,6 +607,7 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
             case .resolved(let path): root = path
             case .outsideProject: return ("scope '\(scope)' is outside the project", true)
             case .missingDirectory: return ("scope '\(scope)' — directory does not exist", true)
+            case .notADirectory: return ("scope '\(scope)' \(ProjectScope.notADirectoryReason)", true)
             }
         }
         // The index and the compile database are passed here as they are in the CLI: without them
@@ -605,7 +616,7 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
         let rootURL = URL(fileURLWithPath: root, isDirectory: true)
         let package = (args["package"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         // Below 500 tokens the surface holds nothing useful; a smaller budget is raised, and the answer says so.
-        let raisedBudget = RaisedValue((args["budget"] as? Int) ?? context.config?.budget ?? 8000, minimum: 500, name: "budget")
+        let raisedBudget = TokenBudget.bounded((args["budget"] as? Int) ?? context.config?.budget ?? 8000, minimum: 500, name: "budget")
         let surface = PublicAPI.generate(
             projectRoot: root,
             package: package,
@@ -663,7 +674,7 @@ private func repoMapText(budget requested: Int?, context: ToolContext) -> String
     // The token budget is honoured (a field report found it being ignored); the default
     // comes from .sextant.json, as in the CLI. Below 500 the map would collapse, so a smaller
     // budget is raised and the answer says so.
-    let raised = RaisedValue(requested ?? context.config?.budget ?? 4000, minimum: 500, name: "budget")
+    let raised = TokenBudget.bounded(requested ?? context.config?.budget ?? 4000, minimum: 500, name: "budget")
     let budget = raised.value
     // The index is passed here as it is in the CLI: without it the map covers Swift only,
     // while the same command in a terminal covers Objective-C, C and C++ as well. What is

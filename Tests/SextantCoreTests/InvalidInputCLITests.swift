@@ -64,6 +64,11 @@ struct InvalidInputCLITests {
             (["refs", "Greeter", "--store-policy", "bogus"], "--store-policy 'bogus'"),
             (["refs", "Greeter", "--limit", "-5"], "--limit '-5'"),
             (["body", "Greeter", "--context-lines", "-3"], "--context-lines '-3'"),
+            (["refs", "Greeter", "extra"], "'extra' would be ignored"),
+            (["map", "extra"], "takes no positional argument; got 'extra'"),
+            (["hierarchy", "Greeter", "--callers", "--callees"], "--callees and --callers cannot be given together"),
+            (["refs", "Greeter", "--compact", "--full"], "--full and --compact cannot be given together"),
+            (["map", "--semantic", "--pagerank"], "--semantic and --pagerank cannot be given together"),
         ]
         for (arguments, named) in cases {
             let result = try run(arguments + ["--project", project], scratch: scratch)
@@ -71,9 +76,44 @@ struct InvalidInputCLITests {
             #expect(result.errors.contains(named), "\(arguments): \(result.errors)")
             #expect(result.output.isEmpty, "\(arguments) answered anyway:\n\(result.output)")
         }
+        let version = try run(["version", "--bogus"], scratch: scratch)
+        #expect(version.code == 2 && version.errors.contains("--bogus"), "\(version.errors)")
         let last = try run(["map", "--project", project, "--budget"], scratch: scratch)
         #expect(last.code == 2, "\(last.errors)")
         #expect(last.errors.contains("--budget expects a positive integer, and none was given"), "\(last.errors)")
+    }
+
+    @Test("A budget past the maximum is lowered and named; the largest counts neither crash nor hang",
+          .enabled(if: binary != nil, "sextant is not built — run `swift build` first"), .timeLimit(.minutes(2)))
+    func hugeNumbersAreBounded() throws {
+        let scratch = try Scratch()
+        let project = Self.fixture.path
+        let huge = String(Int.max)
+        for command in ["map", "api"] {
+            let result = try run([command, "--budget", huge, "--project", project], scratch: scratch)
+            #expect(result.code == 0, "\(command) exited \(result.code)\n\(result.errors)")
+            #expect(result.errors.contains("--budget \(huge) is above the maximum of \(TokenBudget.maximum)"),
+                    "\(command): \(result.errors)")
+        }
+        let body = try run(["body", "greet", "--context-lines", huge, "--project", project], scratch: scratch)
+        #expect(body.code != 133 && body.code < 128, "body --context-lines \(huge) crashed: \(body.code)")
+    }
+
+    @Test("A lint whose rules check nothing fails with a usage error instead of reporting success",
+          .enabled(if: binary != nil, "sextant is not built — run `swift build` first"), .timeLimit(.minutes(2)))
+    func lintThatChecksNothingFails() throws {
+        let scratch = try Scratch()
+        for (name, rules) in [("empty", "[]"), ("broken", #"[{"id":"b","patterns":["func ( {"],"message":"m"}]"#)] {
+            let file = scratch.base.appendingPathComponent("\(name).json")
+            try rules.write(to: file, atomically: true, encoding: .utf8)
+            for json in [false, true] {
+                let result = try run(["lint", "--rules", file.path, "--project", Self.fixture.path] + (json ? ["--json"] : []),
+                                     scratch: scratch)
+                #expect(result.code == 2, "\(name) json=\(json): exit \(result.code)\n\(result.errors)")
+                #expect(!result.output.contains("✅"), "\(name): \(result.output)")
+                #expect(result.errors.contains("nothing was checked"), "\(name): \(result.errors)")
+            }
+        }
     }
 
     @Test("An unknown SEXTANT_STORE_POLICY refuses the command instead of reading a store without it",

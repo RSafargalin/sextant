@@ -8,6 +8,8 @@ public enum ProjectScope {
         case resolved(String)
         case outsideProject
         case missingDirectory
+        /// The scope names a file: a scope narrows the area to a directory.
+        case notADirectory
     }
 
     /// Root for a scope; an empty or nil scope yields the project root itself.
@@ -19,9 +21,11 @@ public enum ProjectScope {
         guard scoped.path == base.path || scoped.path.hasPrefix(base.path + "/") else { return .outsideProject }
 
         var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: scoped.path, isDirectory: &isDirectory), isDirectory.boolValue else {
-            return .missingDirectory
-        }
+        guard FileManager.default.fileExists(atPath: scoped.path, isDirectory: &isDirectory) else { return .missingDirectory }
+        guard isDirectory.boolValue else { return .notADirectory }
         return .resolved(scoped.path)
     }
+
+    /// The words after the scope's name in a refusal of an unusable scope.
+    public static let notADirectoryReason = "is a file, not a directory — a scope narrows the area to a directory"
 }

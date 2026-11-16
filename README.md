@@ -176,11 +176,11 @@ per list. In Swift a hole may stand:
 | Position | Example |
 |---|---|
 | expression | `try? $X.save()`, `$X == $X`, `"\($X)"` (an interpolation is an expression) |
-| type | `$X as! $T`, `$X as? $T`, `$X is $T`, `let $N: $T = $V`, `Array<$T>`, `func $F(a: $T) -> $R { $$$ }` |
+| type | `$X as! $T`, `$X as? $T`, `$X is $T`, `let $N: $T = $V`, `Array<$T>`, `func $F(a: $T) -> $R { $$$ }` — a generic specialization such as `Array<$T>` matches both the type (`let xs: Array<Int>`, `-> Array<String>`) and the expression (`Array<Int>()`); other patterns are read in one category only |
 | binding name | `let $X = $Y`, `var $X = $Y`, `if let $X = $Y { $$$ }`, `guard let $X = $Y else { $$$ }`, `for $X in $Y { $$$ }`, `{ $X in $$$ }`, `{ ($X: $T) in $$$ }` — a binding hole takes any pattern there, a tuple included |
 | catch clause | `catch let $E`, `catch $P { $$$ }` — a pattern may start with `catch`; without a body it accepts any body |
 | declaration name | `func $F() { $$$ }`, `class $C { $$$ }`, `struct $S: $P { $$$ }`, `enum $E { $$$ }`, `var $N: $T` |
-| parameter | `func $F($P) { $$$ }` is exactly one parameter, `func $F($$$) { $$$ }` any number |
+| parameter | `func $F($P) { $$$ }` is exactly one parameter, `func $F($$$) { $$$ }` any number; a `func` or `init` pattern without a body matches any body or none (`func $F($P)`), while its return type, if any, is compared as written |
 
 Operator expressions are matched with the compiler's grouping: SwiftParser leaves
 `y = a as! T` flat, so the pattern and every file are folded first by the standard precedences
@@ -397,6 +397,20 @@ semantic ones (`refs`, `defs`, `callers`, `callees`, `impls`, `supertypes`, `hie
 through `xcrun --find swiftc`, and the index store is produced by `swift build` or
 `xcodebuild`. To check a setup, run `sextant doctor --project <path>` — a checklist with
 actionable hints about whatever is missing.
+
+### Several packages in one repository
+
+`sextant index` looks for packages in two places: a `Package.swift` at the project root, and one
+in each direct subdirectory of `Packages/` (`Packages/Core/Package.swift`, `Packages/App/…`).
+Nothing deeper is looked at. One package is built on its own; two or more are built in one pass
+through an umbrella package in the cache that depends on each package's **library products**:
+
+- a package that declares no `platforms:` takes part with SwiftPM's default macOS minimum;
+- the umbrella can depend only on products, so a target that no library product reaches —
+  directly or through a target it depends on — is not built. `index` names such targets; give
+  them a library product, or index that package on its own with `--project Packages/<name>`;
+- two packages with the same directory name are refused (SwiftPM identifies a package by it);
+- a manifest that cannot be read is named and left out.
 
 ## Daemon (faster CLI)
 

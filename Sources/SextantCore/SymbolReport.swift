@@ -110,7 +110,8 @@ public enum SymbolReport {
         // a state that no longer exists. Deleting a file makes nothing "newer", so the freshness
         // signal cannot see it; the answer itself is the only place where it shows. A missing file
         // under the project root is left out of the answer before it gets here (`AbsentSources`),
-        // so what this names is a missing file outside it, such as a local dependency's source.
+        // and one deleted since a snapshot comes marked unconfirmed (`IndexDrift`), so what this
+        // names is a missing file outside it, such as a local dependency's source.
         var vanished: Set<String> = []
         // Snippets are read from the file as it is now, at the line the index recorded. After an
         // edit that line holds someone else's code, and printing it would attribute text to a
@@ -265,13 +266,18 @@ public enum SymbolReport {
         }
         if !context.callees.isEmpty {
             // Counted from every callee the index records, not from the sample below it.
-            let total = max(context.calleeCount, context.callees.count)
-            lines.append("\(style.level1)calls: \(total)")
+            // The sample lists call sites; the header counts callees by symbol, as `callees` does,
+            // and names the sites when there are more of them.
+            let sites = max(context.calleeSiteCount, context.callees.count)
+            let total = context.calleeCount > 0 ? context.calleeCount : Set(context.callees.map(\.usr)).count
+            lines.append("\(style.level1)calls: \(total)" + (sites > total ? " (\(sites) call sites)" : ""))
             let shown = context.callees.prefix(sampleLimit)
             for callee in shown {
                 lines.append("\(style.level2)→ \(callee.name) [\(callee.kind)]  \(path(callee.location.path)):\(callee.location.line)\(callee.location.marker)")
             }
-            if let note = CallHierarchy.omissionNote(total: total, shown: shown.count, direction: .callees) {
+            if sites > total, sites > shown.count {
+                lines.append("\(style.level2)… (first \(shown.count) of \(sites) call sites shown)")
+            } else if let note = CallHierarchy.omissionNote(total: total, shown: shown.count, direction: .callees) {
                 lines.append("\(style.level2)\(note)")
             }
         }

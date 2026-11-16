@@ -188,6 +188,41 @@ struct DaemonParityTests {
         #expect(viaDaemon == direct)
     }
 
+    /// Regression: the daemon gave standard output a buffer of its own size, not the caller's, so
+    /// with both streams on one file a warning landed in the middle of a line of the answer.
+    @Test("With stdout and stderr on one file, the daemon cuts the output where a direct run does",
+          .timeLimit(.minutes(3)), .enabled(if: fixtureStore != nil, "the fixture has no index store"))
+    func sharedStreamsAreByteIdentical() throws {
+        let binary = try #require(BuildProducts.sextantBinary(under: Self.packageRoot), "sextant is not built")
+        let sandbox = try Sandbox()
+        let daemon = try Daemon(binary: binary, project: Self.fixture, sandbox: sandbox)
+        defer { daemon.stop() }
+
+        func merged(_ arguments: [String], daemon: Bool) throws -> String {
+            let file = sandbox.work.appendingPathComponent("merged-\(UUID().uuidString.prefix(8)).txt")
+            FileManager.default.createFile(atPath: file.path, contents: nil)
+            let handle = try FileHandle(forWritingTo: file)
+            let process = Process()
+            process.executableURL = binary
+            process.arguments = arguments
+            process.currentDirectoryURL = Self.fixture
+            process.environment = sandbox.environment(daemon ? [:] : ["SEXTANT_NO_DAEMON": "1"])
+            process.standardOutput = handle
+            process.standardError = handle
+            process.standardInput = FileHandle.nullDevice
+            try process.run()
+            process.waitUntilExit()
+            try handle.close()
+            return try String(contentsOf: file, encoding: .utf8)
+        }
+        for arguments in [["map"], ["api"], ["lint"], ["search", "$X.greet()"], ["refs", "greet", "--full"]] {
+            let direct = try merged(arguments, daemon: false)
+            let viaDaemon = try merged(arguments, daemon: true)
+            #expect(daemon.answered(arguments[0]), "the daemon never answered \(arguments[0]):\n\(daemon.text)")
+            #expect(viaDaemon == direct, "\(arguments)\n--- direct\n\(direct)\n--- via the daemon\n\(viaDaemon)")
+        }
+    }
+
     /// Regression: the socket was named after the resolved path but the daemon compared the
     /// request against its own spelling, so a project reached through a symlink was refused.
     @Test("A project reached through a symlink is answered by its daemon", .timeLimit(.minutes(2)))

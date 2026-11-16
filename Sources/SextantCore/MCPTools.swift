@@ -50,7 +50,7 @@ public enum MCPTools {
                 "direction": ["type": "string", "enum": ["callees", "callers"], "description": "Direction of traversal (default: callees)."],
                 "depth": ["type": "integer", "description": "Traversal depth (default: 3)."]
             ])]),
-            ([.readsArea, .answersFromIndex], ["name": "repo_map", "description": "Repository map: public and internal types by file, symbol-level.", "inputSchema": ["type": "object", "properties": ["budget": ["type": "integer", "description": "Token budget for the map (default 4000, honoured)."]]]]),
+            ([.readsArea, .answersFromIndex], ["name": "repo_map", "description": "Repository map: public and internal types by file, symbol-level.", "inputSchema": ["type": "object", "properties": ["budget": ["type": "integer", "description": "Token budget for the map (default 4000, honoured; from 500 to \(TokenBudget.maximum) — a value outside is moved to the nearer bound and the answer says so)."]]]]),
             ([.readsArea], ["name": "structural_search", "description": "Structural search over the AST, replacing grep: metavariables $X (expression, type, binding name, declaration name, parameter), variadic $$$, statement patterns; a metavariable that cannot be bound is refused as an error. For example 'try? $X.save()' in Swift or '[$X reloadData]' in Objective-C. Swift is matched by its own parser; Objective-C, C and C++ by clang, which needs the flags from `sextant index`, which RUNS the project's build (its manifest, plugins and macros are code) — so it is the user's call, not an automatic step. Files that could not be read are listed with the reason, so 'no matches' never quietly covers them. Occurrences inside #if branches this build does not contain are reported separately as textual, NOT structurally verified — treat them as leads, not as matches. " + SourceColumn.positionFormat, "inputSchema": [
                 "type": "object",
                 "properties": ["pattern": ["type": "string", "description": "Structural pattern: an expression or statement using $X ($$$ is Swift only). Written in the language of the files being searched."]],
@@ -132,6 +132,10 @@ public enum MCPTools {
             }
             if let type = property["type"] as? String, !JSONValue.matches(value, type: type) {
                 problems.append("'\(key)' must be \("aeiou".contains(type.prefix(1)) ? "an" : "a") \(type), got \(JSONValue.typeName(of: value))")
+                continue
+            }
+            if property["type"] as? String == "integer", !JSONValue.fitsInInt(value) {
+                problems.append("'\(key)' is out of range; expected an integer from \(Int.min) to \(Int.max)")
                 continue
             }
             if let allowed = property["enum"] as? [String], !allowed.contains(where: { $0 == value as? String }) {

@@ -93,9 +93,12 @@ struct MCPInvalidInputTests {
             call(4, "call_hierarchy", #"{"symbol":"Greeter","direction":"sideways"}"#),
             call(5, "context", "{}"),
             #"{"jsonrpc":"2.0","id":6,"method":"no/such/method"}"#,
+            call(7, "repo_map", #"{"budget":1e30}"#),
+            call(8, "repo_map", #"{"budget":9223372036854775807}"#),
+            #"{"jsonrpc":"2.0","id":9,"method":"resources/read","params":{}}"#,
         ])
-        #expect(responses.count == 6, "\(responses)")
-        guard responses.count == 6 else {
+        #expect(responses.count == 9, "\(responses)")
+        guard responses.count == 9 else {
             Issue.record("cannot compare responses: \(responses)")
             return
         }
@@ -109,5 +112,10 @@ struct MCPInvalidInputTests {
             #expect(response["result"] == nil, "\(response)")
         }
         #expect(code(responses[5]) == -32601)
+        #expect(code(responses[6]) == -32602, "\(responses[6])")
+        #expect(message(responses[6]).contains("'budget' is out of range"), "\(responses[6])")
+        let huge = ((responses[7]["result"] as? [String: Any])?["content"] as? [[String: Any]])?.first?["text"] as? String ?? ""
+        #expect(code(responses[8]) == -32602, "a read without a uri is malformed: \(responses[8])")
+        #expect(huge.contains("budget \(Int.max) is above the maximum of \(TokenBudget.maximum)"), "\(responses[7])")
     }
 }

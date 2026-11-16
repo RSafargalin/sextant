@@ -28,9 +28,11 @@ public enum CFamilyDiff {
                                commands: [CompileCommand]? = nil) -> Outcome {
         guard !files.isEmpty else { return Outcome(files: [], notDiffed: [], partiallyDiffed: []) }
 
+        // Entries of deleted files are kept: a deleted file's last revision is parsed with them.
+        let known = commands ?? CompilationDatabase.commands(forFilesUnder: projectRoot, includingMissing: true)
         var commandByFile: [String: CompileCommand] = [:]
-        for command in commands ?? CompilationDatabase.commands(forFilesUnder: projectRoot) {
-            commandByFile[URL(fileURLWithPath: command.file).resolvingSymlinksInPath().path] = command
+        for command in known {
+            commandByFile[CompilationDatabase.resolvedPath(command.file)] = command
         }
         guard !commandByFile.isEmpty else {
             return Outcome(files: [], notDiffed: files.map {
@@ -47,14 +49,7 @@ public enum CFamilyDiff {
         var notDiffed: [UnscannedFile] = []
         var partial: [UnscannedFile] = []
         for relative in files {
-            let absolute = URL(fileURLWithPath: "\(topLevel)/\(relative)").resolvingSymlinksInPath().path
-            guard let command = commandByFile[absolute] else {
-                notDiffed.append(UnscannedFile(file: relative,
-                                               reason: "no compile flags — build the index: `sextant index`"))
-                continue
-            }
-            let arguments = CompilationDatabase.parseArguments(of: command)
-
+            let absolute = CompilationDatabase.resolvedPath("\(topLevel)/\(relative)")
             // A file missing at a revision was added or removed; an empty side is the right answer
             // there, not a failure. A renamed one is read at its previous path, so a pure move
             // changes no symbol.
@@ -63,9 +58,26 @@ public enum CFamilyDiff {
             let oldSource = SwiftSources.fileContent(root: topLevel, revision: from, relativePath: previous) ?? ""
             let newSource = to.map { SwiftSources.fileContent(root: topLevel, revision: $0, relativePath: relative) ?? "" }
                 ?? (try? String(contentsOfFile: "\(topLevel)/\(relative)", encoding: .utf8)) ?? ""
+            let deleted = !FileManager.default.fileExists(atPath: absolute) && !oldSource.isEmpty
+            let file: String
+            let arguments: [String]
+            if let command = commandByFile[absolute] {
+                file = command.file
+                arguments = CompilationDatabase.parseArguments(of: command)
+            } else if let borrowed = borrowedArguments(for: absolute, from: known, deleted: deleted) {
+                // A header has no command of its own, and a deleted source may have left none: their
+                // text is parsed with the flags of the source nearest to them, as that header is
+                // compiled when a source includes it.
+                file = absolute
+                arguments = borrowed
+            } else {
+                notDiffed.append(UnscannedFile(file: relative,
+                                               reason: "no compile flags — build the index: `sextant index`"))
+                continue
+            }
 
             do {
-                let comparison = try compare(old: oldSource, new: newSource, file: command.file,
+                let comparison = try compare(old: oldSource, new: newSource, file: file,
                                              arguments: arguments, library: library, from: from)
                 if !comparison.result.isEmpty { diffed.append((label, comparison.result)) }
                 if let unanalysed = comparison.unanalysed { partial.append(UnscannedFile(file: label, reason: unanalysed)) }
@@ -74,6 +86,46 @@ public enum CFamilyDiff {
             }
         }
         return Outcome(files: diffed, notDiffed: notDiffed, partiallyDiffed: partial)
+    }
+
+    /// Flags for a file the database has no command for: a header, or a deleted source. Taken from
+    /// the source that includes the header by name when there is one, otherwise from the source
+    /// sharing the longest directory prefix with it, with the language set from that source — a
+    /// `.h` read as C would not parse the Objective-C it declares. nil for a source that exists
+    /// (it was added since the last build, and `sextant index` captures its own flags) and when
+    /// there is no source to borrow from.
+    static func borrowedArguments(for path: String, from commands: [CompileCommand], deleted: Bool) -> [String]? {
+        let extensionName = URL(fileURLWithPath: path).pathExtension.lowercased()
+        let isHeader = IndexDeclarations.headerExtensions.contains(extensionName)
+        guard isHeader || deleted else { return nil }
+        let existing = commands.filter { FileManager.default.fileExists(atPath: $0.file) }
+        let name = URL(fileURLWithPath: path).lastPathComponent
+        func includes(_ command: CompileCommand) -> Bool {
+            guard isHeader, let text = try? String(contentsOfFile: command.file, encoding: .utf8) else { return false }
+            return text.split(separator: "\n").contains { line in
+                let trimmed = line.drop { $0 == " " || $0 == "\t" }
+                return (trimmed.hasPrefix("#include") || trimmed.hasPrefix("#import"))
+                    && (trimmed.contains("\"\(name)\"") || trimmed.contains("/\(name)\"") || trimmed.contains("<\(name)>")
+                        || trimmed.contains("/\(name)>"))
+            }
+        }
+        func sharedPrefix(_ command: CompileCommand) -> Int {
+            zip(CompilationDatabase.resolvedPath(command.file).split(separator: "/"), path.split(separator: "/"))
+                .prefix { $0 == $1 }.count
+        }
+        let ranked = existing.map { (command: $0, includes: includes($0), shared: sharedPrefix($0)) }
+            .sorted { ($0.includes ? 1 : 0, $0.shared, $1.command.file) > ($1.includes ? 1 : 0, $1.shared, $0.command.file) }
+        guard let donor = ranked.first?.command else { return nil }
+        let arguments = CompilationDatabase.parseArguments(of: donor).filter { $0 != donor.file }
+        guard isHeader else { return arguments }
+        let language: String
+        switch URL(fileURLWithPath: donor.file).pathExtension.lowercased() {
+        case "m": language = "objective-c-header"
+        case "mm": language = "objective-c++-header"
+        case "c": language = extensionName == "h" ? "c-header" : "c++-header"
+        default: language = "c++-header"
+        }
+        return arguments + ["-x", language]
     }
 
     /// The declaration diff of two texts of one file, and — when code under an inactive

@@ -62,6 +62,35 @@ Human-readable text output is not covered — parse `--json`, not prose.
 
 ### Changed
 
+- **Input that is not understood is refused (exit `2`).** A positional argument a command does
+  not take (`refs a b`, `map extra`), an unknown flag after `version`, and flags that contradict
+  each other (`hierarchy --callers --callees`, `refs --compact --full`, `map --semantic --pagerank`)
+  used to be dropped or decided silently. Arity and exclusive flags are declared in the command
+  catalog, which `version` now joins. Over MCP, an integer argument outside the 64-bit range
+  (`{"budget": 1e30}`) is `-32602` instead of the default used silently, and `resources/read`
+  without a `uri` is `-32602` instead of `-32002 unknown resource`.
+- **A token budget has a documented maximum.** `map --budget`, `api --budget` and the MCP `budget`
+  above 100000000 are lowered to it, and the answer says so the way a raised minimum is said;
+  `--budget 9223372036854775807` used to crash the process (SIGTRAP), and over MCP ended the session.
+- **`lint` that checked nothing fails.** A rules file with no patterns, or none any engine could
+  compile, printed `✅ No violations found` and exited 0; it now says "nothing was checked" and exits
+  `2`, as a rules file that does not parse does (the MCP `lint` tool answers with an error).
+- **`index --app` builds where it looks.** With `--derived-data` (now accepted by `index`) or
+  `SEXTANT_DERIVED_DATA`, xcodebuild is given `-derivedDataPath`, and a store built with
+  `-derivedDataPath <dir>` — `info.plist` and `Index.noindex` in `<dir>` itself — is found.
+- **Coverage counts what a unit is built from.** The denominator of `covers N/M files` no longer
+  counts package manifests and headers, which are never the main file of a unit, so a complete
+  index reads 100%. The `store-coverage` cache moves to v4; `search`/`lint` caches move to v5.
+- **Umbrella index: packages without `platforms:` take part**, with SwiftPM's default macOS
+  minimum, instead of refusing the whole index; targets no library product reaches are named by
+  `index` instead of being left out without a word. README describes the expected layout.
+- **`changed` compares Objective-C, C and C++ headers** with the flags of the source that includes
+  them, and lists the declarations of a deleted C-family source from the base revision, instead of
+  "no compile flags — build the index", advice that could not help.
+- **`context` counts callees by symbol**, as `callees` does: `calls: 56 (152 call sites)`.
+- **Patterns `Array<$T>`, `Dictionary<$K, $V>` match type positions too** (`let xs: Array<Int>`,
+  `-> Array<String>`), and `func $F($P)` / `func $F($$$)` without a body match a declaration with
+  any body, as the documentation says; the return type, if written, is still compared.
 - **Contract, documented: exit code `1` is a failure that is not a usage error.** The contract
   named only `0` and `2`, while `1` was already what a failed build, a failed write, a git failure
   and a check that found problems returned. `sextant store use` returned `2` (usage error) when
@@ -230,6 +259,36 @@ Human-readable text output is not covered — parse `--json`, not prose.
 
 ### Fixed
 
+- **No Swift rule matches every node of a C++ file.** After clang's twenty-error limit the probes of
+  later patterns raised no error, and the recovered `$X` alone matched everything — `lint` reported
+  46 `force-unwrap` violations in the fixture's C++ file. Every error is now reported, a pattern that
+  is a bare metavariable is refused for the C family too, and clang's paths are compared with the
+  project's whatever their spelling (`/tmp` and `/private/tmp`), which also kept the probes' errors
+  apart from the file's ("read with reservations" for a file that builds).
+- **`api` reads a C++ header a source includes**, also in a project under a symlinked path; it was
+  left out as "no compiled source includes this header".
+- **Through `sextant serve`, output on one file is cut where a direct run cuts it.** The daemon
+  buffered standard output in 1024 bytes instead of the caller's block size, so a warning landed in
+  the middle of a line of `map`, `api`, `lint`.
+- **`search --json` and `lint --json` state a `--max-files` cut on stderr**, as `map --json` and
+  `api --json` do; the JSON shape is unchanged.
+- **`doctor` before the first `index` of a new version no longer deletes the only copy of the
+  compile flags** (an old-format `compile-db/<root>.json` whose project has no new entry yet); it
+  says the next `sextant index` carries them over.
+- **A file deleted with its whole directory, in an umbrella, is marked `[unconfirmed: file deleted
+  since indexing]`** and shown relative to the project, without the contradictory "out of date
+  despite the marker above" note.
+- **A source deleted but not committed is not listed** for `search`, `lint`, `doctor`, `index` and
+  coverage, where it was "could not be read (permissions?)" or "has no flags".
+- **The compile-flags warning clears after `sextant index`.** A successful index that recompiled no
+  C-family file now confirms the kept flags, so only a build made some other way is named.
+- **`sextant store` names the stores it sets aside**, not the one it reads, and a coverage tie says
+  so instead of "covers less (5 files against 5)".
+- **Smaller:** stale `refs --json` candidates are spelled like the index's paths (`/private/tmp`),
+  and an unconfirmed position is not listed again as a candidate; `--scope` naming a file says it
+  is not a directory; `store use` leaves a read-only `.sextant.json` alone (exit 1); `doctor` names a
+  `SEXTANT_CACHE_MAX` that is not a number; `changed` ignores untracked files in hidden directories
+  (`.build/`); `body --context-lines` with a huge value no longer crashes.
 - **`doctor --fix` reports a failed index build.** It ran the build and discarded the result, so a
   build that failed over an older store ended in "✅ ready"; it now prints `❌ doctor --fix: the
   index build failed (exit N)` and exits 1.

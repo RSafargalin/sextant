@@ -107,6 +107,15 @@ enum JSONValue {
         }
     }
 
+    /// Whether a JSON integer can be read as an `Int`: `1e30` is an integer to JSON Schema and
+    /// nothing a count or a budget can hold.
+    static func fitsInInt(_ value: Any) -> Bool {
+        guard let number = value as? NSNumber else { return false }
+        if CFNumberIsFloatType(number) { return Int(exactly: number.doubleValue) != nil }
+        return number.compare(NSNumber(value: Int.max)) != .orderedDescending
+            && number.compare(NSNumber(value: Int.min)) != .orderedAscending
+    }
+
     /// The JSON Schema type of `value`, for an error message.
     static func typeName(of value: Any) -> String {
         for type in ["null", "boolean", "integer", "number", "string", "array", "object"] where matches(value, type: type) {

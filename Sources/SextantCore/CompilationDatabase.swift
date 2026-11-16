@@ -251,13 +251,18 @@ public enum CompilationDatabase {
     /// package indexed on its own), and only the entries for files under `root` are kept. Where
     /// two databases describe one file, the one stored for `root` itself wins, then the one of the
     /// nearest root.
-    public static func commands(forFilesUnder root: String) -> [CompileCommand] {
-        databases(forFilesUnder: root).flatMap(\.commands)
+    ///
+    /// An entry for a file that no longer exists is left out unless `includingMissing`: a deleted
+    /// file's flags are still how its last revision was compiled, which is what `changed` parses
+    /// that revision with.
+    public static func commands(forFilesUnder root: String, includingMissing: Bool = false) -> [CompileCommand] {
+        databases(forFilesUnder: root, includingMissing: includingMissing).flatMap(\.commands)
     }
 
     /// The databases `commands(forFilesUnder:)` reads its answer from, each with the entries it
     /// contributes; a database that contributes nothing is absent.
-    static func databases(forFilesUnder root: String) -> [(url: URL, commands: [CompileCommand])] {
+    static func databases(forFilesUnder root: String,
+                          includingMissing: Bool = false) -> [(url: URL, commands: [CompileCommand])] {
         let own = CanonicalPath.of(root)
         // The roots are read from the entries' records — a hash names an entry, and only the
         // record leads back to the root. An entry without a record is never read.
@@ -280,14 +285,20 @@ public enum CompilationDatabase {
             guard let data = try? Data(contentsOf: url),
                   let commands = try? JSONDecoder().decode([CompileCommand].self, from: data) else { continue }
             var contributed: [CompileCommand] = []
-            for command in commands where FileManager.default.fileExists(atPath: command.file) {
-                let file = URL(fileURLWithPath: command.file).resolvingSymlinksInPath().path
+            for command in commands where includingMissing || FileManager.default.fileExists(atPath: command.file) {
+                let file = resolvedPath(command.file)
                 guard file.hasPrefix(prefix), seen.insert(file).inserted else { continue }
                 contributed.append(command)
             }
             if !contributed.isEmpty { result.append((url, contributed)) }
         }
         return result
+    }
+
+    /// A source's path as the database keys it (`CanonicalPath.ofFile`), so a deleted file is
+    /// spelled the way it was while it existed.
+    public static func resolvedPath(_ path: String) -> String {
+        CanonicalPath.ofFile(path)
     }
 
     public static func save(_ commands: [CompileCommand], forRoot root: String,
@@ -317,7 +328,21 @@ public enum CompilationDatabase {
     /// The file a project's flags were kept in before entries were named by a hash: the canonical
     /// root with every `/` turned into `_`, plus `.json`, directly in `compile-db`.
     static func legacyPath(forRoot root: String, home: URL) -> URL {
-        directory(home: home).appendingPathComponent(CanonicalPath.of(root).replacingOccurrences(of: "/", with: "_") + ".json")
+        directory(home: home).appendingPathComponent(legacyFileName(ofCanonicalRoot: CanonicalPath.of(root)))
+    }
+
+    /// The name of the file of the earlier naming for a root already in canonical form.
+    static func legacyFileName(ofCanonicalRoot root: String) -> String {
+        root.replacingOccurrences(of: "/", with: "_") + ".json"
+    }
+
+    /// How many commands the file of the earlier naming holds for `root` while the project's own
+    /// entry has none — what the next `sextant index` carries over; nil when there is nothing to carry.
+    public static func legacyCommandCount(forRoot root: String,
+                                          home: URL = FileManager.default.homeDirectoryForCurrentUser) -> Int? {
+        guard load(forRoot: root, home: home).isEmpty else { return nil }
+        let count = load(from: legacyPath(forRoot: root, home: home)).count
+        return count > 0 ? count : nil
     }
 
     /// Carries the flags of the earlier naming into the project's entry, once: when the entry has
@@ -353,11 +378,23 @@ public enum CompilationDatabase {
     ///
     /// The flags judged are the ones the answer reads — from the root's own database, and from the
     /// databases of the roots around it and inside it — and they are as old as the oldest of those.
+    ///
+    /// A database is as recent as its capture or as the last successful `sextant index` that
+    /// confirmed it (`confirm(forRoot:)`), whichever is later: a build that recompiled none of the
+    /// C-family files left their flags as they were, and only a build made some other way leaves
+    /// them behind unconfirmed.
     public static func stalenessNote(forRoot root: String, storePaths: [String]) -> [String] {
-        let captures = databases(forFilesUnder: root).compactMap { database in
-            (try? database.url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+        let captures = databases(forFilesUnder: root).compactMap { database -> (date: Date, confirmed: Bool)? in
+            let captured = modificationDate(database.url)
+            let confirmed = modificationDate(database.url.deletingLastPathComponent().appendingPathComponent(confirmationFileName))
+            switch (captured, confirmed) {
+            case (let captured?, let confirmed?) where confirmed > captured: return (confirmed, true)
+            case (let captured?, _): return (captured, false)
+            default: return nil
+            }
         }
-        guard let captured = captures.min() else { return [] }
+        guard let oldest = captures.min(by: { $0.date < $1.date }) else { return [] }
+        let captured = oldest.date
         guard let built = IndexFreshness.timestamp(ofStores: storePaths), built > captured else { return [] }
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
@@ -365,10 +402,27 @@ public enum CompilationDatabase {
         let later = gap < 90 ? "\(Int(gap.rounded()))s later"
             : gap < 5400 ? "\(Int((gap / 60).rounded())) minutes later"
             : "\(Int((gap / 3600).rounded())) hours later"
-        return ["⚠ compile flags captured \(formatter.string(from: captured)); the project was built "
+        return ["⚠ compile flags \(oldest.confirmed ? "last confirmed by `sextant index`" : "captured") "
+                + "\(formatter.string(from: captured)); the project was built "
                 + "\(later) (\(formatter.string(from: built))) — the C-family answers below stand on the "
                 + "older flags. A macro that changed in between makes them describe code this build does "
                 + "not contain. Refresh with `sextant index`."]
+    }
+
+    /// The file in a database's entry whose write time is when a successful `sextant index` last
+    /// found the database current.
+    static let confirmationFileName = "confirmed"
+
+    /// Records that the project's flags are current for the build `sextant index` just completed:
+    /// it succeeded and recompiled none of the files they describe, so none of their flags changed.
+    public static func confirm(forRoot root: String, home: URL = FileManager.default.homeDirectoryForCurrentUser) {
+        let location = entry(forRoot: root, home: home)
+        guard FileManager.default.fileExists(atPath: location.appendingPathComponent(fileName).path) else { return }
+        try? Data().write(to: location.appendingPathComponent(confirmationFileName), options: .atomic)
+    }
+
+    private static func modificationDate(_ url: URL) -> Date? {
+        (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
     }
 
     /// Merges a fresh capture into what is already known.

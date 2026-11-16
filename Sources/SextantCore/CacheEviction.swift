@@ -6,9 +6,9 @@ import Foundation
 public enum CacheNamespace {
     public static let declarations = "declarations-v6"
     public static let driftDeclarations = "drift-declarations-v3"
-    public static let search = "search-v4"
-    public static let lint = "lint-v4"
-    public static let storeCoverage = "store-coverage-v3"
+    public static let search = "search-v5"
+    public static let lint = "lint-v5"
+    public static let storeCoverage = "store-coverage-v4"
 
     /// Every versioned namespace in use. A directory `<family>-v<N>` of one of these families with
     /// another version is a leftover of an earlier format.
@@ -82,10 +82,20 @@ public enum CacheEviction {
             guard let owner = Pass.owner(of: entry) else { return true }
             return !FileManager.default.fileExists(atPath: owner)
         }
+        // A `<root>.json` of the earlier naming is the only copy of its project's flags until
+        // `sextant index` carries it into the project's entry, so it goes only once an entry of that
+        // root exists, or when none of the files it names exist any more.
+        let databases = cache.appendingPathComponent("compile-db")
+        let carried = Set(((try? FileManager.default.contentsOfDirectory(atPath: databases.path)) ?? [])
+            .filter(CanonicalPath.isEntryName)
+            .compactMap { Pass.owner(of: databases.appendingPathComponent($0)) }
+            .map(CompilationDatabase.legacyFileName(ofCanonicalRoot:)))
         pass.removeEntries(in: "compile-db") { entry in
-            // A database lives in an entry named by a hash of its root; a `<root>.json` under the
-            // earlier naming is never read again.
-            guard CanonicalPath.isEntryName(entry.lastPathComponent) else { return true }
+            // A database lives in an entry named by a hash of its root.
+            guard CanonicalPath.isEntryName(entry.lastPathComponent) else {
+                guard entry.pathExtension == "json", !carried.contains(entry.lastPathComponent) else { return true }
+                return !Pass.compiledFiles(entry).contains { FileManager.default.fileExists(atPath: $0) }
+            }
             if let owner = Pass.owner(of: entry), !FileManager.default.fileExists(atPath: owner) { return true }
             // Gone when the database names files and none of them exist any more.
             let files = Pass.compiledFiles(entry.appendingPathComponent(CompilationDatabase.fileName))

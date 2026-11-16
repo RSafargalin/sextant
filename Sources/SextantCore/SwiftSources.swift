@@ -60,7 +60,11 @@ public enum SwiftSources {
         var skipped: Set<String> = []
         for path in output.split(separator: "\0").map(String.init) {
             if isListedSource(path, suffixes: suffixes, includeTests: includeTests) {
-                files.append(root.appendingPathComponent(path))
+                // git lists a tracked file deleted from the working tree until the deletion is
+                // committed; it is not there to read.
+                let file = root.appendingPathComponent(path)
+                guard FileManager.default.fileExists(atPath: file.path) else { continue }
+                files.append(file)
             } else if let directory = skippedDirectory(of: path, suffixes: suffixes, includeTests: includeTests) {
                 skipped.insert(directory)
             }
@@ -195,7 +199,11 @@ public enum SwiftSources {
         // from the repository root, like diff (ls-files defaults to the current directory).
         if to == nil,
            let untracked = runGit(["-C", root, "ls-files", "--others", "--exclude-standard", "--full-name", "-z", "--"] + pathspecs) {
-            files += untracked.split(separator: "\0").map(String.init).filter { name in suffixes.contains(where: name.hasSuffix) }
+            // An untracked file under a hidden directory (`.build/`, `.swiftpm/`) is a build's output
+            // or a tool's state, never a source the walk would list — even where `.gitignore` forgets it.
+            files += untracked.split(separator: "\0").map(String.init).filter { name in
+                suffixes.contains(where: name.hasSuffix) && !name.split(separator: "/").dropLast().contains { $0.hasPrefix(".") }
+            }
         }
         let unique = Array(Set(files)).sorted()
         return (topLevel, unique.filter { $0.hasSuffix(".swift") }, unique.filter { !$0.hasSuffix(".swift") }, renamedFrom)

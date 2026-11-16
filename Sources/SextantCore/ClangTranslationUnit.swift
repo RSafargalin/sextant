@@ -87,6 +87,9 @@ public struct ClangTranslationUnit {
         let index = library.createIndex(1, 0)   // no declarations from PCH, no diagnostics on stderr
         defer { library.disposeIndex(index) }
 
+        // Every error is reported, never the first twenty: past clang's default limit the rest of
+        // the file goes without diagnostics, and appended text that failed would read as clean.
+        let arguments = arguments + ["-ferror-limit=0"]
         var argumentStrings: [UnsafeMutablePointer<CChar>?] = arguments.map { strdup($0) }
         defer { argumentStrings.forEach { free($0) } }
 
@@ -129,9 +132,17 @@ public struct ClangTranslationUnit {
 
         let names = FileNames(library: library)
         let root = node(of: library.translationUnitCursor(unit), library: library,
-                        keepingHeaders: keepingHeaders, names: names, insideKeptFile: false)
+                        keepingHeaders: Set(keepingHeaders.map(fileKey)), names: names, insideKeptFile: false)
         return ClangTranslationUnit(root: root, errors: errors,
                                     skippedRanges: skipped(in: unit, file: file, library: library))
+    }
+
+    /// The spelling under which a path given by a caller and a path clang reports are compared:
+    /// the real path of the deepest part that exists, with the rest appended. `/private/tmp/x` (as
+    /// clang spells a file) and `/tmp/x` (as a resolved URL spells it — Foundation drops `/private`,
+    /// but only for a file that exists) are then one file, whether or not the file still exists.
+    public static func fileKey(_ path: String) -> String {
+        CanonicalPath.real(path)
     }
 
     /// Byte ranges of the main file that the preprocessor skipped.
@@ -167,6 +178,17 @@ public struct ClangTranslationUnit {
             names[key] = name
             return name
         }
+
+        /// `fileKey` of the file's name, cached the same way.
+        func key(of file: SXFile?) -> String {
+            guard let file else { return "" }
+            let handle = UInt(bitPattern: Int(bitPattern: file))
+            if let cached = keys[handle] { return cached }
+            let key = ClangTranslationUnit.fileKey(name(of: file))
+            keys[handle] = key
+            return key
+        }
+        private var keys: [UInt: String] = [:]
     }
 
     private static func node(of cursor: SXCursor, library: ClangLibrary, keepingHeaders: Set<String>,
@@ -190,7 +212,7 @@ public struct ClangTranslationUnit {
             guard !keepingHeaders.isEmpty else { return false }
             var childFile: SXFile?
             library.spellingLocation(library.cursorLocation(child), &childFile, nil, nil, nil)
-            return keepingHeaders.contains(names.name(of: childFile))
+            return keepingHeaders.contains(names.key(of: childFile))
         }
 
         return ClangNode(

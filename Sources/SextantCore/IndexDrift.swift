@@ -160,7 +160,8 @@ public final class IndexDrift: @unchecked Sendable {
         self.makeClassificationCache = classificationCache
         self.report = report
         self.root = IndexSnapshot.canonical(projectRoot)
-        self.spelledRoot = URL(fileURLWithPath: projectRoot).standardizedFileURL.path
+        // Candidates are spelled the way the store spells the files around them: by real path.
+        self.spelledRoot = CanonicalPath.real(projectRoot)
         self.changed = Set(report.changedFiles)
         self.home = home
         self.git = git
@@ -222,7 +223,9 @@ public final class IndexDrift: @unchecked Sendable {
         for relative in changed.sorted() {
             let now = current(of: relative)
             guard let source = now.source, let lines = now.lines, source.contains(needle) else { continue }
-            let confirmed = confirmedPositions ?? Set(known().filter(\.isConfirmed).compactMap { location in
+            // Every position the index states is accounted for, unconfirmed ones included: a text
+            // match where the answer already lists a position is that position again, not a lead.
+            let confirmed = confirmedPositions ?? Set(known().compactMap { location in
                 location.column.flatMap { column in changedRelativePath(of: location.path).map { "\($0):\(location.line):\(column)" } }
             })
             confirmedPositions = confirmed
@@ -407,12 +410,9 @@ public final class IndexDrift: @unchecked Sendable {
         return all[hash]
     }
 
-    /// The symlink-resolved path; for a file that no longer exists, its directory resolved.
+    /// The symlink-resolved path, for a file that no longer exists too (`CanonicalPath.ofFile`).
     static func canonicalPath(_ path: String) -> String {
-        let url = URL(fileURLWithPath: path)
-        if FileManager.default.fileExists(atPath: path) { return url.resolvingSymlinksInPath().standardizedFileURL.path }
-        return url.deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL
-            .appendingPathComponent(url.lastPathComponent).path
+        CanonicalPath.ofFile(path)
     }
 
     /// `save(_:)` and `save:` are written `save` in source.

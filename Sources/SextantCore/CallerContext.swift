@@ -20,18 +20,33 @@ public struct CallerContext: Codable, Sendable, Equatable {
     /// `2>&1`), so the order in which a command writes to the two is visible. nil from a client
     /// that does not send it.
     public let outputSharesErrorStream: Bool?
+    /// The size of the buffer the C library gives the caller's standard output: where a command's
+    /// output is cut into writes, and so where its standard error can fall in between when the two
+    /// streams are one file. nil from a client that does not send it.
+    public let outputBufferSize: Int?
 
-    public init(environment: [String: String], outputIsTerminal: Bool, outputSharesErrorStream: Bool? = nil) {
+    public init(environment: [String: String], outputIsTerminal: Bool, outputSharesErrorStream: Bool? = nil,
+                outputBufferSize: Int? = nil) {
         self.environment = environment.filter { Self.environmentNames.contains($0.key) }
         self.outputIsTerminal = outputIsTerminal
         self.outputSharesErrorStream = outputSharesErrorStream
+        self.outputBufferSize = outputBufferSize
     }
 
     /// The context of the current process.
     public static func current(environment: [String: String] = ProcessInfo.processInfo.environment,
                                outputIsTerminal: Bool = isatty(STDOUT_FILENO) != 0) -> CallerContext {
         CallerContext(environment: environment, outputIsTerminal: outputIsTerminal,
-                      outputSharesErrorStream: sameFile(STDOUT_FILENO, STDERR_FILENO))
+                      outputSharesErrorStream: sameFile(STDOUT_FILENO, STDERR_FILENO),
+                      outputBufferSize: streamBufferSize(STDOUT_FILENO))
+    }
+
+    /// The buffer size the C library chooses for a stream on `descriptor`: the file's preferred
+    /// block size, or `BUFSIZ` when the file reports none.
+    static func streamBufferSize(_ descriptor: Int32) -> Int {
+        var status = stat()
+        guard fstat(descriptor, &status) == 0, status.st_blksize > 0 else { return Int(BUFSIZ) }
+        return Int(status.st_blksize)
     }
 
     /// Whether two descriptors refer to the same file (device and inode).

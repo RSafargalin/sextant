@@ -56,6 +56,23 @@ struct SetupCommandsCLITests {
         #expect(usage.code == 2, "\(usage.errors)")
     }
 
+    /// Regression: the atomic write renamed a new file over a read-only one, undoing its protection.
+    @Test("store use leaves a read-only .sextant.json as it is and says so",
+          .enabled(if: BuildProducts.hasSextantBinary && getuid() != 0, "needs the built binary, and a user a read-only file stops"))
+    func storeUseHonoursReadOnlyConfig() throws {
+        let scratch = try Scratch()
+        try FileManager.default.createDirectory(at: scratch.root, withIntermediateDirectories: true)
+        let config = scratch.root.appendingPathComponent(".sextant.json")
+        try "{\"budget\": 3000}\n".write(to: config, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: config.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: config.path) }
+
+        let run = try BuildProducts.runSextant(["store", "use", "recency", "--project", scratch.root.path], home: scratch.home)
+        #expect(run.code == 1, "\(run.errors)")
+        #expect(run.errors.contains("read-only"), "\(run.errors)")
+        #expect(try String(contentsOf: config, encoding: .utf8) == "{\"budget\": 3000}\n")
+    }
+
     /// The log names every query asked; it was created readable by every user on the machine.
     @Test("The telemetry log is created readable by its owner only",
           .enabled(if: BuildProducts.hasSextantBinary, "sextant is not built — run `swift build` first"))

@@ -79,13 +79,6 @@ struct IndexBuildTests {
         #expect(duplicates.outcome == .duplicateIdentities(["Core"]))
         #expect(duplicates.skipped == ["Broken"], "a dropped package must be reported even on a refusal")
 
-        let platform = IndexBuild.umbrellaPlan(
-            packages: [package("IOSOnly", macOS: nil, path: "/p/IOSOnly")],
-            expected: ["/p/IOSOnly", "/p/Broken"]
-        )
-        #expect(platform.outcome == .unsupportedPlatform(["IOSOnly"]))
-        #expect(platform.skipped == ["Broken"])
-
         let empty = IndexBuild.umbrellaPlan(packages: [], expected: ["/p/Broken"])
         #expect(empty.outcome == .noManifests)
         #expect(empty.skipped == ["Broken"])
@@ -101,13 +94,43 @@ struct IndexBuildTests {
         #expect(plan.outcome == .duplicateIdentities(["Core"]))
     }
 
-    @Test("A package without macOS support is refused — a host build is impossible")
-    func unsupportedPlatform() {
+    @Test("A package that declares no macOS minimum takes part with SwiftPM's default, not refused")
+    func packageWithoutPlatformsTakesPart() {
         let plan = IndexBuild.umbrellaPlan(packages: [
-            package("Core", macOS: "13.0"),
-            package("IOSOnly", macOS: nil)
+            package("Core", macOS: "14.0", products: ["CoreLib"]),
+            package("Plain", macOS: nil, products: ["PlainLib"])
         ])
-        #expect(plan.outcome == .unsupportedPlatform(["IOSOnly"]))
+        guard case .ready(let manifest, let macOSVersion, _) = plan.outcome else {
+            Issue.record("expected .ready, got \(plan.outcome)"); return
+        }
+        #expect(macOSVersion == "14.0")
+        #expect(manifest.contains("PlainLib"))
+        let alone = IndexBuild.umbrellaPlan(packages: [package("Plain", macOS: nil), package("Other", macOS: nil)])
+        guard case .ready(_, let version, _) = alone.outcome else { Issue.record("expected .ready"); return }
+        #expect(version == "13.0")
+    }
+
+    @Test("Targets no library product reaches are named: the umbrella never builds them")
+    func unreachableTargetsAreNamed() {
+        func manifest(products: [[String: Any]], targets: [[String: Any]]) -> [String: Any] {
+            ["products": products, "targets": targets, "platforms": [[String: Any]]()]
+        }
+        let library: [String: Any] = ["name": "Mid", "type": ["library": ["automatic"]], "targets": ["Mid"]]
+        let midTarget: [String: Any] = ["name": "Mid", "type": "regular",
+                                        "dependencies": [["byName": ["MidCore", NSNull()]]]]
+        let coreTarget: [String: Any] = ["name": "MidCore", "type": "regular", "dependencies": [[String: Any]]()]
+        let tests: [String: Any] = ["name": "MidTests", "type": "test", "dependencies": [[String: Any]]()]
+        let tool: [String: Any] = ["name": "midtool", "type": "executable", "dependencies": [[String: Any]]()]
+        let covered = manifest(products: [library], targets: [midTarget, coreTarget, tests])
+        #expect(IndexBuild.unreachableTargets(in: covered).isEmpty, "a dependency of a product target is built")
+        let none = manifest(products: [], targets: [midTarget, coreTarget, tests, tool])
+        #expect(IndexBuild.unreachableTargets(in: none) == ["Mid", "MidCore", "midtool"])
+
+        let mid = IndexBuild.package(fromManifest: none, at: URL(fileURLWithPath: "/repo/Packages/Mid"))
+        #expect(mid.macOSVersion == nil)
+        let plan = IndexBuild.umbrellaPlan(packages: [package("App", macOS: "13.0"), mid])
+        #expect(plan.unreachable == ["Mid (Mid, MidCore, midtool)"])
+        guard case .ready = plan.outcome else { Issue.record("expected .ready, got \(plan.outcome)"); return }
     }
 
     @Test("The umbrella platform is the maximum requirement; the manifest lists every product")

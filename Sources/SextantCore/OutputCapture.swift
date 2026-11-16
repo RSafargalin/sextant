@@ -74,12 +74,14 @@ public enum OutputCapture {
     /// With `mergingStreams`, both go into one pipe, in the order `body` wrote them, and come back
     /// together as `output` (`errorOutput` is empty): what a caller whose two streams are one file
     /// would have seen. Standard output is then line-buffered when `lineBufferedOutput` (the caller
-    /// writes to a terminal) and fully buffered otherwise, as it would be in the caller's process.
+    /// writes to a terminal) and fully buffered otherwise, in a buffer of `outputBufferSize` bytes,
+    /// as it would be in the caller's process — the buffer size decides where standard error can
+    /// fall between two pieces of standard output.
     ///
     /// Swapping descriptors is process-global: the caller must guarantee there are no concurrent
     /// invocations (the daemon serves requests sequentially).
     public static func capture(mergingStreams: Bool = false, lineBufferedOutput: Bool = false,
-                               _ body: () -> Int32) -> Captured {
+                               outputBufferSize: Int? = nil, _ body: () -> Int32) -> Captured {
         let outPipe = Pipe(), errorPipe = Pipe()
         let pipes = mergingStreams ? [outPipe] : [outPipe, errorPipe]
         var code: Int32 = 0
@@ -88,7 +90,9 @@ public enum OutputCapture {
             let savedOut = dup(STDOUT_FILENO), savedError = dup(STDERR_FILENO)
             dup2(outPipe.fileHandleForWriting.fileDescriptor, STDOUT_FILENO)
             dup2(pipes.last!.fileHandleForWriting.fileDescriptor, STDERR_FILENO)
-            if mergingStreams { setvbuf(stdout, nil, lineBufferedOutput ? _IOLBF : _IOFBF, Int(BUFSIZ)) }
+            if mergingStreams {
+                setvbuf(stdout, nil, lineBufferedOutput ? _IOLBF : _IOFBF, max(1, outputBufferSize ?? Int(BUFSIZ)))
+            }
             code = body()
             fflush(stdout)
             fflush(stderr)

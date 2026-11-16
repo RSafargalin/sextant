@@ -113,6 +113,14 @@ public enum RuleEngine {
     }
 
     /// One line per pattern that never ran, for the surfaces that print warnings.
+    /// Why a run of `rules` checked nothing at all — no patterns, or none any engine could use —
+    /// or nil when something was checked. Such a run is no pass: its report must not say "clean".
+    public static func nothingChecked(rules: [Rule], outcome: Outcome) -> String? {
+        let patterns = rules.reduce(0) { $0 + $1.patterns.count }
+        if patterns == 0 { return "the rule set has no patterns" }
+        return outcome.broken.count >= patterns ? "none of its \(patterns) pattern(s) could be compiled" : nil
+    }
+
     public static func brokenReport(_ broken: [BrokenPattern]) -> [String] {
         broken.map { "⚠ rule '\($0.ruleID)': pattern \($0.pattern) could not be compiled (\($0.reason)) — it matched nothing." }
     }

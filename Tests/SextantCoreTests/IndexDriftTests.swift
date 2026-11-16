@@ -11,6 +11,22 @@ struct IndexDriftTests {
 
     // MARK: - Line diff
 
+    /// Regression: an umbrella's store spells its files by their real path (`/private/tmp/…`) and a
+    /// package directory removed whole left nothing to resolve, so its deleted file read as outside
+    /// the project — neither marked as deleted since indexing nor shown relative to the project.
+    @Test("A file whose whole directory is gone is spelled the way the project is")
+    func deletedDirectoryKeepsTheProjectSpelling() throws {
+        let project = FileManager.default.temporaryDirectory.appendingPathComponent("sextant-gone-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: project) }
+        let real = String(cString: realpath(project.path, nil))
+        let root = CanonicalPath.of(project.path)
+        #expect(IndexDrift.canonicalPath(real + "/Packages/Gone/Sources/Gone/Gone.swift")
+                == root + "/Packages/Gone/Sources/Gone/Gone.swift")
+        #expect(DisplayPath.of(real + "/Packages/Gone/Sources/Gone/Gone.swift", root: project.path)
+                == "Packages/Gone/Sources/Gone/Gone.swift")
+    }
+
     @Test("unchanged text maps every line onto itself")
     func unchangedMapsToItself() {
         let lines = ["a", "b", "c"]

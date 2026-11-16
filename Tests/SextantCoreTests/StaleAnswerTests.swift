@@ -279,6 +279,26 @@ struct StaleAnswerTests {
         #expect(text.output.contains("Sources/stale/Use.swift:3:10  [unconfirmed: line changed since indexing"), "\(text.output)")
     }
 
+    /// Regression: a declaration whose line changed with its name left in place was listed twice —
+    /// as the unconfirmed definition and as a candidate the index does not know, at one position.
+    @Test("an unconfirmed position is not offered again as a candidate; candidates are spelled as the index spells files",
+          .enabled(if: binary != nil, "sextant is not built — run `swift build` first"), .timeLimit(.minutes(10)))
+    func unconfirmedPositionIsNotACandidate() throws {
+        let package = try indexed()
+        defer { try? package.restore() }
+        let source = try package.text("Sources/stale/Kept.swift")
+        try package.write("Sources/stale/Kept.swift",
+                          source.replacingOccurrences(of: "public func work() {}", with: "public func work() { _ = 1 }")
+                            + "func extra() { Kept().work() }\n")
+        let stale = try refs("work", in: package)
+        let definition = try #require(stale.definitions.first { $0.file == "Kept.swift" })
+        #expect(definition.unconfirmed != nil, "\(definition)")
+        #expect(!stale.candidates.contains { $0.file == "Kept.swift" && $0.line == definition.line }, "\(stale.candidates)")
+        let spelled = (stale.staleness?["candidates"] as? [[String: Any]] ?? []).compactMap { $0["path"] as? String }
+        let directory = (definition.path as NSString).deletingLastPathComponent
+        #expect(!spelled.isEmpty && spelled.allSatisfy { $0.hasPrefix(directory + "/") }, "\(spelled) vs \(directory)")
+    }
+
     @Test("a new call in an existing file and in a new file: candidates, not confirmed",
           .enabled(if: binary != nil, "sextant is not built — run `swift build` first"), .timeLimit(.minutes(10)))
     func newCalls() throws {

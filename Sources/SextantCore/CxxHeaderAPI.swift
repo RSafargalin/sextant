@@ -16,7 +16,8 @@ public enum CxxHeaderAPI {
         var byHeader: [String: [Declaration]] = [:]
         for command in commands {
             guard byHeader.count < headers.count else { break }
-            let remaining = headers.filter { byHeader[$0] == nil }
+            // Keys in clang's spelling of a path and the caller's compared alike (`fileKey`).
+            let remaining = Set(headers.filter { byHeader[$0] == nil }.map(ClangTranslationUnit.fileKey))
             guard let unit = try? ClangTranslationUnit.parse(
                 file: command.file,
                 arguments: CompilationDatabase.parseArguments(of: command),
@@ -24,11 +25,14 @@ public enum CxxHeaderAPI {
                 keepingHeaders: remaining
             ) else { continue }
 
-            for child in unit.root.children where remaining.contains(child.file) {
+            let callerSpelling = Dictionary(headers.map { (ClangTranslationUnit.fileKey($0), $0) }, uniquingKeysWith: { first, _ in first })
+            for child in unit.root.children {
+                let key = ClangTranslationUnit.fileKey(child.file)
+                guard remaining.contains(key), let header = callerSpelling[key] else { continue }
                 let declarations = ClangDeclarations.declarations(of: [child], source: sourceText(of: child.file),
                                                                   publicOnly: true, access: .public)
                 guard !declarations.isEmpty else { continue }
-                byHeader[child.file, default: []] += declarations
+                byHeader[header, default: []] += declarations
             }
         }
         return byHeader

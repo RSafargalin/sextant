@@ -148,6 +148,9 @@ struct IndexLayerDecisionTests {
 
         let own = try #require(StoreCoverage.measure(store: store, projectRoot: fixture))
         #expect(own.covered > 0)
+        // The store `sextant index` built covers every source; a manifest and the headers are not
+        // what a unit is built from, so they do not keep it short of 100%.
+        #expect(own.covered == own.total, "\(own.summary)")
         let foreign = try #require(StoreCoverage.measure(store: store, projectRoot: other))
         #expect(foreign.covered == 0)
         #expect(StoreCoverage.cacheKey(store: store, projectRoot: other, includeTests: true, fileCount: count)

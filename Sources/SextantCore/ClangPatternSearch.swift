@@ -143,9 +143,9 @@ public struct ClangPatternSearch {
         // Errors raised inside the appended text decide whether a pattern compiled; errors
         // anywhere else mean the file's own tree is clang's recovery, which the caller reports.
         let overlayRange = sourceBytes.count..<overlayData.count
-        let mainFile = URL(fileURLWithPath: file).standardizedFileURL.path
+        let mainFile = ClangTranslationUnit.fileKey(file)
         let inOverlay: (ClangTranslationUnit.Diagnostic) -> Bool = {
-            overlayRange.contains($0.offset) && URL(fileURLWithPath: $0.file).standardizedFileURL.path == mainFile
+            overlayRange.contains($0.offset) && ClangTranslationUnit.fileKey($0.file) == mainFile
         }
         let probeDiagnostics = unit.errors.filter(inOverlay)
         let probeErrors = probeDiagnostics.map { $0.text }
@@ -249,6 +249,9 @@ public struct ClangPatternSearch {
             }
             let candidate = Self.transparent(statement)
             guard Self.isUsable(candidate) else { continue }
+            if candidate.kindName == "DeclRefExpr", sentinels.contains(candidate.spelling) {
+                return .unbindable("the pattern is a bare metavariable, which matches everything")
+            }
             var referenced = Set<String>()
             Self.collectReferences(candidate, into: &referenced)
             if let unbound = sentinelNames.first(where: { !referenced.contains($0) }) {

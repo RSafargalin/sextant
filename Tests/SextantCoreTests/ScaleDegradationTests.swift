@@ -102,6 +102,18 @@ struct ScaleDegradationTests {
         #expect(lint.all.contains("covered 3 of 13"))
     }
 
+    @Test("search --json and lint --json name the cut on stderr, as map --json does")
+    func jsonModesNameTheCut() throws {
+        let package = try makePackage(name: "js")
+        defer { try? FileManager.default.removeItem(at: package) }
+
+        for arguments in [["search", "print($$$)"], ["lint"], ["map"]] {
+            let run = try sextant(arguments + ["--json", "--project", package.path, "--max-files", "3"])
+            #expect(run.stderr.contains("covered 3 of 13"), "\(arguments): \(run.stderr)")
+            #expect((try? JSONSerialization.jsonObject(with: Data(run.stdout.utf8))) != nil, "\(arguments): \(run.stdout)")
+        }
+    }
+
     /// `api` is a contract, so it is not cut unless asked. When it is, the header says by how much.
     @Test("api is unbounded by default and states its truncation when a budget is given")
     func apiBudgetIsExplicit() throws {

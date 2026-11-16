@@ -47,6 +47,33 @@ struct CompileFlagsFreshnessTests {
         #expect(note.contains("sextant index"))
     }
 
+    /// Regression: an incremental `sextant index` that recompiled no C-family file kept the flags as
+    /// they were, and the note then warned after every reindex with advice that could not clear it.
+    @Test("flags `sextant index` confirmed after the build say nothing; a later build by other means is named")
+    func confirmedFlagsAreCurrent() throws {
+        let root = try makeRoot()
+        let source = "\(root)/legacy.c"
+        try "int legacy(void) { return 1; }\n".write(toFile: source, atomically: true, encoding: .utf8)
+        try CompilationDatabase.save([CompileCommand(directory: root, file: source, arguments: ["clang", source])],
+                                     forRoot: root)
+        defer { try? FileManager.default.removeItem(at: CompilationDatabase.entry(forRoot: root)) }
+        let captured = try #require(CompilationDatabase.capturedAt(forRoot: root))
+        try FileManager.default.setAttributes([.modificationDate: captured.addingTimeInterval(-1200)],
+                                              ofItemAtPath: CompilationDatabase.path(forRoot: root).path)
+        let store = try makeStore(newerThan: captured.addingTimeInterval(-1200))
+        defer { try? FileManager.default.removeItem(atPath: store) }
+        #expect(!CompilationDatabase.stalenessNote(forRoot: root, storePaths: [store]).isEmpty)
+
+        CompilationDatabase.confirm(forRoot: root)
+        #expect(CompilationDatabase.stalenessNote(forRoot: root, storePaths: [store]).isEmpty)
+
+        // A build made some other way after the confirmation leaves the flags behind again.
+        let later = try makeStore(newerThan: Date())
+        defer { try? FileManager.default.removeItem(atPath: later) }
+        let note = CompilationDatabase.stalenessNote(forRoot: root, storePaths: [later]).joined()
+        #expect(note.contains("last confirmed by `sextant index`"), "\(note)")
+    }
+
     /// A query reads the flags of the roots around the one asked about and inside it, so the note
     /// has to judge those: judging only the root's own database said nothing about flags read
     /// from a containing root's.

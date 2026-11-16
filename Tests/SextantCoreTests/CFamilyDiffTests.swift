@@ -79,6 +79,75 @@ struct CFamilyDiffTests {
         #expect(result.removed.isEmpty && result.changed.isEmpty)
     }
 
+    /// A copy of the fixture's C-family sources in a git repository, with the fixture's commands
+    /// moved onto it: a header and a deleted source are then compared against the commit.
+    private func repositoryCopy() throws -> (root: URL, commands: [CompileCommand]) {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("sextant-cdiff-\(UUID().uuidString.prefix(8))")
+        for target in ["CFixture", "ObjCFixture", "CxxFixture"] {
+            let destination = root.appendingPathComponent("Sources/\(target)")
+            try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try FileManager.default.copyItem(at: Self.fixture.appendingPathComponent("Sources/\(target)"), to: destination)
+        }
+        func git(_ arguments: [String]) throws {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            process.arguments = ["git", "-C", root.path, "-c", "user.name=t", "-c", "user.email=t@t"] + arguments
+            process.standardOutput = FileHandle.nullDevice
+            try process.run()
+            process.waitUntilExit()
+            #expect(process.terminationStatus == 0, "git \(arguments)")
+        }
+        try git(["init", "-q"])
+        try git(["add", "."])
+        try git(["commit", "-q", "-m", "one"])
+        let from = Self.fixture.path + "/Sources", to = root.path + "/Sources"
+        let commands = CompilationDatabase.load(forRoot: Self.fixture.path).map {
+            CompileCommand(directory: $0.directory, file: $0.file.replacingOccurrences(of: from, with: to),
+                           arguments: $0.arguments.map { $0.replacingOccurrences(of: from, with: to) })
+        }
+        return (root, commands)
+    }
+
+    @Test("Headers are compared with the flags of the source that includes them, not refused",
+          .enabled(if: isReady, "the fixture has not been built and indexed, or there is no toolchain"))
+    func comparesHeaders() throws {
+        let (root, commands) = try repositoryCopy()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let objc = root.appendingPathComponent("Sources/ObjCFixture/include/ObjCFixture.h")
+        try (try String(contentsOf: objc, encoding: .utf8) + "\n@interface OCGreeter (Whisper)\n- (NSString *)ocWhisper;\n@end\n")
+            .write(to: objc, atomically: true, encoding: .utf8)
+        let c = root.appendingPathComponent("Sources/CFixture/include/CFixture.h")
+        try (try String(contentsOf: c, encoding: .utf8)).replacingOccurrences(
+            of: "int c_fixture_double(int input);", with: "int c_fixture_double(int input);\nint c_fixture_triple(int input);")
+            .write(to: c, atomically: true, encoding: .utf8)
+        let outcome = CFamilyDiff.changes(files: ["Sources/CFixture/include/CFixture.h", "Sources/ObjCFixture/include/ObjCFixture.h"],
+                                          topLevel: root.path, projectRoot: root.path, from: "HEAD", to: nil,
+                                          commands: commands)
+        #expect(outcome.notDiffed.isEmpty, "\(outcome.notDiffed)")
+        let added = outcome.files.flatMap { $0.result.added.map(\.header) }
+        #expect(added.contains { $0.contains("c_fixture_triple") }, "\(added)")
+        #expect(added.contains { $0.contains("ocWhisper") }, "\(added)")
+    }
+
+    @Test("A deleted source lists the declarations it took with it, read from the base revision",
+          .enabled(if: isReady, "the fixture has not been built and indexed, or there is no toolchain"))
+    func deletedSourceListsItsDeclarations() throws {
+        let (root, commands) = try repositoryCopy()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.removeItem(at: root.appendingPathComponent("Sources/CxxFixture/CxxFixture.cpp"))
+        let outcome = CFamilyDiff.changes(files: ["Sources/CxxFixture/CxxFixture.cpp"], topLevel: root.path,
+                                          projectRoot: root.path, from: "HEAD", to: nil, commands: commands)
+        #expect(outcome.notDiffed.isEmpty, "\(outcome.notDiffed)")
+        let removed = outcome.files.flatMap { $0.result.removed.map(\.header) }
+        #expect(removed.contains { $0.contains("nestedDouble") }, "\(removed)")
+        // With its entry gone too, flags are borrowed from another source; whatever that gives, the
+        // advice is never to build the index, which cannot bring a deleted file's flags back.
+        let borrowed = CFamilyDiff.changes(files: ["Sources/CxxFixture/CxxFixture.cpp"], topLevel: root.path,
+                                           projectRoot: root.path, from: "HEAD", to: nil,
+                                           commands: commands.filter { !$0.file.hasSuffix("CxxFixture.cpp") })
+        #expect(!borrowed.notDiffed.contains { $0.reason.contains("sextant index") }, "\(borrowed.notDiffed)")
+    }
+
     @Test("A file with no compile flags is named, not silently skipped")
     func namesFilesWithoutFlags() {
         let outcome = CFamilyDiff.changes(files: ["Sources/Nothing/Unknown.m"],
