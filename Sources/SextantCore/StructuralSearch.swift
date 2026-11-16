@@ -1,4 +1,5 @@
 import Foundation
+import SwiftOperators
 import SwiftParser
 import SwiftSyntax
 
@@ -69,8 +70,8 @@ public struct PatternSearch {
             case .unbindableMetavariable(let name, let reason):
                 return "the metavariable \(name) cannot be bound: \(reason)"
             case .unknownOperator(let name):
-                return "the pattern uses \(name), whose precedence is not known (only the standard operators are), "
-                    + "so how its expression is grouped cannot be decided"
+                return "the pattern uses \(name), whose precedence is not known (neither a standard operator nor one "
+                    + "declared in the searched files), so how its expression is grouped cannot be decided"
             }
         }
     }
@@ -82,7 +83,10 @@ public struct PatternSearch {
     private let sentinelToName: [String: String]
     private let variadicSentinels: Set<String>
 
-    public init(pattern: String) throws {
+    /// `operators`, when given, supplies the operators and precedence groups declared in the files
+    /// to be searched: a pattern using one of them is folded by its declared precedence, as those
+    /// files are. It is asked for only when the standard operators cannot fold the pattern.
+    public init(pattern: String, operators: (() -> OperatorTable)? = nil) throws {
         let trimmed = pattern.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw Failure.emptyPattern }
 
@@ -101,8 +105,14 @@ public struct PatternSearch {
                 throw Failure.unparsable
             }
         }
-        // The pattern is matched against folded sources, so it is folded the same way.
-        let folded = OperatorFolding.fold(parsed)
+        // The pattern is matched against folded sources, so it is folded the same way — by the
+        // standard precedences, then by those the searched files (and the pattern) declare.
+        var folded = OperatorFolding.fold(parsed)
+        if !folded.unknownOperators.isEmpty, let operators {
+            var table = operators()
+            table.addSourceFile(parsed) { _ in }
+            folded = OperatorFolding.fold(parsed, operators: table)
+        }
         if !folded.unknownOperators.isEmpty {
             throw Failure.unknownOperator(folded.unknownOperators.joined(separator: ", "))
         }
@@ -227,13 +237,57 @@ public struct PatternSearch {
         if let patternToken = pattern.as(TokenSyntax.self) {
             return patternToken.text == candidate.as(TokenSyntax.self)?.text
         }
+        var patternChildren = meaningfulChildren(pattern)
         var candidateChildren = meaningfulChildren(candidate)
         // A function or initializer written without a body matches whatever body the declaration
         // has, or none — the way a catch clause without a body does.
         if Self.canHaveBody(pattern), Self.body(of: pattern) == nil, let body = Self.body(of: candidate) {
             candidateChildren.removeAll { $0.id == body.id }
         }
-        return matchChildren(meaningfulChildren(pattern), candidateChildren, &bindings)
+        if pattern.is(DeclSyntax.self),
+           !matchUnstatedParts(&patternChildren, &candidateChildren, &bindings) { return false }
+        return matchChildren(patternChildren, candidateChildren, &bindings)
+    }
+
+    /// The parts of a declaration a pattern may leave out without constraining them: what it does
+    /// not state, the declaration may have or not — attributes, modifiers, a generic clause, an
+    /// inheritance clause, a `where` clause. Attributes and modifiers it does state must each be on
+    /// the declaration, in any order and among others (`final class $C` matches
+    /// `public final class`); any other part it states is matched in place, like the rest of the
+    /// declaration. A function's parameters, effects and result are its signature, not optional
+    /// parts: they are matched as written.
+    private static let unconstrainedWhenUnstated: [SyntaxKind] = [
+        .attributeList, .declModifierList, .genericParameterClause, .primaryAssociatedTypeClause,
+        .inheritanceClause, .genericWhereClause,
+    ]
+
+    /// Takes the optional parts of a declaration out of both child lists, matching those the
+    /// pattern states; false when a stated attribute or modifier is not on the candidate.
+    private func matchUnstatedParts(_ pattern: inout [Syntax], _ candidate: inout [Syntax],
+                                    _ bindings: inout [String: String]) -> Bool {
+        for kind in Self.unconstrainedWhenUnstated {
+            let stated = pattern.first { $0.kind == kind }
+            let present = candidate.first { $0.kind == kind }
+            let statedElements = stated.map(meaningfulChildren) ?? []
+            if kind == .attributeList || kind == .declModifierList {
+                // Each stated element takes one element of the candidate's list.
+                var available = present.map(meaningfulChildren) ?? []
+                for element in statedElements {
+                    guard let index = available.firstIndex(where: { other in
+                        var trial = bindings
+                        guard matchNode(element, other, &trial) else { return false }
+                        bindings = trial
+                        return true
+                    }) else { return false }
+                    available.remove(at: index)
+                }
+            } else if !statedElements.isEmpty {
+                continue    // matched in place with the rest of the children
+            }
+            pattern.removeAll { $0.kind == kind }
+            candidate.removeAll { $0.kind == kind }
+        }
+        return true
     }
 
     private static func body(of node: Syntax) -> Syntax? {

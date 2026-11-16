@@ -300,7 +300,7 @@ public final class IndexStoreSet {
                 } else if base[hit.usr]?.definition == nil, let definition = hit.definition {
                     // another store knows the definition — prefer the non-nil one
                     let existing = base[hit.usr]!
-                    base[hit.usr] = SymbolHit(name: existing.name, usr: existing.usr, kind: existing.kind, definition: definition, references: existing.references)
+                    base[hit.usr] = existing.replacing(definition: definition, references: existing.references)
                 }
                 for reference in hit.references where seen[hit.usr]?.insert(key(reference)).inserted == true {
                     references[hit.usr]?.append(reference)
@@ -311,14 +311,8 @@ public final class IndexStoreSet {
         return order.map { usr in
             let hit = base[usr]!
             let merged = (references[usr] ?? []).sorted(by: SourceLocation.isOrderedBefore)
-            return SymbolHit(
-                name: hit.name,
-                usr: usr,
-                kind: hit.kind,
-                definition: hit.definition,
-                references: Array(merged.prefix(limit)),
-                totalReferences: merged.count
-            )
+            return hit.replacing(definition: hit.definition, references: Array(merged.prefix(limit)),
+                                 totalReferences: merged.count)
         }
         .sorted { $0.usr < $1.usr }
     }

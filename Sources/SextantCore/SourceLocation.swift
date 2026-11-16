@@ -117,6 +117,9 @@ public struct SymbolHit: Sendable, Codable {
     /// Present only over an index that is stale against its snapshot: what changed, and text
     /// matches of the name the index does not confirm. Every hit of one answer carries the same note.
     public var staleness: Staleness?
+    /// For callers of a property: the kinds of its accessors whose calls the references are
+    /// (`getter`, `setter`) — a property is never called itself. nil for any other answer.
+    public var accessors: [String]?
 
     public init(name: String, usr: String, kind: String, definition: SourceLocation?,
                 references: [SourceLocation], totalReferences: Int? = nil) {
@@ -128,6 +131,15 @@ public struct SymbolHit: Sendable, Codable {
         self.totalReferences = totalReferences ?? references.count
     }
 
+    /// The same symbol with other positions: what the hit says about the symbol itself — the
+    /// accessors its calls go through — is kept; a staleness note is not, it belongs to an answer.
+    func replacing(definition: SourceLocation?, references: [SourceLocation], totalReferences: Int? = nil) -> SymbolHit {
+        var hit = SymbolHit(name: name, usr: usr, kind: kind, definition: definition, references: references,
+                            totalReferences: totalReferences)
+        hit.accessors = accessors
+        return hit
+    }
+
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         name = try container.decode(String.self, forKey: .name)
@@ -137,5 +149,6 @@ public struct SymbolHit: Sendable, Codable {
         references = try container.decode([SourceLocation].self, forKey: .references)
         totalReferences = try container.decodeIfPresent(Int.self, forKey: .totalReferences) ?? references.count
         staleness = try container.decodeIfPresent(Staleness.self, forKey: .staleness)
+        accessors = try container.decodeIfPresent([String].self, forKey: .accessors)
     }
 }

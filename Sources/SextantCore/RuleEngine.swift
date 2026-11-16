@@ -1,4 +1,5 @@
 import Foundation
+import SwiftOperators
 
 /// Runs structural hygiene rules over a project — an exact AST replacement for regex checks.
 public enum RuleEngine {
@@ -90,11 +91,12 @@ public enum RuleEngine {
     /// C-family run — only what is knowable from the text counts: the C engine refusing it
     /// outright. With it, a pattern clang compiled in some file is not broken, and one it never
     /// got to try is named as such rather than declared broken or usable.
-    public static func brokenPatterns(in rules: [Rule], cFamily: CFamilyLint.Outcome? = nil) -> [BrokenPattern] {
+    public static func brokenPatterns(in rules: [Rule], cFamily: CFamilyLint.Outcome? = nil,
+                                      operators: (() -> OperatorTable)? = nil) -> [BrokenPattern] {
         rules.flatMap { rule in
             rule.patterns.compactMap { pattern -> BrokenPattern? in
                 let swiftReason: String
-                do { _ = try PatternSearch(pattern: pattern); return nil }
+                do { _ = try PatternSearch(pattern: pattern, operators: operators); return nil }
                 catch { swiftReason = "\(error)" }
                 let key = CFamilyLint.patternKey(ruleID: rule.id, pattern: pattern)
                 let cReason: String
@@ -132,13 +134,17 @@ public enum RuleEngine {
                            cache: SourceParseCache = SourceParseCache(), fileLimit: Int? = nil) -> Outcome {
         let swift = runSwift(rules: rules, projectRoot: lintRoot, includeTests: includeTests, cache: cache,
                              fileLimit: fileLimit)
+        let folding = OperatorFolding.Session(
+            files: SwiftSources.files(under: URL(fileURLWithPath: lintRoot, isDirectory: true), includeTests: includeTests,
+                                      limit: fileLimit),
+            cache: cache)
         let cFamily = CFamilyLint.run(rules: rules, lintRoot: lintRoot, projectRoot: projectRoot, includeTests: includeTests,
                                       fileLimit: fileLimit)
         var outcome = Outcome(violations: swift.violations + cFamily.violations,
                               unscanned: swift.unscanned + cFamily.unscanned
                                 + StructuralCoverage.skippedDirectories(projectRoot: lintRoot),
                               inactive: cFamily.inactive, targets: cFamily.targets,
-                              broken: brokenPatterns(in: rules, cFamily: cFamily))
+                              broken: brokenPatterns(in: rules, cFamily: cFamily, operators: { folding.declared }))
         outcome.recovered = swift.recovered + cFamily.recovered
         return outcome
     }
@@ -157,9 +163,11 @@ public enum RuleEngine {
                          fileLimit: Int?) -> (violations: [RuleViolation], unscanned: [UnscannedFile],
                                               recovered: [UnscannedFile]) {
         let root = URL(fileURLWithPath: projectRoot, isDirectory: true)
+        let files = SwiftSources.files(under: root, includeTests: includeTests, limit: fileLimit)
+        let folding = OperatorFolding.Session(files: files, cache: cache)
         let compiled: [(rule: Rule, search: PatternSearch)] = rules.flatMap { rule in
             rule.patterns.compactMap { pattern in
-                (try? PatternSearch(pattern: pattern)).map { (rule, $0) }
+                (try? PatternSearch(pattern: pattern, operators: { folding.declared })).map { (rule, $0) }
             }
         }
         let engines = compiled.map { $0.search }
@@ -170,8 +178,6 @@ public enum RuleEngine {
         var violations: [RuleViolation] = []
         var unscanned: [UnscannedFile] = []
         var recovered: [UnscannedFile] = []
-        let files = SwiftSources.files(under: root, includeTests: includeTests, limit: fileLimit)
-        let folding = OperatorFolding.Session(files: files, cache: cache)
         for file in files {
             let relative = SwiftSources.relativePath(of: file, root: root)
             let key = ContentHash.ofFile(file.path).map { "\($0)-\(rulesHash)" }

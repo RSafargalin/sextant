@@ -64,4 +64,16 @@ struct StructuralCoverageTests {
         #expect(lines.filter { $0.hasPrefix("⚠") }.count == 2)
         #expect(lines.first?.contains("(2)") == true)     // the two files sharing a reason are one group
     }
+
+    @Test("An area with no source in any language says nothing was read, rather than a clean result")
+    func nothingToReadIsSaid() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("sextant-empty-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try "notes\n".write(to: root.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+        #expect(StructuralCoverage.nothingToRead(under: root.path, includeTests: false)?.contains("nothing was read") == true)
+        try "int f(void);\n".write(to: root.appendingPathComponent("f.c"), atomically: true, encoding: .utf8)
+        SwiftSources.clearFileListMemo()    // the walk is memoised within a process
+        #expect(StructuralCoverage.nothingToRead(under: root.path, includeTests: false) == nil)
+    }
 }

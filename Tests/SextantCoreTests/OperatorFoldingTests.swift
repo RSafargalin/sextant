@@ -1,4 +1,5 @@
 import Foundation
+import SwiftParser
 import Testing
 @testable import SextantCore
 
@@ -108,5 +109,20 @@ struct OperatorFoldingTests {
         // Left-associative at addition precedence: `(a |> b) + c`.
         #expect(outcome.hits.map(\.text) == ["a |> b + c"])
         #expect(outcome.recovered.isEmpty)
+    }
+
+    @Test("A pattern using an operator the searched files declare is folded by that declaration, not refused")
+    func patternWithDeclaredOperator() throws {
+        let declaring = "infix operator <+> : AdditionPrecedence\nfunc <+> (a: Int, b: Int) -> Int { a + b }\n"
+        let source = "let v = 1 <+> 2 * 3\n"
+        // Without the files' declarations the pattern cannot be grouped, and is refused.
+        #expect(throws: PatternSearch.Failure.self) { _ = try PatternSearch(pattern: "$X <+> $Y") }
+        let table = OperatorFolding.table(declaredIn: [Parser.parse(source: declaring)])
+        let search = try PatternSearch(pattern: "$X <+> $Y", operators: { table })
+        let folded = OperatorFolding.fold(Parser.parse(source: source), operators: table).tree
+        // At addition precedence, `*` binds tighter: the whole `1 <+> 2 * 3` is the match.
+        #expect(search.search(inFolded: folded, fileName: "S.swift").map(\.text) == ["1 <+> 2 * 3"])
+        // An operator declared nowhere is still refused, naming where it was looked for.
+        #expect(throws: PatternSearch.Failure.self) { _ = try PatternSearch(pattern: "$X <*> $Y", operators: { table }) }
     }
 }

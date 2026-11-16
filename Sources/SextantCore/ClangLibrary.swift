@@ -16,7 +16,7 @@ public final class ClangLibrary: @unchecked Sendable {
         public var description: String {
             switch self {
             case .libraryNotFound:
-                return "libclang.dylib not found — install an Xcode toolchain (xcode-select) or pass --clang-lib"
+                return "libclang.dylib not found — install an Xcode toolchain, or select one with xcode-select or DEVELOPER_DIR"
             case .couldNotOpen(let reason):
                 return "libclang.dylib could not be opened: \(reason)"
             case .symbolMissing(let name):

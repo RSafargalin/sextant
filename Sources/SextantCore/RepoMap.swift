@@ -40,6 +40,27 @@ public enum RepoMap {
         return swift + IndexDeclarations.summaries(root: root, index: index, includeTests: includeTests, fileLimit: fileLimit)
     }
 
+    /// A public type as the semantic and PageRank maps rank it: its kind and the name a reference
+    /// lookup asks the index for.
+    public struct PublicType: Sendable, Equatable {
+        public let kind: DeclarationKind
+        public let name: String
+        public let file: String
+    }
+
+    /// The public top-level types of the summaries, named by the declaration's own name — never
+    /// recovered from its rendered header, which carries modifiers (`final class Box`) and generic
+    /// clauses. A backticked name (`` `class` ``) is looked up as the identifier it spells.
+    public static func publicTypes(in summaries: [FileSummary]) -> [PublicType] {
+        summaries.flatMap { file in
+            file.declarations.compactMap { declaration -> PublicType? in
+                guard declaration.kind.isType, declaration.access == .public else { return nil }
+                let name = declaration.name.trimmingCharacters(in: CharacterSet(charactersIn: "`"))
+                return name.isEmpty ? nil : PublicType(kind: declaration.kind, name: name, file: file.relativePath)
+            }
+        }
+    }
+
     /// Generates the textual map for a project root.
     public static func generate(
         projectRoot: String,
@@ -88,13 +109,18 @@ public enum RepoMap {
         var lines = "\n\(file.relativePath)\n"
         for declaration in file.declarations where declaration.access >= .internal {
             lines += "  \(declaration.decoratedHeader)\(docSuffix(declaration))\n"
-            if declaration.kind.isType {
-                for member in declaration.members where member.access >= .internal {
-                    lines += "    \(member.decoratedHeader)\n"
-                }
-            }
+            if declaration.kind.isType { renderMembers(of: declaration, depth: 2, into: &lines) }
         }
         return lines
+    }
+
+    /// The members of a type, and those of the types nested in it at every depth, each level
+    /// indented one step further — what `--json` holds, so the text does not stop short of it.
+    private static func renderMembers(of declaration: Declaration, depth: Int, into lines: inout String) {
+        for member in declaration.members where member.access >= .internal {
+            lines += String(repeating: "  ", count: depth) + "\(member.decoratedHeader)\n"
+            if member.kind.isType { renderMembers(of: member, depth: depth + 1, into: &lines) }
+        }
     }
 
     private static func renderCompact(_ file: FileSummary) -> String {

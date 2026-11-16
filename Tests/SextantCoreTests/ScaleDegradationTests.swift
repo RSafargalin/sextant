@@ -58,13 +58,13 @@ struct ScaleDegradationTests {
         let package = try makePackage(name: "sea")
         defer { try? FileManager.default.removeItem(at: package) }
 
-        // The walk counts every Swift file, `Package.swift` included, and it sorts first — so a
-        // limit of four reads the manifest and three sources. The note is about the walk, which is
-        // what the limit bounds; the answer below it is whatever those files held.
+        // The walk counts the sources, not `Package.swift`, which no area command reads — so a
+        // limit of four reads four sources. The note is about the walk, which is what the limit
+        // bounds; the answer below it is whatever those files held.
         let bounded = try sextant(["search", "print($$$)", "--project", package.path, "--max-files", "4"])
         #expect(bounded.code == 0, "a bounded walk is an answer, not a failure")
-        #expect(bounded.stdout.contains("total: 3"))
-        #expect(bounded.all.contains("covered 4 of 13"))
+        #expect(bounded.stdout.contains("total: 4"))
+        #expect(bounded.all.contains("covered 4 of 12"))
         #expect(bounded.all.contains("--max-files"))
 
         // And the same command with room for everything says nothing about limits.
@@ -86,7 +86,7 @@ struct ScaleDegradationTests {
             output.split(separator: "\n").filter { $0.contains(".swift:") }.map(String.init).sorted()
         }
         #expect(files(first.stdout) == files(second.stdout))
-        #expect(files(first.stdout).count == 4)   // five walked, the manifest holds no matches
+        #expect(files(first.stdout).count == 5)   // five sources walked; the manifest takes no slot
     }
 
     @Test("map and lint answer under the limit too")
@@ -96,11 +96,11 @@ struct ScaleDegradationTests {
 
         let map = try sextant(["map", "--project", package.path, "--max-files", "3"])
         #expect(map.code == 0)
-        #expect(map.stdout.contains("files: 2"))   // the manifest is walked and then left out of the map
-        #expect(map.all.contains("covered 3 of 13"))
+        #expect(map.stdout.contains("files: 3"))   // three sources; the manifest takes no slot
+        #expect(map.all.contains("covered 3 of 12"))
 
         let lint = try sextant(["lint", "--project", package.path, "--max-files", "3"])
-        #expect(lint.all.contains("covered 3 of 13"))
+        #expect(lint.all.contains("covered 3 of 12"))
     }
 
     @Test("search --json and lint --json name the cut on stderr, as map --json does")
@@ -110,7 +110,7 @@ struct ScaleDegradationTests {
 
         for arguments in [["search", "print($$$)"], ["lint"], ["map"]] {
             let run = try sextant(arguments + ["--json", "--project", package.path, "--max-files", "3"])
-            #expect(run.stderr.contains("covered 3 of 13"), "\(arguments): \(run.stderr)")
+            #expect(run.stderr.contains("covered 3 of 12"), "\(arguments): \(run.stderr)")
             #expect((try? JSONSerialization.jsonObject(with: Data(run.stdout.utf8))) != nil, "\(arguments): \(run.stdout)")
         }
     }
@@ -131,21 +131,22 @@ struct ScaleDegradationTests {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try text.write(to: url, atomically: true, encoding: .utf8)
         }
+        // The manifest takes no slot: the walk is a.c, a.h, b.swift.
         let walked = SwiftSources.files(under: root, includeTests: false, extensions: SwiftSources.boundedExtensions, limit: 2)
-        #expect(walked.map(\.lastPathComponent) == ["Package.swift", "a.c"])
-        #expect(SwiftSources.files(under: root, includeTests: false, limit: 2).map(\.lastPathComponent) == ["Package.swift"])
-        #expect(SwiftSources.boundedCount(under: root, includeTests: false) == 4)
+        #expect(walked.map(\.lastPathComponent) == ["a.c", "a.h"])
+        #expect(SwiftSources.files(under: root, includeTests: false, limit: 2).isEmpty)
+        #expect(SwiftSources.boundedCount(under: root, includeTests: false) == 3)
 
-        // The walk is Package.swift, a.c, a.h, b.swift: two of them are read, the header and the
-        // Swift source are not — and neither is named as read or unread past the bound.
-        let search = try sextant(["search", "$X * 2", "--project", root.path, "--max-files", "2"])
-        #expect(search.all.contains("covered 2 of 4"), "\(search.all)")
+        // One of them is read; the header and the Swift source are not — and neither is named as
+        // read or unread past the bound.
+        let search = try sextant(["search", "$X * 2", "--project", root.path, "--max-files", "1"])
+        #expect(search.all.contains("covered 1 of 3"), "\(search.all)")
         #expect(!search.all.contains("a.h"), "\(search.all)")
         #expect(!search.stdout.contains("b.swift"), "\(search.all)")
         #expect(search.all.contains("a.c"), "\(search.all)")
         for command in [["map"], ["lint"], ["api"]] {
-            let run = try sextant(command + ["--project", root.path, "--max-files", "2"])
-            #expect(run.all.contains("covered 2 of 4"), "\(command): \(run.all)")
+            let run = try sextant(command + ["--project", root.path, "--max-files", "1"])
+            #expect(run.all.contains("covered 1 of 3"), "\(command): \(run.all)")
         }
     }
 

@@ -39,4 +39,20 @@ struct ConstructionSiteTests {
         #expect(ConstructionSite.description(of: "Store", inFile: "A.swift") == "`Store(`")
         #expect(ConstructionSite.description(of: "Store", inFile: "A.m") == "`[Store alloc]` or `[Store new]`")
     }
+
+    @Test("A site is judged at the reference's column: two constructions on one line are two, a plain use beside one is none")
+    func sitesAreJudgedAtTheirColumn() {
+        let line = "    let v = Vec(x: 1, y: 2) <+> Vec(x: 3, y: 4) as Vec"
+        #expect(ConstructionSite.isConstruction(line: line, column: 13, of: "Vec", inFile: "Use.swift"))
+        #expect(ConstructionSite.isConstruction(line: line, column: 33, of: "Vec", inFile: "Use.swift"))
+        #expect(!ConstructionSite.isConstruction(line: line, column: 52, of: "Vec", inFile: "Use.swift"))
+        // Columns count UTF-16 code units: an emoji before the call takes two.
+        let emoji = "let t = \"🙂\"; let v = Vec(x: 1)"
+        #expect(ConstructionSite.isConstruction(line: emoji, column: 23, of: "Vec", inFile: "Use.swift"))
+        // Objective-C: the bracket before the name the index points at.
+        #expect(ConstructionSite.isConstruction(line: "return [[Store alloc] init];", column: 10, of: "Store", inFile: "A.m"))
+        #expect(!ConstructionSite.isConstruction(line: "Store *s = [Store new];", column: 1, of: "Store", inFile: "A.m"))
+        // Without a column, the line decides.
+        #expect(ConstructionSite.isConstruction(line: line, column: nil, of: "Vec", inFile: "Use.swift"))
+    }
 }

@@ -174,6 +174,9 @@ private struct ToolContext {
     let project: String        // root with scope from the config applied
     let projectRoot: String    // root WITHOUT scope — for the tools' own scope arguments
     let scopeProblem: String?
+    /// Why `.sextant.json` was not applied, when it was not: every answer says so, since the
+    /// agent never sees stderr and an answer without the config's policy or scope differs.
+    let configProblem: String?
     let config: ProjectConfig?
     let index: IndexStoreSet?
     /// The index the symbol tools answer from: the same stores, stated against the current text.
@@ -229,7 +232,7 @@ private func makeToolContext(project: String, index: IndexStoreSet?, translated:
     SwiftSources.setExclusions(config?.exclude ?? [])
 
     return ToolContext(project: scoped, projectRoot: project, scopeProblem: scopeProblem,
-                       config: config, index: index, translated: translated, reader: SourceLineReader(),
+                       configProblem: configProblem, config: config, index: index, translated: translated, reader: SourceLineReader(),
                        provenance: provenance,
                        indexProblem: indexProblem)
 }
@@ -348,6 +351,11 @@ private func handleMCP(method: String, id: Any?, params: [String: Any], context:
         if !isError, let note = context.translated?.leftOutNote { text += "\n\n\(note)" }
         if !isError, indexBackedTools.contains(name), let provenance = context.provenance() {
             text += "\n\n\(provenance)"
+        }
+        // A config that could not be applied changes what every tool answers — the store policy,
+        // the scope, the defaults — so every answer says it, unless it is the refusal itself.
+        if let problem = context.configProblem, !text.hasPrefix("config: ") {
+            text += "\n\n⚠ config: \(problem)"
         }
         // Telemetry per CALL: otherwise an entire MCP session is one record, and the main
         // consumer — the agent — stays a blind spot in the usage statistics.
@@ -515,21 +523,22 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
     case "structural_search":
         guard let pattern = (args["pattern"] as? String).flatMap({ $0.isEmpty ? nil : $0 }) else { return ("the pattern parameter is required", true) }
         // As in the CLI: a pattern the Swift parser rejects may still be a C-family one.
-        var engine: PatternSearch?
-        var swiftRejection: String?
-        do { engine = try PatternSearch(pattern: pattern) }
-        catch let failure as PatternSearch.Failure where failure.mayBeCFamily { swiftRejection = failure.description }
-        catch { return ("invalid pattern: \(error)", true) }
         let root = URL(fileURLWithPath: context.project, isDirectory: true)
         let scanLimit = fileLimit(context)
         let shownLimit = 200
         var lines: [String] = []
         // Matches past the first 200 are counted, not printed: the answer states the total it cut.
         let files = SwiftSources.files(under: root, includeTests: false, limit: scanLimit)
+        let parseCache = SourceParseCache()
+        let folding = OperatorFolding.Session(files: files, cache: parseCache)
+        var engine: PatternSearch?
+        var swiftRejection: String?
+        do { engine = try PatternSearch(pattern: pattern, operators: { folding.declared }) }
+        catch let failure as PatternSearch.Failure where failure.mayBeCFamily { swiftRejection = failure.description }
+        catch { return ("invalid pattern: \(error)", true) }
         let stopped = SwiftSources.boundedCount(under: root, includeTests: false) > scanLimit
         let swift = engine.map {
-            SwiftPatternScan.run($0, pattern: pattern, files: files, root: root,
-                                 cache: SourceParseCache())
+            SwiftPatternScan.run($0, pattern: pattern, files: files, root: root, cache: parseCache)
         } ?? SwiftPatternScan.Outcome()
         lines += swift.hits.prefix(shownLimit).map { "\($0.file):\($0.line):\($0.column): \($0.text)" }
         if swift.hits.count > shownLimit {
@@ -556,7 +565,9 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
             lines.append("⚠ the pattern does not parse as Swift (\(swiftRejection)) — \(cFamily.scannedCount) "
                          + "C-family file(s) were searched, the Swift ones were not.")
         }
-        if lines.isEmpty { lines.append("no matches") }
+        if lines.isEmpty {
+            lines.append(StructuralCoverage.nothingToRead(under: context.project, includeTests: false) ?? "no matches")
+        }
         lines += StructuralCoverage.inactiveReport(cFamily.inactive, targets: cFamily.targets)
         if cFamily.inactive.isEmpty { lines += StructuralCoverage.configurationNote(targets: cFamily.targets) }
         lines += StructuralCoverage.recoveredReport(swift.recovered + cFamily.recovered)
@@ -587,7 +598,9 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
                      + unscanned).joined(separator: "\n"), true)
         }
         guard !violations.isEmpty else {
-            return ((["✅ no violations found — rules: \(ruleSet.origin)"] + unscanned).joined(separator: "\n"), false)
+            let verdict = StructuralCoverage.nothingToRead(under: context.project, includeTests: false)
+                ?? "✅ no violations found — rules: \(ruleSet.origin)"
+            return (([verdict] + unscanned).joined(separator: "\n"), false)
         }
         let shownLimit = 200
         var lines = violations
@@ -616,6 +629,8 @@ private func callMCPTool(name: String, args: [String: Any], context: ToolContext
         // Objective-C, C and C++ too.
         let rootURL = URL(fileURLWithPath: root, isDirectory: true)
         let package = (args["package"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        // As in the CLI, a package that is not there is refused, not answered with an empty surface.
+        if let package, let unknown = PublicAPI.unknownPackage(package, root: root) { return (unknown, true) }
         // Below 500 tokens the surface holds nothing useful; a smaller budget is raised, and the answer says so.
         let raisedBudget = TokenBudget.bounded((args["budget"] as? Int) ?? context.config?.budget ?? 8000, minimum: 500,
                                                name: args["budget"] is Int ? "budget" : ProjectConfig.valueName(ofKey: "budget"))

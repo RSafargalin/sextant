@@ -50,6 +50,20 @@ struct InvalidInputCLITests {
         return Run(code: process.terminationStatus, output: collected[0], errors: collected[1])
     }
 
+    @Test("A missing toolchain is named as what is missing, not as a missing store or an unknown flag",
+          .enabled(if: binary != nil && BuildProducts.indexStore(under: fixture) != nil,
+                   "needs the built binary and the fixture's store — run `make fixture`"), .timeLimit(.minutes(2)))
+    func missingToolchainPiecesAreNamed() throws {
+        let scratch = try Scratch()
+        let store = try #require(BuildProducts.indexStore(under: Self.fixture))
+        let broken = ["DEVELOPER_DIR": scratch.base.appendingPathComponent("no-such-developer-dir").path]
+        let refs = try run(["refs", "EnglishGreeter", "--project", Self.fixture.path, "--index-store", store],
+                           scratch: scratch, environment: broken)
+        #expect(refs.errors.contains("libIndexStore.dylib was not found"), "\(refs.errors)")
+        #expect(!refs.errors.contains("no index store found"), "\(refs.errors)")
+        #expect(!ClangLibrary.Failure.libraryNotFound.description.contains("--clang-lib"))
+    }
+
     @Test("Values a command would not understand are a usage error naming the flag and the value",
           .enabled(if: binary != nil, "sextant is not built — run `swift build` first"), .timeLimit(.minutes(2)))
     func invalidValuesAreUsageErrors() throws {

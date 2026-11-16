@@ -35,14 +35,27 @@ public struct IndexSnapshot: Codable, Sendable, Equatable {
     /// The snapshot of a store a build just left, from the sources recorded before that build
     /// started: a file edited while the build runs then reads as changed rather than as built.
     /// nil when the store holds no units.
+    ///
+    /// After a failed build it also records the sources the build left without a unit for their
+    /// present text — never compiled, or compiled before they last changed — read from the store's
+    /// units (`unitTimes`, by default from the store itself): those are not indexed, whatever the
+    /// snapshot says about their content.
     public static func afterBuild(store storePath: String, projectRoot: String, sources: SourceSnapshot,
                                   exitStatus: Int32, testsBuilt: Bool, buildLog: String,
-                                  toolchain: ToolchainIdentity?) -> IndexSnapshot? {
+                                  toolchain: ToolchainIdentity?, libraryPath: String? = nil,
+                                  unitTimes: (() -> [String: Date]?)? = nil) -> IndexSnapshot? {
         guard let fingerprint = StoreFingerprint.of(store: storePath) else { return nil }
         let root = URL(fileURLWithPath: canonical(projectRoot), isDirectory: true)
+        let withErrors = BuildRecord.filesWithErrors(inBuildLog: buildLog, projectRoot: root)
+        var notBuilt: [String]?
+        if exitStatus != 0,
+           let times = unitTimes?() ?? BuildRecord.unitTimes(ofStore: storePath, libraryPath: libraryPath) {
+            notBuilt = BuildRecord.filesNotBuilt(projectRoot: root, testsBuilt: testsBuilt, unitTimes: times,
+                                                 filesWithErrors: withErrors)
+        }
         let build = BuildRecord(toolchain: toolchain, manifests: BuildRecord.manifestHashes(projectRoot: root),
                                 exitStatus: exitStatus, testsBuilt: testsBuilt,
-                                filesWithErrors: BuildRecord.filesWithErrors(inBuildLog: buildLog, projectRoot: root))
+                                filesWithErrors: withErrors, filesNotBuilt: notBuilt)
         return IndexSnapshot(projectRoot: root.path, storePath: storePath, sources: sources,
                              store: fingerprint, build: build)
     }
@@ -211,14 +224,54 @@ public struct BuildRecord: Codable, Sendable, Equatable {
     /// of files the compiler complained about, not the set left without fresh units: a failed
     /// compile job can take files with no error of their own down with it.
     public let filesWithErrors: [String]
+    /// After a failed build, the sources it left without a unit for their present text, relative
+    /// to the project root: never compiled, compiled before they last changed, or reported with an
+    /// error. nil after a successful build, or when the store's units could not be read.
+    public let filesNotBuilt: [String]?
 
     public init(toolchain: ToolchainIdentity?, manifests: [String: String], exitStatus: Int32,
-                testsBuilt: Bool, filesWithErrors: [String] = []) {
+                testsBuilt: Bool, filesWithErrors: [String] = [], filesNotBuilt: [String]? = nil) {
         self.toolchain = toolchain
         self.manifests = manifests
         self.exitStatus = exitStatus
         self.testsBuilt = testsBuilt
         self.filesWithErrors = filesWithErrors
+        self.filesNotBuilt = filesNotBuilt
+    }
+
+    /// When the newest unit of each source in a store was written, keyed by the source's real
+    /// path; nil when the store's units cannot be read.
+    public static func unitTimes(ofStore storePath: String, libraryPath: String?) -> [String: Date]? {
+        guard let units = try? IndexStoreUnits.shared(libraryPath: libraryPath).units(inStore: storePath) else { return nil }
+        let store = URL(fileURLWithPath: storePath, isDirectory: true)
+        let versions = ((try? FileManager.default.contentsOfDirectory(atPath: store.path)) ?? []).filter { $0.hasPrefix("v") }
+        var times: [String: Date] = [:]
+        for unit in units where !unit.isSystem && !unit.mainFile.isEmpty && !unit.name.isEmpty {
+            let written = versions.lazy.compactMap { version in
+                (try? FileManager.default.attributesOfItem(
+                    atPath: store.appendingPathComponent("\(version)/units/\(unit.name)").path))?[.modificationDate] as? Date
+            }.first
+            guard let written else { continue }
+            let source = URL(fileURLWithPath: unit.mainFile).resolvingSymlinksInPath().path
+            if written > (times[source] ?? .distantPast) { times[source] = written }
+        }
+        return times
+    }
+
+    /// The sources a unit can be built from that have no unit written after their last change —
+    /// never compiled, or left as an earlier build compiled them — together with the files the
+    /// build reported errors in, relative to the project root and sorted. Test sources count only
+    /// when the build built the tests.
+    public static func filesNotBuilt(projectRoot: URL, testsBuilt: Bool, unitTimes: [String: Date],
+                                     filesWithErrors: [String]) -> [String] {
+        var result = Set(filesWithErrors)
+        for file in StoreCoverage.unitSources(under: projectRoot, includeTests: testsBuilt) {
+            let path = file.resolvingSymlinksInPath().path
+            let modified = (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date
+            if let written = unitTimes[path], let modified, written >= modified { continue }
+            result.insert(SwiftSources.relativePath(of: file, root: projectRoot))
+        }
+        return result.sorted()
     }
 
     /// The manifests of every package under the root, hashed.
@@ -236,11 +289,12 @@ public struct BuildRecord: Codable, Sendable, Equatable {
 
     /// Files under the root that a build log reports an error in. The compiler and SwiftPM's
     /// native build system print `/absolute/path:line:column: error: …`; the Swift Build system
-    /// prints `error: /absolute/path:line:column message`.
+    /// prints `error: /absolute/path:line:column message`. Colour codes the compiler adds when it
+    /// is asked to (`\u{1B}[1;31merror:`) are not part of the text.
     public static func filesWithErrors(inBuildLog log: String, projectRoot: URL) -> [String] {
         let rootPath = IndexSnapshot.canonical(projectRoot.path) + "/"
         var files = Set<String>()
-        for line in log.split(separator: "\n") {
+        for line in log.split(separator: "\n").map(withoutColourCodes) {
             let location: Substring
             if line.hasPrefix("error: /") {
                 location = line.dropFirst("error: ".count)
@@ -257,6 +311,24 @@ public struct BuildRecord: Codable, Sendable, Equatable {
             files.insert(String(path.dropFirst(rootPath.count)))
         }
         return files.sorted()
+    }
+
+    /// A log line without ANSI escape sequences (`ESC [ … letter`).
+    static func withoutColourCodes(_ line: Substring) -> Substring {
+        guard line.contains("\u{1B}") else { return line }
+        var result = ""
+        var index = line.startIndex
+        while index < line.endIndex {
+            if line[index] == "\u{1B}", line.index(after: index) < line.endIndex, line[line.index(after: index)] == "[" {
+                var end = line.index(index, offsetBy: 2)
+                while end < line.endIndex, !line[end].isLetter { end = line.index(after: end) }
+                index = end < line.endIndex ? line.index(after: end) : end
+                continue
+            }
+            result.append(line[index])
+            index = line.index(after: index)
+        }
+        return Substring(result)
     }
 }
 

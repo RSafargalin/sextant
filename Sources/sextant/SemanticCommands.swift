@@ -317,6 +317,8 @@ func runConstruct(arguments: [String]) -> Int32 {
     struct Site: Encodable {
         let file: String
         let line: Int
+        /// 1-based, in UTF-16 code units (`SourceColumn`); absent when the index gave none.
+        let column: Int?
         let text: String
         /// Confidence tier: a heuristic over the line text, not index semantics.
         let confidence = "heuristic"
@@ -326,21 +328,24 @@ func runConstruct(arguments: [String]) -> Int32 {
     }
     // The shape of construction depends on the language of the file the reference is in:
     // Objective-C sends `alloc` or `new` to the class rather than calling the type.
-    // Two constructions on one line are one place in the source, and the count answers "in how
-    // many places", so a position is kept once.
+    // Each reference that is itself a construction is a site — two on one line are two — judged
+    // at its column on the line as written; a position is kept once.
     var seen: Set<String> = []
     var siteLocations: [SourceLocation] = []
     let allSites = references.compactMap { location -> Site? in
         // An unconfirmed position is judged by the line the index recorded, which the current
         // text no longer holds.
-        let recorded = location.isConfirmed
-            ? reader.line(location.line, inFile: location.path)
-            : index.drift?.indexedLineText(of: location)?.trimmingCharacters(in: .whitespaces)
-        guard let text = recorded,
-              ConstructionSite.isConstruction(line: text, of: symbol, inFile: location.path) else { return nil }
-        guard seen.insert("\(location.path):\(location.line):\(location.unconfirmed ?? "")").inserted else { return nil }
+        let written = location.isConfirmed
+            ? reader.rawLine(location.line, inFile: location.path)
+            : index.drift?.indexedLineText(of: location)
+        guard let written,
+              ConstructionSite.isConstruction(line: written, column: location.column, of: symbol, inFile: location.path)
+        else { return nil }
+        guard seen.insert("\(location.path):\(location.line):\(location.column ?? 0):\(location.unconfirmed ?? "")").inserted
+        else { return nil }
         siteLocations.append(location)
-        return Site(file: location.path, line: location.line, text: text, unconfirmed: location.unconfirmed)
+        return Site(file: location.path, line: location.line, column: location.column,
+                    text: written.trimmingCharacters(in: .whitespaces), unconfirmed: location.unconfirmed)
     }
     let sites = allSites.prefix(limit)
 
@@ -367,7 +372,8 @@ func runConstruct(arguments: [String]) -> Int32 {
     print("── \(symbol): construction and injection (heuristic \(shown)), \(allSites.count):")
     for site in sites {
         let marker = site.unconfirmed.map { "  [unconfirmed: \(SourceLocation.reasonText($0)); text as indexed]" } ?? ""
-        print("     \(shorten(site.file)):\(site.line)  \(site.text)\(marker)")
+        let position = site.column.map { "\(site.line):\($0)" } ?? "\(site.line)"
+        print("     \(shorten(site.file)):\(position)  \(site.text)\(marker)")
     }
     if allSites.count > sites.count { print("     … \(allSites.count - sites.count) more (--limit \(limit))") }
     staleness.forEach { print($0) }

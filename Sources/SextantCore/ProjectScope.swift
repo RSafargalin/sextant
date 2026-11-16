@@ -17,7 +17,10 @@ public enum ProjectScope {
         let base = URL(fileURLWithPath: root, isDirectory: true).resolvingSymlinksInPath().standardizedFileURL
         guard let scope, !scope.isEmpty else { return .resolved(base.path) }
 
-        let scoped = base.appendingPathComponent(scope).resolvingSymlinksInPath().standardizedFileURL
+        // An absolute scope is the directory it names, inside the project or not — appended to the
+        // root it would name a directory that does not exist, and be refused for the wrong reason.
+        let named = scope.hasPrefix("/") ? URL(fileURLWithPath: scope, isDirectory: true) : base.appendingPathComponent(scope)
+        let scoped = named.resolvingSymlinksInPath().standardizedFileURL
         guard scoped.path == base.path || scoped.path.hasPrefix(base.path + "/") else { return .outsideProject }
 
         var isDirectory: ObjCBool = false

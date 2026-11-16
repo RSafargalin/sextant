@@ -160,7 +160,7 @@ public enum SwiftDeclarationExtractor {
             }
             return Declaration(kind: .caseKind, header: "case " + elements.joined(separator: ", "),
                                access: explicitAccess(node.modifiers) ?? defaultAccess,
-                               name: node.elements.first?.name.text)
+                               name: node.elements.map(\.name.text).joined(separator: ", "))
         }
         if let node = decl.as(TypeAliasDeclSyntax.self) {
             var header = "\(modifierPrefix(node.modifiers))typealias \(node.name.text)"

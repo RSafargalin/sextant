@@ -20,7 +20,7 @@ Human-readable text output is not covered — parse `--json`, not prose.
   `precedencegroup CompositionPrecedence { associativity: left higherThan: AdditionPrecedence }`;
   they were not extracted at all, so adding or removing one changed nothing in `changed`. `--json`
   gains two values of `kind`: `operator` and `precedencegroup`. The declaration caches move to
-  `declarations-v6` and `drift-declarations-v3`; the eviction removes the old versions.
+  `declarations-v7` and `drift-declarations-v3`; the eviction removes the old versions.
 
 - **An answer over a stale index is stated against the sources as they are now, and says exactly
   where it cannot be.** When the index `sextant index` built is stale against its snapshot, every
@@ -62,6 +62,40 @@ Human-readable text output is not covered — parse `--json`, not prose.
 
 ### Changed
 
+- **A declaration pattern constrains only what it states.** `struct $S: $P { $$$ }` found `struct A: P`
+  and skipped `public struct B: P`, `@frozen struct C: P`; `class $C { $$$ }` found no `final class`;
+  `func $F($$$) -> $R { $$$ }` found only functions with no modifier, attribute or generic clause —
+  on this repository `struct $S { $$$ }` found 3 structs of 120. Modifiers, attributes, a generic
+  clause, an inheritance clause and a `where` clause the pattern leaves out may now be on the
+  declaration or not; those it writes must be there (`public struct $S { $$$ }` only public ones,
+  `final class $C { $$$ }` only final ones, each stated modifier among any others). This holds for
+  `struct`, `class`, `enum`, `actor`, `protocol`, `extension`, `func`, `init`, `var`/`let`,
+  `typealias` and `subscript` patterns, in `search`, `lint` rules and `structural_search`; a
+  function's parameters, effects and result stay compared as written. The `search-v6` and `lint-v6`
+  caches replace v5.
+- **`construct` counts sites, not lines, and states each at `file:line:column`.** `Vec(…) <+> Vec(…)`
+  on one line is two sites; a plain use of the type beside a construction is none — each reference is
+  judged at its own column. `--json` gains a `column` key per site (additive).
+- **The callers of a property are the calls of its accessors.** `callers area` said `calls: 0` for
+  every `area` while `callees demo` listed `getter:area`; it now counts the getter's (and setter's)
+  calls and says so — `calls (of its getter): 3` — in `callers`, `context`, `blast`, `hierarchy` and
+  their MCP tools. `--json` gains `accessors` on such a hit and `callerAccessors` in `context`
+  (additive, absent otherwise). `context` lists a call that lands on an implementation and on the
+  requirement it satisfies once.
+- **`api --type <name>` naming no public declaration says so** — `No public declaration named 'X'
+  here` — instead of `# Public API • declarations: 0`; exit 0, as `refs` answers an unknown symbol (a
+  name that is not in the code is a fact about the code, not a usage error). `--json` keeps `[]` and
+  says it on stderr. Over MCP `api {"package":"Nope"}` is now an error result naming the known
+  packages, as the CLI's exit 2 is.
+- **A `case a, b` declaration is named `a, b`** in `api --json` and every other declaration listing;
+  it was named after its first case. The declaration cache moves to `declarations-v7`.
+- **`--max-files` gives no slot to a package manifest**, which no area command reads as a source:
+  `map --max-files 1` on the fixture said "covered 1 of 9" over `Package.swift` and printed an empty
+  map. `doctor` and `init` no longer count `Package.swift` as a Swift source.
+- **Several stores read together carry a coverage figure** — the union of the files any of them
+  covers — so the `union` trust label states it like every other.
+- **Completion offers declared values**: `--store-policy` and `--client` their words, `store` its
+  subcommands and then the policies, `completion` the shells (bash and zsh, from `CommandCatalog`).
 - **`--max-files` bounds every file read, Swift and Objective-C/C/C++ together.** It counted only
   Swift files while clang read every C-family one: in the fixture `map --max-files 1` said
   "covered 1 of 3 file(s)" and listed five C-family files, and `search '$X * 2' --max-files 1`
@@ -277,6 +311,48 @@ Human-readable text output is not covered — parse `--json`, not prose.
 
 ### Fixed
 
+- **`map --semantic` and `map --pagerank` dropped every `final` and `open` class.** The type name was
+  read back from the rendered header, whose first word is now a modifier: `0	class class Square`
+  where `refs Square` gives 3, and PageRank lost every edge into such a class. Both maps take the
+  name and kind from the declaration itself (`RepoMap.publicTypes`); no other command re-reads a
+  rendered header for a name.
+- **After a failed `sextant index`, a source the build did not compile stays out of the index.** The
+  snapshot is taken against the current text, so a file that never compiled read as unchanged and
+  its uses vanished — no candidate, no `staleness`. The snapshot now records, after a failed build,
+  the sources left without a unit for their present text (never compiled, compiled before they last
+  changed, or reported with an error); freshness answers them as not indexed: positions unconfirmed,
+  text matches listed as candidates, the files named — `2 file(s) it did not compile are not indexed:
+  …`. Errors are also read from a build log the compiler coloured, which they were not.
+- **`sextant index` stopped by SIGINT, SIGTERM or SIGHUP stops its build** — the build's process group
+  and those of everything it started, through `Command` — and dies of the signal; the build used to
+  keep rewriting the store. A run that does not finish leaves a marker, and while it stands every
+  label says `the sextant index run started … did not finish — it is still building, or it was
+  stopped — so the store may be partial` instead of `fresh`.
+- **On the build-time basis, a source renamed or deleted after the build no longer reads as fresh.**
+  Its positions were left out with `fresh (compared by build time)` and the use in the renamed file
+  neither counted nor offered. A unit whose file is gone from a directory changed since the build
+  makes the index stale (`1 source(s) the index was built from were deleted or renamed since: …`),
+  and the store's uncovered sources in such directories are searched for candidates, as on the
+  snapshot basis.
+- **The coverage figure is no longer served from the cache for a different file set of the same
+  size** — a rename kept the count and the old `7/7 (100%)`. The key is the file set itself; the
+  cache moves to `store-coverage-v5`.
+- **Missing toolchain pieces are named as what is missing**: a store with no libIndexStore to read it
+  said `no index store found`; libclang's absence advised `--clang-lib`, a flag no command has; and a
+  git that cannot run read as `the project is no longer in the git repository it was indexed in`
+  instead of `git could not run (…)`.
+- **An invalid `.sextant.json` written during an MCP session is said in every answer** (`⚠ config:
+  …`), not only on stderr, which an agent never sees.
+- **`search '$X <+> $Y'` folds by an operator the searched files declare** instead of refusing it as of
+  unknown precedence; the same in `lint` rules and `structural_search`.
+- **`defs` over a stale index counts each unconfirmed position once**: a definition that is also the
+  answer's reference counted twice.
+- **`map` text shows nested types at every depth** with their members, as `--json` does; it stopped
+  at the second level.
+- **`lint` and `search` over an area with no source** say `No source files here … — nothing was read`
+  instead of `✅ No violations found` / `No matches.`.
+- **`--scope /etc` is refused as outside the project**, not as a directory that does not exist.
+- **The READMEs count 28 commands**, as the catalog does, and a test holds them to it.
 - **`store show extra` is refused** like every other extra word: each subcommand declares how many
   arguments it takes (`show` none, `use` one) in `CommandCatalog`.
 - **An umbrella index with a test target no longer advises dropping `--no-tests`**, a flag that was

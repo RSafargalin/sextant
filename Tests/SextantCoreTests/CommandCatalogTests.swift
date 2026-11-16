@@ -115,4 +115,20 @@ struct CommandCatalogTests {
         #expect(CommandCatalog.editDistance("--budget", "--budgets") == 1)  // one insertion
         #expect(CommandCatalog.editDistance("", "abc") == 3)
     }
+
+    @Test("The READMEs name as many commands as the catalog declares, and list each of them")
+    func readmeCommandCount() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let names = CommandCatalog.commands.map(\.name)
+        for (file, word) in [("README.md", "commands:"), ("README.ru.md", "команд:")] {
+            let text = try String(contentsOf: root.appendingPathComponent(file), encoding: .utf8)
+            #expect(text.contains("\(names.count) \(word)"), "\(file) does not say \(names.count) \(word)")
+            // The first cell of each row of the commands table names one command or several.
+            let firstCells = text.split(separator: "\n").filter { $0.hasPrefix("| `") }
+                .map { $0.split(separator: "|").first.map(String.init) ?? "" }.joined(separator: " ")
+            for name in names {
+                #expect(firstCells.contains("`\(name)`") || firstCells.contains("`\(name) "), "\(file) has no row for \(name)")
+            }
+        }
+    }
 }

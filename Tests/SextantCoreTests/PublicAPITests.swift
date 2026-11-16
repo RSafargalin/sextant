@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import SextantCore
 
@@ -19,6 +20,23 @@ struct PublicAPITests {
         #expect(output.contains("func open()"))
         #expect(!output.contains("InternalType"))
         #expect(!output.contains("hidden"))
+    }
+
+    @Test("A type filter matching nothing names the type instead of printing an empty surface")
+    func missingTypeIsNamed() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("sextant-api-type-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("Sources/Geo"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try "// swift-tools-version: 5.9\n".write(to: root.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
+        try "public final class Square {}\nstruct Hidden {}\n"
+            .write(to: root.appendingPathComponent("Sources/Geo/S.swift"), atomically: true, encoding: .utf8)
+        #expect(PublicAPI.generate(projectRoot: root.path, package: nil, type: "Square").contains("final class Square"))
+        for missing in ["Nope", "Hidden"] {
+            let answer = PublicAPI.generate(projectRoot: root.path, package: nil, type: missing)
+            #expect(answer == PublicAPI.missingType(missing))
+            #expect(!answer.contains("declarations: 0"))
+        }
+        #expect(PublicAPI.unknownPackage("Nope", root: root.path)?.hasPrefix("no package named 'Nope'. Known:") == true)
     }
 
     @Test("Shows a type with public members inside an internal extension")

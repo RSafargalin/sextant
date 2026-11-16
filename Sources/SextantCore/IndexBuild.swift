@@ -161,6 +161,37 @@ public enum IndexBuild {
         return umbrella
     }
 
+    // MARK: - An index run in progress
+
+    /// The record that a `sextant index` run for a project has started and not yet finished,
+    /// kept in the project's umbrella directory: written before the build starts, removed once
+    /// the run has recorded what it built. While it stands — the run is still building, or it was
+    /// stopped — the stores of the project may be partial, and freshness says so.
+    public static func unfinishedRunMarker(forRoot root: String,
+                                           home: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
+        home.appendingPathComponent("Library/Caches/sextant/umbrella/\(CanonicalPath.entryName(of: root))")
+            .appendingPathComponent("index-in-progress")
+    }
+
+    /// Records that an index run for the project starts now.
+    public static func markRunStarted(forRoot root: String) {
+        guard let umbrella = try? prepareUmbrellaDirectory(forRoot: root) else { return }
+        let marker = umbrella.appendingPathComponent("index-in-progress")
+        try? Data("\(ProcessInfo.processInfo.processIdentifier)\n".utf8).write(to: marker, options: .atomic)
+    }
+
+    /// Records that the index run for the project has finished and recorded what it built.
+    public static func markRunFinished(forRoot root: String) {
+        try? FileManager.default.removeItem(at: unfinishedRunMarker(forRoot: root))
+    }
+
+    /// When the unfinished index run for the project started; nil when none stands.
+    public static func unfinishedRun(forRoot root: String,
+                                     home: URL = FileManager.default.homeDirectoryForCurrentUser) -> Date? {
+        let marker = unfinishedRunMarker(forRoot: root, home: home)
+        return (try? FileManager.default.attributesOfItem(atPath: marker.path))?[.modificationDate] as? Date
+    }
+
     /// Whether a store lies in an umbrella build tree in the cache.
     public static func isUmbrellaStore(_ storePath: String) -> Bool {
         let root = FileManager.default.homeDirectoryForCurrentUser

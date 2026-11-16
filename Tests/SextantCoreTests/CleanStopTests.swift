@@ -142,4 +142,64 @@ struct CleanStopTests {
         #expect(server.terminationReason == .exit && server.terminationStatus == 0)
         #expect(sandbox.databaseSaved, "the database was left open: \(sandbox.databaseEntries)")
     }
+
+    /// A stand-in for `swift` that starts two children and waits, writing every pid it owns.
+    private static let fakeSwift = """
+    #!/bin/sh
+    sleep 120 &
+    echo $! >> "$SEXTANT_TEST_PIDS"
+    sleep 120 &
+    echo $! >> "$SEXTANT_TEST_PIDS"
+    echo $$ >> "$SEXTANT_TEST_PIDS"
+    wait
+    """
+
+    @Test("`sextant index` stopped by SIGTERM stops its build and leaves the run marked unfinished",
+          .enabled(if: BuildProducts.sextantBinary(under: CleanStopTests.packageRoot) != nil, "needs the built binary"),
+          .timeLimit(.minutes(1)))
+    func indexStoppedBySignalStopsItsBuild() throws {
+        let base = URL(fileURLWithPath: "/tmp/sx-\(UUID().uuidString.prefix(8))", isDirectory: true).resolvingSymlinksInPath()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let home = base.appendingPathComponent("home"), project = base.appendingPathComponent("project")
+        let bin = base.appendingPathComponent("bin"), pids = base.appendingPathComponent("pids")
+        for directory in [home, project.appendingPathComponent("Sources/demo"), bin] {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+        try "// swift-tools-version: 5.9\nimport PackageDescription\nlet package = Package(name: \"demo\", targets: [.target(name: \"demo\")])\n"
+            .write(to: project.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
+        try "struct A {}\n".write(to: project.appendingPathComponent("Sources/demo/A.swift"), atomically: true, encoding: .utf8)
+        let swift = bin.appendingPathComponent("swift")
+        try Self.fakeSwift.write(to: swift, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: swift.path)
+
+        let index = Process()
+        index.executableURL = try #require(BuildProducts.sextantBinary(under: Self.packageRoot))
+        index.arguments = ["index", "--project", project.path]
+        var environment = ProcessInfo.processInfo.environment
+        environment["CFFIXED_USER_HOME"] = home.path
+        environment["SEXTANT_NO_DAEMON"] = "1"
+        environment["SEXTANT_TEST_PIDS"] = pids.path
+        environment["PATH"] = bin.path + ":/usr/bin:/bin"
+        index.environment = environment
+        index.standardOutput = FileHandle.nullDevice
+        index.standardError = FileHandle.nullDevice
+        index.standardInput = FileHandle.nullDevice
+        try index.run()
+        defer { if index.isRunning { kill(index.processIdentifier, SIGKILL); index.waitUntilExit() } }
+
+        func owned() -> [pid_t] {
+            ((try? String(contentsOf: pids, encoding: .utf8)) ?? "").split(separator: "\n").compactMap { pid_t($0) }
+        }
+        try #require(Self.waitUntil(30) { owned().count == 3 }, "the build never started")
+        #expect(FileManager.default.fileExists(atPath: IndexBuild.unfinishedRunMarker(forRoot: project.path, home: home).path))
+
+        kill(index.processIdentifier, SIGTERM)
+        index.waitUntilExit()
+        #expect(index.terminationReason == .uncaughtSignal && index.terminationStatus == SIGTERM)
+        let survivors = { owned().filter { kill($0, 0) == 0 } }
+        #expect(Self.waitUntil(5) { survivors().isEmpty }, "the build outlived the index run: \(survivors())")
+        for pid in survivors() { kill(pid, SIGKILL) }
+        // The run never recorded what it built: freshness keeps saying so until one finishes.
+        #expect(IndexBuild.unfinishedRun(forRoot: project.path, home: home) != nil)
+    }
 }

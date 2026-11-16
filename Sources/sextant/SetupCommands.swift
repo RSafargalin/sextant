@@ -102,7 +102,9 @@ func runInit(arguments: [String]) -> Int32 {
     }
 
     // 3. What already works, and what still needs a step from the user.
-    let fileCount = SwiftSources.files(under: rootURL, includeTests: false).count
+    // A package manifest describes the build; it is not one of the project's sources.
+    let fileCount = SwiftSources.files(under: rootURL, includeTests: false)
+        .filter { !SwiftSources.isPackageManifest(relativePath: $0.lastPathComponent) }.count
     print(fileCount > 0 ? "✅ Swift sources: \(fileCount) files" : "❌ no Swift sources found — sextant is meant for Swift projects")
 
     let hasLibrary = (optionValue("--index-lib", in: arguments) ?? discoverIndexStoreLibrary()) != nil

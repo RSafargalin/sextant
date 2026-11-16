@@ -57,6 +57,15 @@ public enum StructuralCoverage {
     /// explanation and twenty names, not twenty repetitions.
     /// Files the user's own exclusions removed from the walk. Without this, an answer emptied by
     /// an exclusion is indistinguishable from an answer that found nothing.
+    /// What a structural command answers when the area holds no source in any language it reads —
+    /// nil when it holds one. "No matches." or a clean lint over nothing would read as a finding.
+    public static func nothingToRead(under root: String, includeTests: Bool) -> String? {
+        let url = URL(fileURLWithPath: root, isDirectory: true)
+        guard SwiftSources.files(under: url, includeTests: includeTests,
+                                 extensions: ["swift"] + IndexDeclarations.clangExtensions).isEmpty else { return nil }
+        return "No source files here (Swift, Objective-C, C or C++) — nothing was read."
+    }
+
     public static func exclusionNote() -> [String] {
         guard let effect = SwiftSources.exclusionsInEffect() else { return [] }
         return ["ℹ at least \(effect.removed) file(s) excluded by: \(effect.patterns.joined(separator: ", ")) — "

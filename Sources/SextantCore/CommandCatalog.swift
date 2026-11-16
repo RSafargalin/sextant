@@ -93,10 +93,13 @@ public struct CommandSpec: Sendable {
     /// arguments each subcommand takes after its own name. A subcommand not listed is the
     /// command's own to refuse.
     public let subcommands: [String: ClosedRange<Int>]
+    /// The words each positional argument may be, by position — what completion offers there.
+    /// Empty for a free argument (a symbol, a pattern), which is completed as a file name.
+    public let words: [[String]]
 
     public init(name: String, argument: String? = nil, summary: String, group: String, flags: [FlagSpec] = [],
                 details: [String] = [], servedByDaemon: Bool = false, positionals: ClosedRange<Int>? = nil,
-                exclusive: [[String]] = [], subcommands: [String: ClosedRange<Int>] = [:]) {
+                exclusive: [[String]] = [], subcommands: [String: ClosedRange<Int>] = [:], words: [[String]] = []) {
         self.name = name
         self.argument = argument
         self.summary = summary
@@ -107,6 +110,7 @@ public struct CommandSpec: Sendable {
         self.positionals = positionals ?? (argument == nil ? 0...0 : 1...1)
         self.exclusive = exclusive
         self.subcommands = subcommands
+        self.words = words
     }
 
     public var invocation: String {
@@ -200,6 +204,9 @@ public enum CommandCatalog {
             flags: [project, scope, maxFiles, exclude, includeTests, limit, json],
             details: ["Metavariables: $X (an expression, a type, a binding or declaration name, a parameter), "
                       + "variadic $$$. For example 'try? $X.save()', '$X as! $T', 'func $F($$$) { $$$ }'.",
+                      "A declaration pattern constrains only what it states: modifiers, attributes, a generic, inheritance "
+                      + "or where clause it leaves out may be there or not ('struct $S { $$$ }' finds every struct); those "
+                      + "it writes must be there ('public final class $C { $$$ }').",
                       "A metavariable that cannot be bound (in a string literal, in a comment) and a pattern "
                       + "of several statements are refused rather than answered with no matches.",
                       SourceColumn.positionFormat],
@@ -210,7 +217,8 @@ public enum CommandCatalog {
             group: navigationGroup,
             flags: [project, FlagSpec("--rules", takesPath: true, "JSON rules file (otherwise the built-in set)"),
                     scope, maxFiles, exclude, includeTests, json],
-            details: [SourceColumn.positionFormat],
+            details: ["A rule's pattern is read as `search` reads one: a declaration pattern constrains only what it states.",
+                      SourceColumn.positionFormat],
             servedByDaemon: true
         ),
         CommandSpec(
@@ -301,7 +309,8 @@ public enum CommandCatalog {
                               "choice is a person's: `store use recency` or `store use union`, recorded",
                               "in .sextant.json. Until it is made, semantic commands refuse rather than guess.",
                               "`store` prints what each policy gives, what it does not, and its risk."],
-                    positionals: 0...2, subcommands: ["show": 0...0, "use": 1...1]),
+                    positionals: 0...2, subcommands: ["show": 0...0, "use": 1...1],
+                    words: [["show", "use"], StorePolicy.allCases.map(\.rawValue)]),
         CommandSpec(name: "doctor", summary: "self-check of the setup",
                     group: "Integration and setup",
                     flags: [project, FlagSpec("--fix", "build the index if missing or stale"),
@@ -328,7 +337,8 @@ public enum CommandCatalog {
                     group: "Integration and setup",
                     details: ["generated from this catalog, so a new command cannot fall out of completion.",
                               "zsh:  sextant completion zsh > \"${fpath[1]}/_sextant\"",
-                              "bash: sextant completion bash > /usr/local/etc/bash_completion.d/sextant"]),
+                              "bash: sextant completion bash > /usr/local/etc/bash_completion.d/sextant"],
+                    words: [CompletionScript.Shell.allCases.map(\.rawValue)]),
         CommandSpec(name: "hook", summary: "record one tool-use event (for a client's PreToolUse hook)",
                     group: "Trust and measurability",
                     flags: [project, FlagSpec("--install", "print how to install it, and what it writes")],

@@ -67,15 +67,6 @@ func mapBudget(_ arguments: [String]) -> RaisedValue {
                                name: ProjectConfig.valueName(ofKey: "budget"))
 }
 
-/// Type name from a header ("struct Box<T>: Foo"→"Box"; "extension A.B"→"B"; "struct `class`"→"class").
-func typeName(fromHeader header: String) -> String {
-    let afterKind = header.split(separator: " ", maxSplits: 1).dropFirst().first ?? ""
-    let withoutInheritance = afterKind.split(separator: ":").first ?? afterKind     // drop ": Foo"
-    let withoutGenerics = withoutInheritance.split(separator: "<").first ?? withoutInheritance
-    let lastComponent = withoutGenerics.split(separator: ".").last ?? withoutGenerics // nested → last component
-    return lastComponent.trimmingCharacters(in: CharacterSet(charactersIn: "` ")).trimmingCharacters(in: .whitespaces)
-}
-
 /// Hybrid map: public types (syntax) plus their usage count (index), in descending order.
 func runSemanticMap(root: String, arguments: [String]) -> Int32 {
     guard let set = openIndex(arguments, label: "map --semantic") else { return 1 }
@@ -87,13 +78,9 @@ func runSemanticMap(root: String, arguments: [String]) -> Int32 {
         let file: String
     }
     var ranked: [RankedType] = []
-    for file in RepoMap.summaries(projectRoot: root, includeTests: false) {
-        for declaration in file.declarations where declaration.kind.isType && declaration.access == .public {
-            let name = typeName(fromHeader: declaration.header)
-            guard !name.isEmpty else { continue }
-            let references = set.lookup(name: name, query: .references).map { $0.references.count }.max() ?? 0
-            ranked.append(RankedType(references: references, kind: declaration.kind.rawValue, name: name, file: file.relativePath))
-        }
+    for type in RepoMap.publicTypes(in: RepoMap.summaries(projectRoot: root, includeTests: false)) {
+        let references = set.lookup(name: type.name, query: .references).map { $0.references.count }.max() ?? 0
+        ranked.append(RankedType(references: references, kind: type.kind.rawValue, name: type.name, file: type.file))
     }
     ranked.sort {
         $0.references != $1.references ? $0.references > $1.references
@@ -116,16 +103,12 @@ func runPageRankMap(root: String, arguments: [String]) -> Int32 {
 
     var nodes = Set(summaries.map { $0.relativePath })
     var edges: [(from: String, to: String)] = []
-    for file in summaries {
-        for declaration in file.declarations where declaration.kind.isType && declaration.access == .public {
-            let name = typeName(fromHeader: declaration.header)
-            guard !name.isEmpty else { continue }
-            for hit in set.lookup(name: name, query: .references) {
-                for reference in hit.references {
-                    let refRelative = SwiftSources.relativePath(of: URL(fileURLWithPath: reference.path), root: rootURL)
-                    nodes.insert(refRelative)
-                    edges.append((from: refRelative, to: file.relativePath))
-                }
+    for type in RepoMap.publicTypes(in: summaries) {
+        for hit in set.lookup(name: type.name, query: .references) {
+            for reference in hit.references {
+                let refRelative = SwiftSources.relativePath(of: URL(fileURLWithPath: reference.path), root: rootURL)
+                nodes.insert(refRelative)
+                edges.append((from: refRelative, to: type.file))
             }
         }
     }
@@ -170,12 +153,9 @@ func runAPI(arguments: [String]) -> Int32 {
     let type = optionValue("--type", in: arguments)
     // A filter that matches nothing must not be answered with "there is nothing": those are
     // different statements, and only one of them is about the code.
-    if let package {
-        let known = SwiftSources.packageNames(under: URL(fileURLWithPath: root, isDirectory: true))
-        guard known.contains(package) else {
-            reportError("sextant api: no package named '\(package)'. Known: \(known.sorted().joined(separator: ", ")).")
-            return 2
-        }
+    if let package, let unknown = PublicAPI.unknownPackage(package, root: root) {
+        reportError("sextant api: \(unknown)")
+        return 2
     }
     let index = clangIndex(root: root, arguments: arguments, includeTests: false)
     let databaseRoot = projectRoot(in: arguments)
@@ -191,8 +171,10 @@ func runAPI(arguments: [String]) -> Int32 {
                                                                                   fileLimit: fileLimit)
 
     if arguments.contains("--json") {
-        printJSON(PublicAPI.summaries(projectRoot: root, package: package, type: type, index: index,
-                                      compileDatabaseRoot: databaseRoot, fileLimit: fileLimit))
+        let surface = PublicAPI.summaries(projectRoot: root, package: package, type: type, index: index,
+                                          compileDatabaseRoot: databaseRoot, fileLimit: fileLimit)
+        printJSON(surface)
+        if let type, surface.isEmpty { reportError(PublicAPI.missingType(type)) }
         conditional.forEach(reportError)
         StructuralCoverage.report(unanswered).forEach(reportError)
         StructuralCoverage.exclusionNote().forEach(reportError)
@@ -217,10 +199,18 @@ func runSearch(arguments: [String]) -> Int32 {
     // A pattern the Swift parser rejects can still be an Objective-C or C++ one, so it is carried
     // to clang instead of ending the command. What must never happen is "No matches." for a
     // pattern that nothing was able to use.
+    let includeTests = arguments.contains("--include-tests")
+    guard let rootPath = scopedRoot(in: arguments) else { return 2 }
+    let fileLimit = scaleLimit(in: arguments)
+    let root = URL(fileURLWithPath: rootPath, isDirectory: true)
+    let swiftFiles = SwiftSources.files(under: root, includeTests: includeTests, limit: fileLimit)
+    let parseCache = SourceParseCache()
+    // An operator the searched files declare folds the pattern as it folds them.
+    let folding = OperatorFolding.Session(files: swiftFiles, cache: parseCache)
     var engine: PatternSearch?
     var swiftRejection: String?
     do {
-        engine = try PatternSearch(pattern: pattern)
+        engine = try PatternSearch(pattern: pattern, operators: { folding.declared })
     } catch let failure as PatternSearch.Failure where failure.mayBeCFamily {
         swiftRejection = failure.description
     } catch {
@@ -228,15 +218,10 @@ func runSearch(arguments: [String]) -> Int32 {
                     + "Supported: an expression, statement or declaration using $X and $$$.")
         return 2
     }
-    let includeTests = arguments.contains("--include-tests")
-    guard let rootPath = scopedRoot(in: arguments) else { return 2 }
-    let fileLimit = scaleLimit(in: arguments)
-    let root = URL(fileURLWithPath: rootPath, isDirectory: true)
     // Result cache keyed by (file content hash + pattern): on an unchanged file with the same
     // pattern, parsing and matching are skipped.
-    let swiftFiles = SwiftSources.files(under: root, includeTests: includeTests, limit: fileLimit)
     let swift = engine.map {
-        SwiftPatternScan.run($0, pattern: pattern, files: swiftFiles, root: root, cache: SourceParseCache(),
+        SwiftPatternScan.run($0, pattern: pattern, files: swiftFiles, root: root, cache: parseCache,
                              resultCache: PersistentCache(namespace: SwiftPatternScan.cacheNamespace))
     } ?? SwiftPatternScan.Outcome()
     var hits = swift.hits.map { SearchHit(file: $0.file, line: $0.line, column: $0.column, text: $0.text) }
@@ -291,7 +276,8 @@ func runSearch(arguments: [String]) -> Int32 {
     let limit = optionValue("--limit", in: arguments).flatMap(Int.init).map { max(1, $0) } ?? hits.count
     for hit in hits.prefix(limit) { print("\(hit.file):\(hit.line):\(hit.column): \(hit.text)") }
     if hits.count > limit { print("… \(hits.count - limit) more not shown (--limit \(limit))") }
-    print(hits.isEmpty ? "No matches." : "\ntotal: \(hits.count)")
+    print(hits.isEmpty ? StructuralCoverage.nothingToRead(under: rootPath, includeTests: includeTests) ?? "No matches."
+                       : "\ntotal: \(hits.count)")
     StructuralCoverage.inactiveReport(cFamily.inactive, targets: cFamily.targets).forEach(reportError)
     if cFamily.inactive.isEmpty {
         StructuralCoverage.configurationNote(targets: cFamily.targets).forEach(reportError)
@@ -363,7 +349,8 @@ func runLint(arguments: [String]) -> Int32 {
     let inactive = StructuralCoverage.inactiveReport(outcome.inactive, targets: outcome.targets,
                                                      noun: "possible violation(s)")
     guard !violations.isEmpty else {
-        print("✅ No violations found — rules: \(ruleSet.origin)")
+        print(StructuralCoverage.nothingToRead(under: root, includeTests: includeTests)
+              ?? "✅ No violations found — rules: \(ruleSet.origin)")
         inactive.forEach(reportError)
         RuleEngine.brokenReport(outcome.broken).forEach(reportError)
         StructuralCoverage.recoveredReport(outcome.recovered).forEach(reportError)

@@ -119,6 +119,25 @@ struct MCPInvalidInputTests {
         #expect(huge.contains("budget \(Int.max) is above the maximum of \(TokenBudget.maximum)"), "\(responses[7])")
     }
 
+    @Test("An api filter naming nothing says so: an unknown package is refused, an unknown type named",
+          .enabled(if: binary != nil, "sextant is not built — run `swift build` first"), .timeLimit(.minutes(2)))
+    func apiFiltersThatMatchNothing() throws {
+        let responses = try session([
+            #"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"api","arguments":{"package":"Nope"}}}"#,
+            #"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"api","arguments":{"type":"Nope"}}}"#,
+        ])
+        try #require(responses.count == 2, "\(responses)")
+        func answer(_ response: [String: Any]) -> (text: String, isError: Bool) {
+            let result = response["result"] as? [String: Any]
+            let text = (result?["content"] as? [[String: Any]])?.first?["text"] as? String ?? ""
+            return (text, result?["isError"] as? Bool ?? false)
+        }
+        let package = answer(responses[0]), type = answer(responses[1])
+        #expect(package.isError && package.text.contains("no package named 'Nope'. Known:"), "\(responses[0])")
+        #expect(!type.isError && type.text.contains("No public declaration named 'Nope'"), "\(responses[1])")
+        #expect(!type.text.contains("declarations: 0"), "\(responses[1])")
+    }
+
     /// `api` read `budget` without declaring it, so validation never saw it and every bad value
     /// was answered with the default surface and no word about it.
     @Test("A bad api budget is Invalid params, as it is for repo_map",

@@ -68,10 +68,12 @@ struct IndexSnapshotTests {
         }
 
         /// What `sextant index` records after a build: the sources now, the store as it is.
-        func recordSnapshot(exitStatus: Int32 = 0, testsBuilt: Bool = true, log: String = "") throws {
+        func recordSnapshot(exitStatus: Int32 = 0, testsBuilt: Bool = true, log: String = "",
+                            unitTimes: [String: Date]? = nil) throws {
             let snapshot = try #require(IndexSnapshot.afterBuild(
                 store: store.path, projectRoot: root.path, sources: IndexSnapshot.sources(ofProject: root.path).get(),
-                exitStatus: exitStatus, testsBuilt: testsBuilt, buildLog: log, toolchain: nil))
+                exitStatus: exitStatus, testsBuilt: testsBuilt, buildLog: log, toolchain: nil,
+                unitTimes: unitTimes.map { times in { times } }))
             try snapshot.save(home: home)
         }
 
@@ -226,6 +228,106 @@ struct IndexSnapshotTests {
         #expect(report.filesWithErrors == ["Sources/demo/B.swift"])
         #expect(report.testsSkipped)
         #expect(report.reasons().contains { $0.contains("failed with code 1") && $0.contains("Sources/demo/B.swift") })
+    }
+
+    @Test("After a failed build, a source it did not compile is not indexed, whatever its content")
+    func sourcesAFailedBuildDidNotCompileAreNotIndexed() throws {
+        let project = try Project(git: true)
+        try project.write("Tests/demoTests/ExtraTests.swift", "func extra() { a() }\n")
+        try project.commitAll("tests")
+        let path = { (relative: String) in project.root.appendingPathComponent(relative).path }
+        let later = Date().addingTimeInterval(60), earlier = Date().addingTimeInterval(-3600)
+        // A.swift and B.swift compiled after their last change; c.m compiled before it; the test
+        // file never compiled at all.
+        try project.recordSnapshot(exitStatus: 1, unitTimes: [path("Sources/demo/A.swift"): later,
+                                                              path("Sources/demo/B.swift"): later,
+                                                              path("Sources/demo/c.m"): earlier])
+
+        let report = project.report()
+        #expect(report.state == .stale)
+        #expect(report.notBuiltFiles == ["Sources/demo/c.m", "Tests/demoTests/ExtraTests.swift"])
+        // Not built is answered as changed: positions unconfirmed, text searched for candidates —
+        // and with no indexed text, which the store does not hold for them.
+        #expect(report.changedFiles == ["Sources/demo/c.m", "Tests/demoTests/ExtraTests.swift"])
+        #expect(report.indexedContent["Tests/demoTests/ExtraTests.swift"] == nil)
+        let reasons = report.reasons()
+        #expect(reasons.contains { $0.contains("failed with code 1") && $0.contains("2 file(s) it did not compile are not indexed")
+                                   && $0.contains("Tests/demoTests/ExtraTests.swift") })
+        #expect(!reasons.contains { $0.contains("changed since the index was built") })
+        #expect(IndexDrift(report: report, projectRoot: project.root.path)?.isChanged(path("Tests/demoTests/ExtraTests.swift")) == true)
+    }
+
+    @Test("While an index run has not finished, the index is not fresh, on either basis, and says why")
+    func unfinishedIndexRunIsNotFresh() throws {
+        let project = try Project(git: true)
+        try project.recordSnapshot()
+        #expect(project.report().state == .fresh)
+        let marker = IndexBuild.unfinishedRunMarker(forRoot: project.root.path, home: project.home)
+        try FileManager.default.createDirectory(at: marker.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data().write(to: marker)
+        let report = project.report()
+        #expect(report.state == .stale)
+        #expect(report.unfinishedIndexRun != nil)
+        #expect(report.reasons().contains { $0.contains("did not finish") && $0.contains("partial") })
+        try FileManager.default.removeItem(at: marker)
+        #expect(project.report().state == .fresh)
+    }
+
+    @Test("On the build-time basis, a source removed after the build makes the index stale and its new place a candidate file")
+    func sourceRemovedAfterBuildIsNotFresh() throws {
+        let project = try Project(git: false)
+        let built = Date().addingTimeInterval(-3600)
+        try FileManager.default.setAttributes([.modificationDate: built],
+                                              ofItemAtPath: project.store.appendingPathComponent("v5/units").path)
+        let path = { (relative: String) in project.root.appendingPathComponent(relative).path }
+        // Sources/demo changed after the build (a rename in it); Sources/old did not.
+        try project.write("Sources/old/Kept.swift", "struct K {}\n")
+        try FileManager.default.setAttributes([.modificationDate: built.addingTimeInterval(-60)], ofItemAtPath: path("Sources/old"))
+        let coverage = StoreCoverage.Result(covered: 2, total: 4, foreign: 0,
+                                            missingSources: [path("Sources/demo/Gone.swift"), path("Sources/old/Older.swift")],
+                                            uncoveredSources: [path("Sources/demo/B.swift"), path("Sources/old/Kept.swift")])
+        let found = IndexFreshness.removedSinceBuild(storePaths: [project.store.path], projectRoot: project.root) { _ in coverage }
+        #expect(found.removed == ["Sources/demo/Gone.swift"])
+        #expect(found.unindexed == ["Sources/demo/B.swift"])
+
+        // A unit left behind by a deletion before the build changes nothing.
+        let before = StoreCoverage.Result(covered: 2, total: 3, foreign: 0, missingSources: [path("Sources/old/Older.swift")],
+                                          uncoveredSources: [path("Sources/old/Kept.swift")])
+        let none = IndexFreshness.removedSinceBuild(storePaths: [project.store.path], projectRoot: project.root) { _ in before }
+        #expect(none.removed.isEmpty && none.unindexed.isEmpty)
+
+        var report = IndexFreshness.Report(state: .stale, basis: .buildTime, changedFiles: found.unindexed)
+        report.removedSources = found.removed
+        report.unindexedFiles = found.unindexed
+        #expect(report.reasons().contains { $0.contains("deleted or renamed") && $0.contains("Sources/demo/Gone.swift") })
+        #expect(!report.reasons().contains { $0.contains("changed since the index was built") })
+        #expect(IndexDrift(report: report, projectRoot: project.root.path)?.isChanged(path("Sources/demo/B.swift")) == true)
+    }
+
+    @Test("A git that cannot run is named as the reason, not read as the project leaving its repository")
+    func gitThatCannotRunIsNamed() throws {
+        let project = try Project(git: true)
+        try project.recordSnapshot()
+        let report = project.report(git: SourceSnapshot.GitRunner { _ in nil })
+        #expect(report.basis == .buildTime)
+        #expect(report.snapshotProblem?.contains("git could not run") == true, "\(report.snapshotProblem ?? "")")
+        #expect(report.snapshotProblem?.contains("no longer in the git repository") != true)
+    }
+
+    @Test("A successful build records nothing as not built")
+    func successfulBuildRecordsNothingAsNotBuilt() throws {
+        let project = try Project(git: true)
+        try project.recordSnapshot(exitStatus: 0, unitTimes: [:])
+        #expect(project.report().state == .fresh)
+        #expect(project.report().notBuiltFiles.isEmpty)
+    }
+
+    @Test("Errors are read from a build log the compiler coloured")
+    func colouredErrorsAreRead() {
+        let root = URL(fileURLWithPath: "/tmp/sextant-colour-project")
+        let log = "/tmp/sextant-colour-project/Sources/Geo/New.swift:4:29: \u{1B}[1;31merror: \u{1B}[1;39mcannot convert\u{1B}[0;0m\n"
+            + "  \u{1B}[0;36m|\u{1B}[0;0m  `- \u{1B}[1;31merror: \u{1B}[1;39mcannot convert\n"
+        #expect(BuildRecord.filesWithErrors(inBuildLog: log, projectRoot: root) == ["Sources/Geo/New.swift"])
     }
 
     // MARK: - git failing

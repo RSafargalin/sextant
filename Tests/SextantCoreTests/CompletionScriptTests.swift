@@ -83,4 +83,16 @@ struct CompletionScriptTests {
         #expect(process.terminationStatus == 0,
                 "\(shell.rawValue) rejected the script: \(String(decoding: output, as: UTF8.self))")
     }
+
+    @Test("Declared values are offered: a choice flag's words, and the words of a positional argument")
+    func declaredValuesAreOffered() {
+        let bash = CompletionScript.script(for: .bash)
+        #expect(bash.contains("--store-policy)\n      COMPREPLY=( $(compgen -W \"recency union coverage\" -- \"$cur\") )"))
+        #expect(bash.contains("store:0) words=\"show use\""))
+        #expect(bash.contains("store:1) words=\"recency union coverage\""))
+        #expect(bash.contains("completion:0) words=\"zsh bash\""))
+        let zsh = CompletionScript.script(for: .zsh)
+        #expect(zsh.contains(":value:(recency union coverage)'"))
+        #expect(zsh.contains("'1:argument:(show use)' '2:argument:(recency union coverage)'"))
+    }
 }

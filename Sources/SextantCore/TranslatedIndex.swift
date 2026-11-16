@@ -45,17 +45,15 @@ public struct TranslatedIndex: SemanticIndex {
                 let lost = references.count < hit.references.count || (hit.definition != nil && definition == nil)
                 // A symbol nothing is left of was only ever in files that are gone.
                 if lost && definition == nil && references.isEmpty { return nil }
-                return SymbolHit(name: hit.name, usr: hit.usr, kind: hit.kind, definition: definition,
-                                 references: Array(references.prefix(limit)),
-                                 totalReferences: hit.totalReferences - (hit.references.count - references.count))
+                return hit.replacing(definition: definition, references: Array(references.prefix(limit)),
+                                     totalReferences: hit.totalReferences - (hit.references.count - references.count))
             }
         guard !hits.isEmpty else { return hits }
         let note = staleness(forName: name, query: query)
         return hits.map { hit in
-            var translated = SymbolHit(name: hit.name, usr: hit.usr, kind: hit.kind,
-                                       definition: hit.definition.map(stated),
-                                       references: hit.references.map(stated).sorted(by: SourceLocation.isOrderedBefore),
-                                       totalReferences: hit.totalReferences)
+            var translated = hit.replacing(definition: hit.definition.map(stated),
+                                           references: hit.references.map(stated).sorted(by: SourceLocation.isOrderedBefore),
+                                           totalReferences: hit.totalReferences)
             translated.staleness = note
             return translated
         }

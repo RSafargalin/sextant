@@ -8,7 +8,7 @@ breaking something invisible.
 ## Build and verify
 
 ```bash
-swift build && swift test          # 655 swift-testing tests, plus 4 XCTests (BuildTrustTests)
+swift build && swift test          # 682 swift-testing tests, plus 4 XCTests (BuildTrustTests)
 make ci                            # build + test + self-lint — run this before committing
 swift test --filter "<suite name>" # one suite
 ```

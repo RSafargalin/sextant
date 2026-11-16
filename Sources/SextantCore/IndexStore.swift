@@ -122,12 +122,17 @@ public final class IndexStore {
             // For callers, account for protocol dispatch: calls land on the requirement that
             // the method overrides (relation .overrideOf), so its call sites are added too.
             var usrsToQuery = [usr]
+            var accessors: [String] = []
             if query == .callers {
                 for occurrence in database.occurrences(ofUSR: usr, roles: .overrideOf) {
                     for relation in occurrence.relations where relation.roles.contains(.overrideOf) {
                         usrsToQuery.append(relation.symbol.usr)
                     }
                 }
+                // A property is never called itself: its callers are the callers of its accessors.
+                let found = accessorsOf(usrsToQuery)
+                usrsToQuery += found.map(\.usr)
+                accessors = Array(Set(found.compactMap { SymbolName.accessorKind(of: $0.name) })).sorted()
             }
             var seen = Set<String>()
             var locations: [SourceLocation] = []
@@ -157,7 +162,7 @@ public final class IndexStore {
             // anything is counted.
             let carried = ReferencePositions.verified(locations, name: definitionOccurrence.symbol.name,
                                                       indexedText: indexedText)
-            return SymbolHit(
+            var hit = SymbolHit(
                 name: definitionOccurrence.symbol.name,
                 usr: usr,
                 kind: "\(definitionOccurrence.symbol.kind)",
@@ -165,6 +170,8 @@ public final class IndexStore {
                 references: Array(carried.sorted(by: SourceLocation.isOrderedBefore).prefix(limit)),
                 totalReferences: carried.count
             )
+            if !accessors.isEmpty { hit.accessors = accessors }
+            return hit
         }
         .sorted { $0.usr < $1.usr }
     }
@@ -287,9 +294,12 @@ public final class IndexStore {
                 add(occurrence.symbol, callSite: SourceLocation(occurrence))
             }
         case .callers:
-            for occurrence in database.occurrences(ofUSR: usr, roles: .call) where isInScope(occurrence.location) {
-                for relation in occurrence.relations where relation.roles.contains(.calledBy) {
-                    add(relation.symbol, callSite: SourceLocation(occurrence))
+            // A property's callers are the callers of its accessors.
+            for called in [usr] + accessorsOf([usr]).map(\.usr) {
+                for occurrence in database.occurrences(ofUSR: called, roles: .call) where isInScope(occurrence.location) {
+                    for relation in occurrence.relations where relation.roles.contains(.calledBy) {
+                        add(relation.symbol, callSite: SourceLocation(occurrence))
+                    }
                 }
             }
         }
@@ -299,6 +309,20 @@ public final class IndexStore {
         return sites
             .sorted { SourceLocation.isOrderedBefore($0.callSite ?? $0.location, $1.callSite ?? $1.location) }
             .filter { seen.insert($0.usr).inserted }
+    }
+
+    /// The accessors of the given symbols — a property's getter, setter and observers — with their
+    /// names (`getter:area`). Empty for a symbol that has none.
+    private func accessorsOf(_ usrs: [String]) -> [(usr: String, name: String)] {
+        var seen = Set<String>()
+        var found: [(usr: String, name: String)] = []
+        for usr in usrs {
+            for occurrence in database.occurrences(relatedToUSR: usr, roles: .accessorOf)
+            where seen.insert(occurrence.symbol.usr).inserted {
+                found.append((occurrence.symbol.usr, occurrence.symbol.name))
+            }
+        }
+        return found
     }
 
     /// A project source within the current project's scope: not SDK code, not inside a build tree

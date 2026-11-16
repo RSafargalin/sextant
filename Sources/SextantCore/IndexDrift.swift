@@ -150,13 +150,14 @@ public final class IndexDrift: @unchecked Sendable {
         let map: [Int?]?
     }
 
-    /// nil unless the report is on the snapshot basis and names changed files: on the build-time
-    /// basis nothing is known about what changed, and with nothing changed there is nothing to map.
+    /// nil unless the report names changed files: with nothing changed there is nothing to map. On
+    /// the build-time basis nothing is known about what changed, except, once sources were removed
+    /// since the build, the sources the store holds nothing for (`unindexedFiles`).
     public init?(report: IndexFreshness.Report, projectRoot: String,
                  home: URL = FileManager.default.homeDirectoryForCurrentUser,
                  git: SourceSnapshot.GitRunner = .system,
                  classificationCache: @escaping () -> PersistentCache<Bool>? = { IndexDrift.makeClassificationCache() }) {
-        guard report.basis == .snapshot, !report.changedFiles.isEmpty else { return nil }
+        guard !report.changedFiles.isEmpty else { return nil }
         self.makeClassificationCache = classificationCache
         self.report = report
         self.root = IndexSnapshot.canonical(projectRoot)
@@ -415,9 +416,9 @@ public final class IndexDrift: @unchecked Sendable {
         CanonicalPath.ofFile(path)
     }
 
-    /// `save(_:)` and `save:` are written `save` in source.
+    /// `save(_:)` and `save:` are written `save` in source, and `getter:area` is written `area`.
     static func baseName(_ name: String) -> String {
-        String(name.prefix { $0 != "(" && $0 != ":" })
+        SymbolName.written(name)
     }
 
     // MARK: - Identifier scans

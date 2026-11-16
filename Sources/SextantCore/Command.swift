@@ -189,12 +189,82 @@ public enum Command {
         return waitForExit(process)
     }
 
+    /// Runs the user's build to its end. When sextant is stopped meanwhile — SIGINT, SIGTERM or
+    /// SIGHUP — the build is stopped first: its process group and those of every process it
+    /// started get SIGTERM (SIGKILL ten seconds later if they are still there), and once it has
+    /// exited sextant dies of the signal it received. A build left running after the command that
+    /// started it is gone keeps rewriting the store under every answer read from it.
     private static func waitForExit(_ process: Process) -> Int32 {
         let exited = DispatchSemaphore(value: 0)
         process.terminationHandler = { _ in exited.signal() }
+        let stopping = StopSignal()
+        let signals = [SIGINT, SIGTERM, SIGHUP]
+        let previous = signals.map { signal($0, SIG_IGN) }
+        defer { for (number, handler) in zip(signals, previous) { signal(number, handler) } }
+        let sources = signals.map { number -> DispatchSourceSignal in
+            let source = DispatchSource.makeSignalSource(signal: number, queue: .global())
+            source.setEventHandler {
+                guard stopping.record(number), process.isRunning else { return }
+                let pid = process.processIdentifier
+                let tree = [pid] + descendants(of: pid)
+                terminate(tree, with: SIGTERM)
+                DispatchQueue.global().asyncAfter(deadline: .now() + 10) { terminate(tree, with: SIGKILL) }
+            }
+            source.resume()
+            return source
+        }
+        defer { sources.forEach { $0.cancel() } }
         do { try process.run() } catch { return -1 }
         exited.wait()
+        if let number = stopping.number {
+            sources.forEach { $0.cancel() }
+            signal(number, SIG_DFL)
+            raise(number)
+        }
         return process.terminationStatus
+    }
+
+    /// The first stop signal received while a build runs.
+    private final class StopSignal: @unchecked Sendable {
+        private let lock = NSLock()
+        private var received: Int32?
+        var number: Int32? { lock.withLock { received } }
+        /// Records the signal; false when one was recorded already.
+        func record(_ number: Int32) -> Bool {
+            lock.withLock {
+                guard received == nil else { return false }
+                received = number
+                return true
+            }
+        }
+    }
+
+    /// Every process below `pid`, children first, found through the kernel's process table.
+    static func descendants(of pid: pid_t) -> [pid_t] {
+        var found: [pid_t] = []
+        var pending = [pid]
+        while let parent = pending.popLast() {
+            let count = proc_listchildpids(parent, nil, 0)
+            guard count > 0 else { continue }
+            var children = [pid_t](repeating: 0, count: Int(count) * 2)
+            let filled = children.withUnsafeMutableBytes { buffer in
+                proc_listchildpids(parent, buffer.baseAddress, Int32(buffer.count))
+            }
+            let listed = children.prefix(Int(max(filled, 0))).filter { $0 > 0 }
+            found += listed
+            pending += listed
+        }
+        return found
+    }
+
+    /// Sends a signal to each process's own process group when it leads one apart from sextant's,
+    /// and to the process alone otherwise.
+    private static func terminate(_ processes: [pid_t], with number: Int32) {
+        let own = getpgrp()
+        for pid in processes {
+            let group = getpgid(pid)
+            if group > 0, group != own { kill(-group, number) } else { kill(pid, number) }
+        }
     }
 
     /// Runs git in a directory, checking the exit code.

@@ -108,4 +108,39 @@ struct MCPConfigReloadTests {
         _ = try fresh.send(initialize, id: 0)
         #expect(after == text(try fresh.send(call, id: 1)))
     }
+
+    @Test("A .sextant.json made invalid mid-session is said in every answer, not only on stderr",
+          .enabled(if: binary != nil, "sextant is not built — run `swift build` first"),
+          .timeLimit(.minutes(2)))
+    func invalidConfigMidSessionIsInEveryAnswer() throws {
+        let binary = try #require(Self.binary)
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("sextant-badconfig-\(UUID().uuidString.prefix(8))").resolvingSymlinksInPath()
+        let root = base.appendingPathComponent("package"), home = base.appendingPathComponent("home")
+        defer { try? FileManager.default.removeItem(at: base) }
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("Sources/demo"), withIntermediateDirectories: true)
+        try "// swift-tools-version: 5.9\nimport PackageDescription\nlet package = Package(name: \"demo\")\n"
+            .write(to: root.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
+        try "struct Demo {}\n".write(to: root.appendingPathComponent("Sources/demo/Demo.swift"), atomically: true, encoding: .utf8)
+
+        let initialize: [String: Any] = ["jsonrpc": "2.0", "id": 0, "method": "initialize",
+                                         "params": ["protocolVersion": MCPProtocol.revision, "capabilities": [String: Any](),
+                                                    "clientInfo": ["name": "badconfig", "version": "1"]]]
+        let session = try Session(binary: binary, project: root, home: home)
+        defer { session.close() }
+        _ = try session.send(initialize, id: 0)
+        func call(_ name: String, _ arguments: [String: Any], id: Int) throws -> String {
+            text(try session.send(["jsonrpc": "2.0", "id": id, "method": "tools/call",
+                                   "params": ["name": name, "arguments": arguments]], id: id))
+        }
+        #expect(!(try call("who_defines", ["symbol": "Demo"], id: 1)).contains("config:"))
+
+        try #"{"storePolicy": "bogus"}"#.write(to: root.appendingPathComponent(".sextant.json"), atomically: true, encoding: .utf8)
+        for (offset, (name, arguments)) in [("who_defines", ["symbol": "Demo"]), ("find_references", ["symbol": "Demo"]),
+                                            ("api", [:])].enumerated() as EnumeratedSequence<[(String, [String: Any])]> {
+            let answer = try call(name, arguments, id: 2 + offset)
+            #expect(answer.contains("config:") && answer.contains("storePolicy") && answer.contains("bogus"), "\(name): \(answer)")
+        }
+    }
 }

@@ -67,16 +67,21 @@ public struct SourceSnapshot: Codable, Sendable, Equatable {
         /// Runs git with bytes on stdin and returns its stdout as bytes; nil when this runner has
         /// no such mode, and callers then fall back to `run`, one process per question.
         let runWithInput: (@Sendable ([String], Data) -> Data?)?
+        /// Why git cannot run at all, asked once a question failed; nil when it runs.
+        let unavailability: @Sendable () -> String?
 
         public init(_ run: @escaping @Sendable ([String]) -> String?) {
             self.run = run
             self.runWithInput = nil
+            self.unavailability = { run(["--version"]) == nil ? "`git --version` failed" : nil }
         }
 
         init(run: @escaping @Sendable ([String]) -> String?,
-             runWithInput: @escaping @Sendable ([String], Data) -> Data?) {
+             runWithInput: @escaping @Sendable ([String], Data) -> Data?,
+             unavailability: @escaping @Sendable () -> String?) {
             self.run = run
             self.runWithInput = runWithInput
+            self.unavailability = unavailability
         }
 
         /// The installed git, run with `--no-optional-locks`: a read such as `git status` otherwise
@@ -86,6 +91,10 @@ public struct SourceSnapshot: Codable, Sendable, Equatable {
             run: { arguments in Command.successOutput("/usr/bin/env", ["git", "--no-optional-locks"] + arguments) },
             runWithInput: { arguments, input in
                 Command.successData("/usr/bin/env", ["git", "--no-optional-locks"] + arguments, input: input)
+            },
+            unavailability: {
+                guard case .failure(let failure) = Command.checkedOutput("/usr/bin/env", ["git", "--version"]) else { return nil }
+                return "`git --version` \(failure)"
             })
     }
 
@@ -128,6 +137,8 @@ public struct SourceSnapshot: Codable, Sendable, Equatable {
     public func changes(projectRoot: URL, git runner: GitRunner = .system) -> Comparison {
         guard let git else { return compareEveryFile(projectRoot: projectRoot) }
         guard let repository = Repository(projectRoot: projectRoot, runner: runner) else {
+            // A git that cannot run says nothing about where the project is.
+            if let reason = runner.unavailability() { return .incomparable("git could not run (\(reason))") }
             return .incomparable("the project is no longer in the git repository it was indexed in")
         }
         guard repository.prefix == git.prefix else {

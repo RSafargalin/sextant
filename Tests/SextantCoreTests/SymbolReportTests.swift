@@ -223,4 +223,15 @@ struct SymbolReportTests {
         #expect(Set(object.keys) == ["name", "kinds", "definitions", "referenceCount", "references", "callerCount",
                                      "callers", "callees", "implementations", "supertypes"])
     }
+
+    @Test("A stale position listed twice — a definition that is also the answer's reference — is counted once")
+    func stalePositionsAreCountedOnce() {
+        let note = Staleness(changedFiles: ["G.swift"], declarationsChanged: [], candidates: [], candidateCount: 0,
+                             candidateMatching: Staleness.matching)
+        let definition = SourceLocation(path: "/p/G.swift", line: 20, column: 13, isDefinition: true,
+                                        indexedLine: 20, unconfirmed: IndexDrift.Reason.lineChanged)
+        let lines = SymbolReport.staleness(note, locations: [definition, definition], symbol: "describe",
+                                           style: .cli(compact: true, referenceLimit: 10), path: { $0 })
+        #expect(lines.contains { $0.contains("1 position(s) unconfirmed") }, "\(lines)")
+    }
 }

@@ -53,12 +53,18 @@ public enum OperatorFolding {
         public func fold(_ tree: SourceFileSyntax) -> (folded: Folded, usedDeclaredOperators: Bool) {
             let standard = OperatorFolding.fold(tree)
             guard !standard.unknownOperators.isEmpty else { return (standard, false) }
-            let table = projectTable ?? OperatorFolding.table(declaredIn: files.compactMap {
+            return (OperatorFolding.fold(tree, operators: declared), true)
+        }
+
+        /// The standard operators plus those every file of the run declares, read once.
+        public var declared: OperatorTable {
+            if let projectTable { return projectTable }
+            let table = OperatorFolding.table(declaredIn: files.compactMap {
                 guard case .parsed(let tree) = cache.read(atPath: $0.path) else { return nil }
                 return tree
             })
             projectTable = table
-            return (OperatorFolding.fold(tree, operators: table), true)
+            return table
         }
     }
 

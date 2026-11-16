@@ -63,9 +63,24 @@ public enum PublicAPI {
         fileLimit: Int? = nil,
         tokenBudget: Int? = nil
     ) -> String {
-        render(summaries(projectRoot: projectRoot, package: package, type: type, cache: cache,
-                         index: index, compileDatabaseRoot: compileDatabaseRoot, fileLimit: fileLimit),
-               budget: tokenBudget)
+        let surface = summaries(projectRoot: projectRoot, package: package, type: type, cache: cache,
+                                index: index, compileDatabaseRoot: compileDatabaseRoot, fileLimit: fileLimit)
+        if let type, surface.isEmpty { return missingType(type) }
+        return render(surface, budget: tokenBudget)
+    }
+
+    /// What a `--type` filter that matches nothing answers: that the name is not there, which is a
+    /// statement about the code — not an empty surface, which would be one about the type.
+    public static func missingType(_ type: String) -> String {
+        "No public declaration named '\(type)' here (neither a type nor any other declaration)."
+    }
+
+    /// Why a `--package` filter cannot be answered — no package of that name under the root, with
+    /// the ones there are; nil when the package exists.
+    public static func unknownPackage(_ package: String, root: String) -> String? {
+        let known = SwiftSources.packageNames(under: URL(fileURLWithPath: root, isDirectory: true))
+        guard !known.contains(package) else { return nil }
+        return "no package named '\(package)'. Known: \(known.sorted().joined(separator: ", "))."
     }
 
     /// `budget` is in tokens, as `map`'s is, and bounds the rendered surface. It has no default:

@@ -103,7 +103,7 @@ bodies there is `body`.
 
 ## Status
 
-Working CLI and MCP server, version 0.9.x. 27 commands:
+Working CLI and MCP server, version 0.9.x. 28 commands:
 
 | Command | What it does | Layer |
 |---|---|---|
@@ -111,14 +111,14 @@ Working CLI and MCP server, version 0.9.x. 27 commands:
 | `api` | public surface of a package (attributes, doc summaries) | syntax |
 | `search <pattern>` | structural search over the AST (`$X`, variadic `$$$`, statement patterns); Swift through its own parser, Objective-C/C/C++ through clang | syntax |
 | `lint` | structural hygiene rules (`--rules <json>` replaces the built-in set; `{"extends": "builtin"}` adds to it), across the same languages as `search` | syntax |
-| `refs` / `defs` / `callers` | usages / definition / call sites (callers account for protocol dispatch) | semantics |
+| `refs` / `defs` / `callers` | usages / definition / call sites (callers account for protocol dispatch; a property's callers are the calls of its getter and setter, said as such) | semantics |
 | `callees` | what a symbol calls (best effort: calls within the project) | semantics |
 | `impls` / `supertypes` | implementations and subtypes, bases and protocols of a type | semantics |
 | `hierarchy <symbol>` | transitive call graph (`--callees` / `--callers`, `--depth N`) | semantics |
 | `context <symbol>` | one-shot summary: definition, usages, callers, callees, hierarchy | semantics |
 | `blast <symbol>` | impact analysis: what a change to this symbol touches | semantics |
 | `body <symbol>` | full text of a declaration (signature and body) | semantics + syntax |
-| `construct <type>` | construction and injection sites (heuristic: `Type(`, or `[Type alloc]` in Objective-C) | heuristic |
+| `construct <type>` | construction and injection sites, each at `file:line:column` (heuristic: `Type(`, or `[Type alloc]` in Objective-C, judged at the reference's column) | heuristic |
 | `changed` | symbol-level git diff: what was added, removed, or changed signature; what it could not compare is named | syntax |
 | `golden` / `bench` | semantic regressions against a spec / latency and output volume | measurability |
 | `adoption` | how much code navigation went through sextant rather than grep, and what went past it | measurability |
@@ -126,6 +126,7 @@ Working CLI and MCP server, version 0.9.x. 27 commands:
 | `mcp` | MCP server (stdio) for Claude Code — the semantic layer as tools | integration |
 | `init` | set up a project: `.sextant.json`, registration in `.mcp.json`, and a check | integration |
 | `serve` | daemon with a warm index: cold CLI start 2.6s → 0.27s (measured on sextant itself) | integration |
+| `version` / `completion <shell>` | the version / a shell completion script (zsh or bash) | integration |
 | `store` | index stores in reach, and the policy that decides between them (`store use <policy>`) | diagnostics |
 | `doctor` | self-check of the setup (sources, libIndexStore, index store, freshness) | diagnostics |
 | `index` | build an index store and capture the C-family compile flags: SPM (`swift build`, in a build tree of its own, `.build/sextant-index`) or an app target (`--app`, xcodebuild) | build |
@@ -158,7 +159,8 @@ is named:
 
 The bound is a prefix of the file list in a fixed order, so two runs cover the same files. It counts
 every file the command reads — Swift and Objective-C, C and C++ together, in one list — so clang's
-work is bounded too, and the "covered N of M" line counts the same files. `changed` is not bounded
+work is bounded too, and the "covered N of M" line counts the same files. A package manifest takes
+no slot: no area command reads it as a source. `changed` is not bounded
 by it: it reads only the files the diff names. It used
 to be a refusal instead, which answered a question about the first four thousand files with
 nothing at all.
@@ -191,6 +193,15 @@ and those declared in the searched files — `$X * $Y` finds `b * c` in `a + b *
 finds the cast inside an assignment. An expression with an operator of unknown precedence is
 compared as written, never folded on a guess, and its file is named; a pattern with one is
 refused.
+
+A declaration pattern constrains only what it states. Modifiers, attributes, a generic clause, an
+inheritance clause and a `where` clause it leaves out may be on the declaration or not:
+`struct $S { $$$ }` finds `public struct`, `@frozen struct`, `struct G<T>: P` alike, and
+`func $F($$$) -> $R { $$$ }` finds `public`, `static`, generic and attributed functions. Those it
+writes must be there: `public struct $S { $$$ }` finds only public structs, `final class $C { $$$ }`
+only final classes — each stated modifier or attribute among any others, in any order. This holds for
+`struct`, `class`, `enum`, `actor`, `protocol`, `extension`, `func`, `init`, `var`/`let`,
+`typealias` and `subscript` patterns, in `search` and in `lint` rules alike.
 
 The match is structural: `func $F() {}` matches only an empty body, `class $C {}` only an empty
 class — write `{ $$$ }` for any. Refused with a usage error (exit `2`, an error result over MCP)

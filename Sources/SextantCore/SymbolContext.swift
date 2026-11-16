@@ -20,10 +20,12 @@ public struct SymbolContext: Sendable, Codable {
     public let supertypes: [RelatedSymbol]
     /// Present only over an index that is stale against its snapshot.
     public var staleness: Staleness?
+    /// For a property: the kinds of its accessors whose calls `callers` are (`getter`, `setter`).
+    public var callerAccessors: [String]?
 
     enum CodingKeys: String, CodingKey {
         case name, kinds, definitions, referenceCount, references, callerCount, callers, callees,
-             implementations, supertypes, staleness
+             implementations, supertypes, staleness, callerAccessors
     }
 }
 
@@ -43,7 +45,11 @@ public extension SemanticIndex {
         guard !definitions.isEmpty else { return nil }
 
         let referenceHits = lookup(name: name, query: .references, limit: .max).flatMap { $0.references }
-        let callerHits = lookup(name: name, query: .callers, limit: .max).flatMap { $0.references }
+        let callerLookup = lookup(name: name, query: .callers, limit: .max)
+        // A call that lands on several symbols of the name — an implementation and the requirement
+        // it satisfies — is one call site.
+        var seenCallers = Set<String>()
+        let callerHits = callerLookup.flatMap { $0.references }.filter { seenCallers.insert($0.key).inserted }
         let callees = related(toName: name, query: .callees, limit: .max)
 
         var context = SymbolContext(
@@ -58,6 +64,8 @@ public extension SemanticIndex {
             implementations: related(toName: name, query: .implementations, limit: .max),
             supertypes: related(toName: name, query: .supertypes, limit: .max)
         )
+        let accessors = Set(callerLookup.flatMap { $0.accessors ?? [] })
+        if !accessors.isEmpty { context.callerAccessors = accessors.sorted() }
         // Callees are counted by symbol, as `callees` counts them; the sites are counted apart.
         context.calleeCount = Set(callees.map(\.usr)).count
         context.calleeSiteCount = callees.count

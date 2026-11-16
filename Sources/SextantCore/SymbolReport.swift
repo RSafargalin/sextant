@@ -136,9 +136,9 @@ public enum SymbolReport {
         }
 
         // `save(_:)` and `save:` are written `save(` and `save:` in source, so the part before the
-        // first separator is what a line can be checked against.
+        // first separator is what a line can be checked against; an accessor, by its property.
         func baseName(_ name: String) -> String {
-            String(name.prefix { $0 != "(" && $0 != ":" })
+            SymbolName.written(name)
         }
 
         // The index layer caps how many occurrences it collects. Printing the cap as the count
@@ -172,7 +172,9 @@ public enum SymbolReport {
                     // would read as an oversight; it is a fact about the index, and said as one.
                     lines.append("\(style.level1)def: not in the index (an external symbol, or one only declared here)")
                 }
-                let label = query == .callers ? "calls" : "usages"
+                let label = query == .callers
+                    ? "calls" + (hit.accessors.map { " (of its \($0.joined(separator: ", ")))" } ?? "")
+                    : "usages"
                 if style.compact {
                     // A histogram by file without snippets — exact, every occurrence is grouped.
                     // Unconfirmed positions are grouped apart: their numbers are lines as indexed,
@@ -261,7 +263,8 @@ public enum SymbolReport {
             context.references.forEach { lines.append("\(style.level2)• \(located($0))") }
         }
         if context.callerCount > 0 {
-            lines.append("\(style.level1)callers: \(context.callerCount)")
+            let accessors = context.callerAccessors.map { " (of its \($0.joined(separator: ", ")))" } ?? ""
+            lines.append("\(style.level1)callers\(accessors): \(context.callerCount)")
             context.callers.forEach { lines.append("\(style.level2)• \(located($0))") }
         }
         if !context.callees.isEmpty {
@@ -300,10 +303,14 @@ public enum SymbolReport {
     public static func staleness(_ note: Staleness?, locations: [SourceLocation], symbol: String,
                                  style: Style, path: (String) -> String, extra: [String] = []) -> [String] {
         guard let note else { return [] }
-        let mapped = locations.filter { location in
+        // A position listed twice — a definition that is also the answer's one reference, as in
+        // `defs` — is one position.
+        var seen = Set<String>()
+        let positions = locations.filter { seen.insert("\($0.key)|\($0.indexedLine ?? 0)|\($0.unconfirmed ?? "")").inserted }
+        let mapped = positions.filter { location in
             location.isConfirmed && location.indexedLine.map { $0 != location.line } == true
         }.count
-        let unconfirmed = locations.filter { !$0.isConfirmed }.count
+        let unconfirmed = positions.filter { !$0.isConfirmed }.count
         var body: [String] = extra.map { "\(style.level1)\($0)" }
         if mapped > 0 {
             body.append("\(style.level1)\(mapped) position(s) moved to their current lines "

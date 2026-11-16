@@ -153,8 +153,37 @@ struct IndexLayerDecisionTests {
         #expect(own.covered == own.total, "\(own.summary)")
         let foreign = try #require(StoreCoverage.measure(store: store, projectRoot: other))
         #expect(foreign.covered == 0)
-        #expect(StoreCoverage.cacheKey(store: store, projectRoot: other, includeTests: true, fileCount: count)
-                != StoreCoverage.cacheKey(store: store, projectRoot: other, includeTests: false, fileCount: count))
+        let files = SwiftSources.files(under: other, includeTests: true, extensions: extensions)
+        #expect(StoreCoverage.cacheKey(store: store, projectRoot: other, includeTests: true, files: files)
+                != StoreCoverage.cacheKey(store: store, projectRoot: other, includeTests: false, files: files))
+    }
+
+    @Test("Several stores cover what any of them covers: a union of file sets, not a sum of counts")
+    func coverageOfSeveralStoresIsTheirUnion() {
+        let one = StoreCoverage.Result(covered: 2, total: 4, foreign: 0, uncoveredSources: ["/p/C.swift", "/p/DTests.swift"])
+        let other = StoreCoverage.Result(covered: 3, total: 4, foreign: 1, uncoveredSources: ["/p/DTests.swift"])
+        let union = StoreCoverage.union([one, other])
+        #expect(union?.covered == 3)
+        #expect(union?.total == 4)
+        #expect(union?.uncoveredTests == 1)
+        #expect(union?.summary == "3/4 files (75%), 1 test file(s) outside it")
+        #expect(StoreCoverage.union([one]) == one)
+        #expect(StoreCoverage.union([]) == nil)
+        #expect(StoreCoverage.union([one, StoreCoverage.Result(covered: 1, total: 5, foreign: 0)]) == nil)
+    }
+
+    @Test("Coverage is not served from the cache for a different file set of the same size")
+    func coverageIsKeyedByTheFileSet() throws {
+        let root = try temporaryDirectory("coverage-rename")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = root.appendingPathComponent("store").path
+        let before = [root.appendingPathComponent("Sources/A.swift"), root.appendingPathComponent("Tests/Renamed.swift")]
+        let renamed = [root.appendingPathComponent("Sources/A.swift"), root.appendingPathComponent("Tests/Again.swift")]
+        #expect(StoreCoverage.cacheKey(store: store, projectRoot: root, includeTests: true, files: before)
+                != StoreCoverage.cacheKey(store: store, projectRoot: root, includeTests: true, files: renamed))
+        // The order a walk lists the files in is not part of the identity.
+        #expect(StoreCoverage.cacheKey(store: store, projectRoot: root, includeTests: true, files: before)
+                == StoreCoverage.cacheKey(store: store, projectRoot: root, includeTests: true, files: before.reversed()))
     }
 
     @Test("One project spelled two ways has one umbrella and one build log")

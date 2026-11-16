@@ -66,8 +66,8 @@ enum ReferencePositions {
     }
 
     /// `save(_:)` and `save:` are written `save(` and `save:` in source, so the part before the
-    /// first separator is what a column can be checked against.
+    /// first separator is what a column can be checked against; an accessor, by its property.
     private static func baseName(of name: String) -> String {
-        String(name.prefix { $0 != "(" && $0 != ":" })
+        SymbolName.written(name)
     }
 }

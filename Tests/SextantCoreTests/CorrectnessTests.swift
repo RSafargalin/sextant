@@ -209,6 +209,9 @@ struct ProjectScopeTests {
         #expect(ProjectScope.resolve(root: root.path, scope: "Sources/Missing") == .missingDirectory)
         try "struct A {}\n".write(to: nested.appendingPathComponent("A.swift"), atomically: true, encoding: .utf8)
         #expect(ProjectScope.resolve(root: root.path, scope: "Sources/Feature/A.swift") == .notADirectory)
+        // An absolute scope names the directory it spells: outside the project is said as such.
+        #expect(ProjectScope.resolve(root: root.path, scope: "/etc") == .outsideProject)
+        #expect(ProjectScope.resolve(root: root.path, scope: nested.path) == .resolved(nested.resolvingSymlinksInPath().standardizedFileURL.path))
     }
 }
 
@@ -470,7 +473,10 @@ struct DeclarationNameTests {
         // init and subscript are glued to `(` and are special; case comes with a list.
         #expect(Declaration(kind: .initializer, header: "init(x: Int)", access: .public).name == "init")
         #expect(Declaration(kind: .subscriptKind, header: "subscript(index: Int) -> Int", access: .public).name == "subscript")
-        #expect(Declaration(kind: .caseKind, header: "case a, b", access: .public).name == "a")
+        #expect(Declaration(kind: .caseKind, header: "case a, b", access: .public).name == "a, b")
+        #expect(Declaration(kind: .caseKind, header: "case leaf, node(Tree, Tree), raw = 1", access: .public).name == "leaf, node, raw")
+        let extracted = SwiftDeclarationExtractor.declarations(source: "enum E { case a, b(x: Int) }").first?.members.first
+        #expect(extracted?.name == "a, b")
     }
 }
 

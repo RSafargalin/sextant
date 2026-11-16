@@ -162,6 +162,13 @@ public struct Declaration: Sendable, Codable {
         switch kind {
         case .initializer: return "init"
         case .subscriptKind: return "subscript"
+        case .caseKind where header.hasPrefix("case "):
+            // A case list is every case it declares: `case a, b(x: Int)` → `a, b`.
+            return splitTopLevel(String(header.dropFirst("case ".count)), separator: ",").map { element in
+                element.trimmingCharacters(in: .whitespaces)
+                    .prefix { $0 != "(" && $0 != " " && $0 != "=" }
+                    .trimmingCharacters(in: CharacterSet(charactersIn: "`"))
+            }.filter { !$0.isEmpty }.joined(separator: ", ")
         default: break
         }
         let tokens = header.split(separator: " ")

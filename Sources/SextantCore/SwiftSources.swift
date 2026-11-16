@@ -325,7 +325,7 @@ public enum SwiftSources {
                              limit: Int? = nil) -> [URL] {
         let all = allFiles(under: root, includeTests: includeTests, extensions: extensions)
         guard let limit else { return all }
-        let walk = allFiles(under: root, includeTests: includeTests, extensions: boundedExtensions)
+        let walk = boundedWalk(under: root, includeTests: includeTests)
         guard walk.count > limit else { return all }
         let read = Set(walk.prefix(limit).map(\.path))
         return all.filter { read.contains($0.path) }
@@ -338,7 +338,15 @@ public enum SwiftSources {
 
     /// How many files a walk bounded by `--max-files` counts toward its bound.
     public static func boundedCount(under root: URL, includeTests: Bool) -> Int {
-        count(under: root, includeTests: includeTests, extensions: boundedExtensions)
+        boundedWalk(under: root, includeTests: includeTests).count
+    }
+
+    /// The files a `--max-files` bound is counted over: those of `boundedExtensions`, without the
+    /// package manifests — a manifest describes the build and no area command reads it as a source,
+    /// so a slot given to one is a file nobody reads.
+    private static func boundedWalk(under root: URL, includeTests: Bool) -> [URL] {
+        allFiles(under: root, includeTests: includeTests, extensions: boundedExtensions)
+            .filter { !isPackageManifest(relativePath: $0.lastPathComponent) }
     }
 
     private static func allFiles(under root: URL, includeTests: Bool, extensions: [String] = ["swift"]) -> [URL] {

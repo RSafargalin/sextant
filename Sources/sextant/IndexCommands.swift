@@ -78,13 +78,14 @@ func indexProvenance(_ resolution: StoreResolution, source: IndexProvenance.Sour
     let paths = resolution.chosen.map(\.path)
     let root = projectRoot(in: arguments)
     let report = IndexFreshness.report(storePaths: paths, projectRoot: root)
-    // Coverage of the single opened store: cached against the store's own state, so this is a
-    // lookup on every run but the first after a build. With several stores the number would be a
-    // sum of overlapping sets, which is not a fact about anything.
-    let coverage = paths.count == 1
-        ? StoreCoverage.measure(store: paths[0], projectRoot: URL(fileURLWithPath: root, isDirectory: true),
-                                libraryPath: optionValue("--index-lib", in: arguments))
-        : nil
+    // Coverage of the opened stores: each cached against the store's own state, so this is a
+    // lookup on every run but the first after a build. Several stores read together cover what any
+    // of them covers — a union of file sets, never a sum of their overlapping counts.
+    let measured = paths.map {
+        StoreCoverage.measure(store: $0, projectRoot: URL(fileURLWithPath: root, isDirectory: true),
+                              libraryPath: optionValue("--index-lib", in: arguments))
+    }
+    let coverage = measured.contains { $0 == nil } ? nil : StoreCoverage.union(measured.compactMap { $0 })
     let aside = resolution.setAsideByOwnStoreRule
     let selection = resolution.decidedByOwnStoreRule
         ? "the store `sextant index` built, ahead of \(aside) ordinary build store(s) (rule; a store policy overrides)"
@@ -217,7 +218,9 @@ func runDoctor(arguments: [String]) -> Int32 {
     print("# sextant doctor — \(shorten(root))")
     var ok = true
 
-    let fileCount = SwiftSources.files(under: rootURL, includeTests: false).count
+    // A package manifest describes the build; it is not one of the project's sources.
+    let fileCount = SwiftSources.files(under: rootURL, includeTests: false)
+        .filter { !SwiftSources.isPackageManifest(relativePath: $0.lastPathComponent) }.count
     if fileCount > 0 {
         print("✅ Swift sources: \(fileCount) files")
     } else {
@@ -502,6 +505,7 @@ func runIndex(arguments: [String]) -> Int32 {
         _ = try? IndexBuild.prepareUmbrellaDirectory(forRoot: rootPath)
         // Recorded before the build reads them: a file edited while it runs then reads as changed.
         let sources = captureSources(ofProject: rootPath)
+        IndexBuild.markRunStarted(forRoot: rootPath)
         let status = runSwiftBuild(build, in: package, log: log)
         let built = Set(IndexStoreLocator.storePaths(inBuildDirectory: scratch))
         let candidates = IndexStoreLocator.candidates(under: root)
@@ -511,8 +515,9 @@ func runIndex(arguments: [String]) -> Int32 {
         }
         if let store {
             recordSnapshot(store: store, root: rootPath, sources: sources, status: status,
-                           testsBuilt: testsBuilt, log: log)
+                           testsBuilt: testsBuilt, log: log, libraryPath: optionValue("--index-lib", in: arguments))
         }
+        IndexBuild.markRunFinished(forRoot: rootPath)
         guard status == 0 else {
             reportError("sextant index: build failed (code \(status)).")
             captureCompileDatabaseFromFailedBuild(root: rootPath, stores: store.map { [$0] } ?? [], buildLog: log)
@@ -575,6 +580,7 @@ func runIndex(arguments: [String]) -> Int32 {
     print("▶ umbrella build (\(packages.count) packages, one pass): swift \(build.joined(separator: " "))")
     let log = IndexBuild.buildLog(forRoot: rootPath)
     let sources = captureSources(ofProject: rootPath)
+    IndexBuild.markRunStarted(forRoot: rootPath)
     let status = runSwiftBuild(build, in: umbrella, log: log)
     let umbrellaStore = StoreSelection.resolve(IndexBuild.umbrellaCandidates(forRoot: rootPath), policy: nil).chosen.first?.path
     if let umbrellaStore, status == 0 {
@@ -583,8 +589,9 @@ func runIndex(arguments: [String]) -> Int32 {
     }
     if let umbrellaStore {
         recordSnapshot(store: umbrellaStore, root: rootPath, sources: sources, status: status,
-                       testsBuilt: testsBuilt, log: log)
+                       testsBuilt: testsBuilt, log: log, libraryPath: optionValue("--index-lib", in: arguments))
     }
+    IndexBuild.markRunFinished(forRoot: rootPath)
     guard status == 0 else {
         reportError("sextant index: umbrella build failed (code \(status)).")
         captureCompileDatabaseFromFailedBuild(root: rootPath, stores: umbrellaStore.map { [$0] } ?? [], buildLog: log)
@@ -633,7 +640,7 @@ func captureSources(ofProject rootPath: String) -> Result<SourceSnapshot, Source
 /// judged by content. A snapshot that cannot be written is reported, not fatal: freshness then
 /// falls back to build time and says so.
 func recordSnapshot(store: String, root: String, sources captured: Result<SourceSnapshot, SourceSnapshot.CaptureFailure>,
-                    status: Int32, testsBuilt: Bool, log: URL) {
+                    status: Int32, testsBuilt: Bool, log: URL, libraryPath: String?) {
     let sources: SourceSnapshot
     switch captured {
     case .success(let value):
@@ -646,7 +653,8 @@ func recordSnapshot(store: String, root: String, sources captured: Result<Source
     let text = (try? String(contentsOf: log, encoding: .utf8)) ?? ""
     guard let snapshot = IndexSnapshot.afterBuild(store: store, projectRoot: root, sources: sources,
                                                   exitStatus: status, testsBuilt: testsBuilt, buildLog: text,
-                                                  toolchain: ToolchainIdentity.currentWithVersion()) else { return }
+                                                  toolchain: ToolchainIdentity.currentWithVersion(),
+                                                  libraryPath: libraryPath) else { return }
     do {
         try snapshot.save()
         IndexedText.prune()
@@ -773,6 +781,14 @@ func openIndexReporting(_ arguments: [String], label: String, listen: Bool = fal
     guard ensureFreshIndex(arguments, label: label) else { return nil }
     let (resolution, source) = resolveStores(in: arguments)
     let storePaths = resolution.chosen.map(\.path)
+    // A store with no library to read it is not "no store": the two have different remedies.
+    if !storePaths.isEmpty, optionValue("--index-lib", in: arguments) == nil, discoverIndexStoreLibrary() == nil {
+        if !quiet {
+            reportError("sextant \(label): libIndexStore.dylib was not found, so the index store cannot be read — "
+                        + "install an Xcode toolchain, select one with xcode-select or DEVELOPER_DIR, or pass --index-lib.")
+        }
+        return nil
+    }
     guard !storePaths.isEmpty,
           let libraryPath = optionValue("--index-lib", in: arguments) ?? discoverIndexStoreLibrary() else {
         if !quiet {

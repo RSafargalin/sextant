@@ -15,6 +15,14 @@ public enum CompletionScript {
     static var directoryFlags: Set<String> { flagNames(where: { $0 == .directory || $0 == .subdirectory }) }
     /// Flags whose value is a file.
     static var fileFlags: Set<String> { flagNames(where: { $0 == .path }) }
+    /// Flags whose value is one of a fixed set of words, with the words.
+    static var choices: [String: [String]] {
+        var found: [String: [String]] = [:]
+        for flag in CommandCatalog.commands.flatMap(\.flags) {
+            if case .choice(let words) = flag.value { found[flag.name] = words }
+        }
+        return found
+    }
 
     private static func flagNames(where kind: (FlagValue) -> Bool) -> Set<String> {
         Set(CommandCatalog.commands.flatMap(\.flags).filter { kind($0.value) }.map(\.name))
@@ -43,10 +51,14 @@ public enum CompletionScript {
                 let action = valueAction(for: flag.name, shell: .zsh)
                 return "        '\(flag.name)[\(description)]:value:\(action)' \\"
             }.joined(separator: "\n")
+            // A positional argument with declared words is offered those words; any other, files.
+            let positional = command.words.isEmpty ? "'*: :_files'"
+                : command.words.enumerated().map { "'\($0.offset + 1):argument:(\($0.element.joined(separator: " ")))'" }
+                    .joined(separator: " ")
             return """
                     \(command.name))
                       _arguments \\
-            \(specs.isEmpty ? "        '*: :_files'" : specs + "\n            '*: :_files'")
+            \(specs.isEmpty ? "        \(positional)" : specs + "\n            \(positional)")
                       ;;
             """
         }.joined(separator: "\n")
@@ -92,10 +104,19 @@ public enum CompletionScript {
         let fileValueFlags = valueFlags(in: fileFlags).joined(separator: "|")
         let otherValueFlags = CommandCatalog.commands
             .flatMap { $0.flags }
-            .filter { $0.takesValue && !directoryFlags.contains($0.name) && !fileFlags.contains($0.name) }
+            .filter { $0.takesValue && !directoryFlags.contains($0.name) && !fileFlags.contains($0.name)
+                      && choices[$0.name] == nil }
             .map { $0.name }
             .uniqued()
             .joined(separator: "|")
+        let allValueFlags = CommandCatalog.commands.flatMap { $0.flags }.filter(\.takesValue).map(\.name)
+            .uniqued().joined(separator: "|")
+        let choiceCases = choices.keys.sorted().map { flag in
+            "    \(flag))\n      COMPREPLY=( $(compgen -W \"\(choices[flag]!.joined(separator: " "))\" -- \"$cur\") )\n      return\n      ;;"
+        }.joined(separator: "\n")
+        let wordCases = CommandCatalog.commands.flatMap { command in
+            command.words.enumerated().map { "    \(command.name):\($0.offset)) words=\"\($0.element.joined(separator: " "))\" ;;" }
+        }.joined(separator: "\n")
 
         let perCommand = CommandCatalog.commands.map { command in
             "    \(command.name)) flags=\"\(command.flags.map { $0.name }.joined(separator: " "))\" ;;"
@@ -127,6 +148,7 @@ public enum CompletionScript {
             \(otherValueFlags))
               return
               ;;
+        \(choiceCases)
           esac
 
           command="${COMP_WORDS[1]}"
@@ -135,8 +157,24 @@ public enum CompletionScript {
             *) flags="" ;;
           esac
 
+          # Which positional argument is being completed: flags and their values do not count.
+          local position=0 i words
+          for (( i=2; i<COMP_CWORD; i++ )); do
+            case "${COMP_WORDS[i]}" in
+              \(allValueFlags)) (( i++ )) ;;
+              -*) ;;
+              *) (( position++ )) ;;
+            esac
+          done
+          case "$command:$position" in
+        \(wordCases)
+            *) words="" ;;
+          esac
+
           if [[ "$cur" == -* ]]; then
             COMPREPLY=( $(compgen -W "$flags" -- "$cur") )
+          elif [ -n "$words" ]; then
+            COMPREPLY=( $(compgen -W "$words" -- "$cur") )
           else
             COMPREPLY=( $(compgen -f -- "$cur") )
           fi
@@ -159,6 +197,7 @@ public enum CompletionScript {
     private static func valueAction(for flag: String, shell: Shell) -> String {
         if directoryFlags.contains(flag) { return "_files -/" }
         if fileFlags.contains(flag) { return "_files" }
+        if let words = choices[flag] { return "(\(words.joined(separator: " ")))" }
         return " "                                   // an opaque value: no suggestion, but one is expected
     }
 

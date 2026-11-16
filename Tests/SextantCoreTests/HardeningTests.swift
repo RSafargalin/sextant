@@ -50,6 +50,25 @@ struct RepoMapTests {
         #expect(output.contains("struct D"))
     }
 
+    @Test("Full mode shows types nested at any depth, with their members, as --json holds them")
+    func fullModeShowsEveryNestingLevel() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("sextant-nested-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try """
+        public enum Outer {
+            public struct Inner {
+                public enum Deep { case a, b }
+                public static func make() -> Deep { .a }
+            }
+        }
+        """.write(to: root.appendingPathComponent("W.swift"), atomically: true, encoding: .utf8)
+        let output = RepoMap.generate(projectRoot: root.path, options: .init(tokenBudget: 100_000))
+        #expect(output.contains("mode: full"))
+        #expect(output.contains("\n  enum Outer\n    struct Inner\n      enum Deep\n        case a, b\n      static func make() -> Deep\n"),
+                "\(output)")
+    }
+
     @Test("A small budget triggers degradation")
     func smallBudgetDegrades() throws {
         let root = try makeProject()
